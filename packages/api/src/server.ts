@@ -1,26 +1,79 @@
+import type { AddressInfo } from 'node:net';
 import { openDb } from '@pipulse/storage';
-import { builtinPlugins, runOnce } from '@pipulse/collector';
-import { buildServer } from './index.js';
+import { builtinPlugins, startScheduler } from '@pipulse/collector';
+import { buildServer, createLiveFeed } from './index.js';
 
+/**
+ * PiPulse server: one process that runs the collector scheduler and serves
+ * the REST API plus the /api/live WebSocket. Each sample the scheduler
+ * writes is pushed straight to connected clients. Shuts down cleanly on
+ * SIGINT/SIGTERM (systemd and `docker stop` both send SIGTERM).
+ */
 const DB_PATH = process.env['PIPULSE_DB_PATH'] ?? 'pipulse.sqlite';
+const HOST = process.env['PIPULSE_HOST'] ?? '0.0.0.0';
 const PORT = Number(process.env['PIPULSE_PORT'] ?? 8888);
-const COLLECT_INTERVAL_MS = 5000;
+/** Comma-separated extra browser origins allowed on /api/live, e.g. behind a reverse proxy. */
+const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin !== '');
+
+/** How long shutdown waits for in-flight sensor reads before giving up on them. */
+const SHUTDOWN_TIMEOUT_MS = 5000;
 
 const db = openDb(DB_PATH);
-const app = buildServer(db);
-
-setInterval(() => {
-  void runOnce(db, builtinPlugins, (plugin, error) => {
-    app.log?.warn?.(`plugin ${plugin.id} failed: ${String(error)}`);
-  });
-}, COLLECT_INTERVAL_MS);
+const live = createLiveFeed();
+const app = buildServer(db, {
+  live,
+  allowedOrigins: ALLOWED_ORIGINS,
+  plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
+    id,
+    label,
+    unit,
+    intervalMs
+  }))
+});
+const scheduler = startScheduler(db, builtinPlugins, {
+  onSample: live.publish,
+  onError: (plugin, error) => {
+    console.error(`[pipulse] ${plugin.id} failed:`, error);
+  }
+});
 
 app
-  .listen({ port: PORT, host: '0.0.0.0' })
+  .listen({ port: PORT, host: HOST })
   .then(() => {
-    console.log(`PiPulse API listening on http://0.0.0.0:${PORT}`);
+    const { port } = app.server.address() as AddressInfo;
+    console.log(`[pipulse] listening on http://${HOST}:${port}`);
   })
   .catch((error: unknown) => {
     console.error(error);
     process.exit(1);
   });
+
+let shuttingDown = false;
+
+async function shutdown(): Promise<void> {
+  // Our handlers replace Node's default terminate-on-signal, so a second
+  // Ctrl-C/SIGTERM must still be able to kill a shutdown that is stuck.
+  if (shuttingDown) {
+    console.error('[pipulse] second signal received, exiting immediately');
+    process.exit(1);
+  }
+  shuttingDown = true;
+  const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
+  db.close();
+  if (!drained) {
+    console.error(
+      `[pipulse] collections still running after ${SHUTDOWN_TIMEOUT_MS} ms, exiting without them`
+    );
+    // A hung read may still hold the event loop open; don't wait on it.
+    process.exit(1);
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    void shutdown();
+  });
+}

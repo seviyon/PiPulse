@@ -1,5 +1,5 @@
 import si, { type Systeminformation } from 'systeminformation';
-import { insertSample, type PiPulseDb } from '@pipulse/storage';
+import { insertSample, type PiPulseDb, type Sample } from '@pipulse/storage';
 
 /**
  * The stable contract between core and any collector plugin, built-in or
@@ -175,6 +175,8 @@ export const builtinPlugins: CollectorPlugin[] = [
 
 export type PluginErrorHandler = (plugin: CollectorPlugin, error: unknown) => void;
 
+export type SampleListener = (sample: Sample) => void;
+
 /**
  * Polls one plugin and writes a successful reading to storage, stamped
  * with the time the reading completed. A null or non-finite value is
@@ -183,13 +185,21 @@ export type PluginErrorHandler = (plugin: CollectorPlugin, error: unknown) => vo
 async function collectAndStore(
   db: PiPulseDb,
   plugin: CollectorPlugin,
-  onError?: PluginErrorHandler
+  onError?: PluginErrorHandler,
+  onSample?: SampleListener
 ): Promise<void> {
+  let sample: Sample;
   try {
     const value = await plugin.collect();
-    if (value !== null && Number.isFinite(value)) {
-      insertSample(db, { ts: Date.now(), metric: plugin.id, value });
-    }
+    if (value === null || !Number.isFinite(value)) return;
+    sample = { ts: Date.now(), metric: plugin.id, value };
+    insertSample(db, sample);
+  } catch (error) {
+    onError?.(plugin, error);
+    return;
+  }
+  try {
+    onSample?.(sample);
   } catch (error) {
     onError?.(plugin, error);
   }
@@ -211,6 +221,12 @@ export async function runOnce(
 
 export interface SchedulerOptions {
   onError?: PluginErrorHandler;
+  /**
+   * Called with every sample right after it is written to storage — the
+   * hook the API uses to push live updates. A throwing listener is
+   * reported via `onError` and never stops polling.
+   */
+  onSample?: SampleListener;
 }
 
 export interface Scheduler {
@@ -252,7 +268,7 @@ export function startScheduler(
 
   const poll = (plugin: CollectorPlugin) => {
     if (inFlight.has(plugin)) return;
-    const run = collectAndStore(db, plugin, options.onError).finally(() => {
+    const run = collectAndStore(db, plugin, options.onError, options.onSample).finally(() => {
       inFlight.delete(plugin);
     });
     inFlight.set(plugin, run);
