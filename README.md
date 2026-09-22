@@ -138,7 +138,7 @@ Configuration (collector plugins to enable, poll intervals, retention windows, a
 | 2 | HTTP/WebSocket API | ✅ Done |
 | 3 | Dashboard (status-page parity) | ✅ Done |
 | 4 | History & charts (statistics-page parity) | ⏳ Next |
-| 5 | Alerting engine |  |
+| 5 | Alerting engine & settings (authenticated, UI-editable retention) |  |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 
