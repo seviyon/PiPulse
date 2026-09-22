@@ -1,4 +1,4 @@
-import { hostname } from 'node:os';
+import { hostname, uptime } from 'node:os';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
@@ -16,6 +16,11 @@ export interface DeviceInfo {
   hostname: string;
   platform: string;
   arch: string;
+  /** Richer details when the server can read them (see the collector's readDeviceInfo). */
+  model?: string;
+  os?: string;
+  kernel?: string;
+  memoryTotalMb?: number;
 }
 
 /**
@@ -67,6 +72,8 @@ export interface ServerOptions {
   allowedOrigins?: string[];
   /** Directory holding the built dashboard (packages/web/dist); omitted = API only. */
   webRoot?: string;
+  /** Time since boot in ms; defaults to os.uptime(). Injectable for tests. */
+  uptimeMs?: () => number;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -121,9 +128,19 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
 
   app.get('/health', async () => ({ status: 'ok' }));
 
+  const readUptimeMs = options.uptimeMs ?? (() => uptime() * 1000);
+
   // serverTime lets the dashboard measure staleness and pick history windows
-  // on the Pi's clock rather than the viewer's, which may disagree.
-  app.get('/api/config', async () => ({ device, plugins, serverTime: Date.now() }));
+  // on the Pi's clock rather than the viewer's, which may disagree. Uptime is
+  // sent as a duration, read fresh per request, not as a boot timestamp: the
+  // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
+  // however far the clock later jumps.
+  app.get('/api/config', async () => ({
+    device,
+    plugins,
+    serverTime: Date.now(),
+    uptimeMs: readUptimeMs()
+  }));
 
   app.get('/api/metrics/latest', async () => getLatest(db));
 

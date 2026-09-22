@@ -88,9 +88,26 @@ p {
   overflow-wrap: anywhere;
 }
 
-.device .platform {
-  margin-top: 0.6rem;
+/* Board, OS, kernel, uptime: small print under the hostname. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  margin: 0.75rem 0 0;
   color: var(--ink-2);
+}
+
+.facts div {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.facts dt {
+  color: var(--ink-3);
+}
+
+.facts dd {
+  margin: 0;
 }
 
 .connection {

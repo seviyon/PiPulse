@@ -16,6 +16,10 @@ export interface DeviceInfo {
   hostname: string;
   platform: string;
   arch: string;
+  model?: string;
+  os?: string;
+  kernel?: string;
+  memoryTotalMb?: number;
 }
 
 export interface Config {
@@ -23,6 +27,8 @@ export interface Config {
   plugins: PluginInfo[];
   /** The server's clock (unix ms) when it answered; absent from older servers. */
   serverTime?: number;
+  /** Time since the Pi booted, in ms, when the server answered. */
+  uptimeMs?: number;
 }
 
 export type LiveMessage = { type: 'snapshot'; samples: Sample[] } | ({ type: 'sample' } & Sample);

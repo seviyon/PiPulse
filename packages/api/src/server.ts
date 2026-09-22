@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '@pipulse/storage';
-import { builtinPlugins, startScheduler } from '@pipulse/collector';
+import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
 import { buildServer, createLiveFeed } from './index.js';
 
 /**
@@ -34,6 +34,7 @@ const db = openDb(DB_PATH);
 const live = createLiveFeed();
 const app = buildServer(db, {
   live,
+  device: await readDeviceInfo(),
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({

@@ -93,8 +93,24 @@ describe('GET /api/config', () => {
     expect(res.json()).toEqual({
       device: { hostname: 'pihole', platform: 'linux', arch: 'arm' },
       plugins: [{ id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 }],
-      serverTime: expect.any(Number)
+      serverTime: expect.any(Number),
+      uptimeMs: expect.any(Number)
     });
+  });
+
+  it('reads uptime fresh on every request', async () => {
+    let uptimeMs = 60_000;
+    const app = buildServer(db, { uptimeMs: () => uptimeMs });
+
+    const first = (await app.inject({ method: 'GET', url: '/api/config' })).json<{
+      uptimeMs: number;
+    }>();
+    uptimeMs = 120_000;
+    const second = (await app.inject({ method: 'GET', url: '/api/config' })).json<{
+      uptimeMs: number;
+    }>();
+
+    expect([first.uptimeMs, second.uptimeMs]).toEqual([60_000, 120_000]);
   });
 });
 

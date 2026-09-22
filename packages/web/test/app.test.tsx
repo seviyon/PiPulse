@@ -16,7 +16,16 @@ class FakeSocket {
 }
 
 const config: Config = {
-  device: { hostname: 'Io', platform: 'linux', arch: 'arm' },
+  device: {
+    hostname: 'Io',
+    platform: 'linux',
+    arch: 'arm',
+    model: 'Raspberry Pi 3 Model B Rev 1.2',
+    os: 'Raspbian GNU/Linux 11 (bullseye)',
+    kernel: '6.1.21-v7+',
+    memoryTotalMb: 971.52
+  },
+  uptimeMs: 16 * 86_400_000 + 11 * 3_600_000 + 30 * 60_000,
   plugins: [
     { id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 },
     { id: 'cpu_temperature', label: 'CPU temperature', unit: '°C', intervalMs: 10000 },
@@ -103,6 +112,11 @@ describe('<App>', () => {
     await eventually(() => expect(tile('CPU load').textContent).toContain('1.6%'));
 
     expect(root.querySelector('h1')?.textContent).toBe('Io');
+    const facts = root.querySelector('.facts')?.textContent ?? '';
+    expect(facts).toContain('Raspberry Pi 3 Model B Rev 1.2');
+    expect(facts).toContain('Raspbian GNU/Linux 11 (bullseye)');
+    expect(facts).toContain('6.1.21-v7+');
+    expect(facts).toContain('16 days 11 h');
     expect([...root.querySelectorAll('h2')].map((h) => h.textContent)).toEqual([
       'CPU load',
       'CPU temperature',
@@ -176,6 +190,15 @@ describe('<App>', () => {
 
 describe('<App> with the Pi and the browser clocks disagreeing', () => {
   const MINUTE = 60_000;
+
+  it('shows uptime from the reported duration, whatever the Pi clock says', async () => {
+    // A Pi that booted before NTP synced: its clock is a week behind.
+    serverTime = NOW - 7 * 24 * 60 * MINUTE;
+    render(<App />, root);
+    await eventually(() => expect(root.querySelector('.facts')).not.toBeNull());
+
+    expect(root.querySelector('.facts')?.textContent).toContain('16 days 11 h');
+  });
 
   it('does not flag fresh readings as stale when the Pi clock is behind', async () => {
     serverTime = NOW - 5 * MINUTE;

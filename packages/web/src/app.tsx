@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
+import { formatUptime } from './format.js';
+import { meterMax } from './status.js';
 import { Tile } from './tile.js';
-import type { Config, Sample } from './types.js';
+import type { Config, DeviceInfo, Sample } from './types.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {
@@ -34,6 +36,30 @@ function useNow(ms: number): number {
     return () => clearInterval(timer);
   }, [ms]);
   return now;
+}
+
+/**
+ * The quiet facts under the hostname: board, OS, kernel and uptime when the
+ * server knows them, otherwise just platform and architecture.
+ */
+function DeviceFacts({ device, uptimeMs }: { device: DeviceInfo; uptimeMs: number | undefined }) {
+  const system =
+    device.os ?? `${platformNames[device.platform] ?? device.platform} on ${device.arch}`;
+  const facts: [string, string][] = [];
+  if (device.model) facts.push(['Model', device.model]);
+  facts.push(['System', system]);
+  if (device.kernel) facts.push(['Kernel', device.kernel]);
+  if (uptimeMs !== undefined) facts.push(['Up', formatUptime(uptimeMs)]);
+  return (
+    <dl class="facts">
+      {facts.map(([term, detail]) => (
+        <div key={term}>
+          <dt>{term}</dt>
+          <dd>{detail}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function ConnectionLine({
@@ -76,6 +102,13 @@ export function App() {
    * all measured in server time: Date.now() + offset.
    */
   const clockOffset = useRef(0);
+  /**
+   * Uptime as reported with /api/config, and when (performance.now(), which
+   * is monotonic) it arrived; current uptime is that plus the time since.
+   * Neither the Pi's nor the viewer's wall clock is involved, so a clock
+   * correction on either side can't skew it.
+   */
+  const uptimeAnchor = useRef<{ uptimeMs: number; at: number }>();
   const now = useNow(1000) + clockOffset.current;
   /** Server time when the config arrived; tiles still empty well after it point at a missing sensor. */
   const waitingSince = useRef(0);
@@ -92,6 +125,9 @@ export function App() {
           if (cancelled) return;
           if (typeof loaded.serverTime === 'number') {
             clockOffset.current = loaded.serverTime - Date.now();
+          }
+          if (typeof loaded.uptimeMs === 'number') {
+            uptimeAnchor.current = { uptimeMs: loaded.uptimeMs, at: performance.now() };
           }
           waitingSince.current = Date.now() + clockOffset.current;
           setUnreachable(undefined);
@@ -181,9 +217,13 @@ export function App() {
       <header class="device">
         <div>
           <h1>{device.hostname}</h1>
-          <p class="platform">
-            {platformNames[device.platform] ?? device.platform} on {device.arch}
-          </p>
+          <DeviceFacts
+            device={device}
+            uptimeMs={
+              uptimeAnchor.current &&
+              uptimeAnchor.current.uptimeMs + (performance.now() - uptimeAnchor.current.at)
+            }
+          />
         </div>
         <ConnectionLine status={connection.status} retryInMs={connection.retryInMs} beat={beat} />
       </header>
@@ -198,6 +238,7 @@ export function App() {
               now={now}
               waitingSince={waitingSince.current}
               windowMs={WINDOW_MS}
+              max={meterMax(plugin.id, device)}
             />
           ))}
         </div>

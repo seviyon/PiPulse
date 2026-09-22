@@ -52,8 +52,13 @@ describe('api server process', () => {
 
     const config = (await (await fetch(`${baseUrl}/api/config`)).json()) as {
       plugins: { id: string }[];
+      device: { memoryTotalMb: number; kernel: string };
+      uptimeMs: number;
     };
     expect(config.plugins.map((plugin) => plugin.id)).toContain('cpu_load');
+    expect(config.device.memoryTotalMb).toBeGreaterThan(0);
+    expect(config.uptimeMs).toBeGreaterThan(0);
+    expect(config.device.kernel).not.toBe('');
 
     const socket = new WebSocket(`${baseUrl.replace('http', 'ws')}/api/live`);
     type LiveMessage =

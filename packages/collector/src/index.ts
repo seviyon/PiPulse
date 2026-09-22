@@ -1,3 +1,4 @@
+import { cpuVoltagePlugin, throttledPlugin } from './vcgencmd.js';
 import si, { type Systeminformation } from 'systeminformation';
 import { insertSample, type PiPulseDb, type Sample } from '@pipulse/storage';
 
@@ -164,13 +165,84 @@ export const cpuTemperaturePlugin: CollectorPlugin = {
   }
 };
 
+export const swapUsedPlugin: CollectorPlugin = {
+  id: 'swap_used',
+  label: 'Swap used',
+  unit: '%',
+  intervalMs: 10000,
+  apiVersion: 1,
+  async collect() {
+    const mem = await si.mem();
+    return mem.swaptotal > 0 ? (mem.swapused / mem.swaptotal) * 100 : null;
+  }
+};
+
+export const bootUsedPlugin: CollectorPlugin = {
+  id: 'boot_used',
+  label: 'Disk used (/boot)',
+  unit: '%',
+  intervalMs: 60000,
+  apiVersion: 1,
+  async collect() {
+    // Raspberry Pi OS mounts the boot partition at /boot, or /boot/firmware since bookworm.
+    const filesystems = await si.fsSize();
+    const boot = filesystems.find((fs) => fs.mount === '/boot' || fs.mount === '/boot/firmware');
+    return nonNegativeOrNull(boot?.use);
+  }
+};
+
+export const cpuFrequencyPlugin: CollectorPlugin = {
+  id: 'cpu_frequency',
+  label: 'CPU frequency',
+  unit: 'MHz',
+  intervalMs: 10000,
+  apiVersion: 1,
+  async collect() {
+    const speed = await si.cpuCurrentSpeed();
+    // si reports GHz; 0 means it couldn't read the clock.
+    return speed.avg > 0 ? Math.round(speed.avg * 1000) : null;
+  }
+};
+
+export { cpuVoltagePlugin, throttledPlugin };
+
+/** Static facts about the machine, for the dashboard header (served via /api/config). */
+export interface DeviceInfo {
+  hostname: string;
+  platform: string;
+  arch: string;
+  model: string;
+  os: string;
+  kernel: string;
+  memoryTotalMb: number;
+}
+
+export async function readDeviceInfo(): Promise<DeviceInfo> {
+  const [system, osInfo, mem] = await Promise.all([si.system(), si.osInfo(), si.mem()]);
+  const release = [osInfo.release, osInfo.codename && `(${osInfo.codename})`].filter(Boolean);
+  return {
+    hostname: osInfo.hostname,
+    platform: osInfo.platform,
+    arch: osInfo.arch,
+    model: system.model,
+    os: [osInfo.distro, ...release].join(' '),
+    kernel: osInfo.kernel,
+    memoryTotalMb: Math.round((mem.total / 2 ** 20) * 100) / 100
+  };
+}
+
 export const builtinPlugins: CollectorPlugin[] = [
   cpuLoadPlugin,
+  cpuTemperaturePlugin,
+  cpuFrequencyPlugin,
+  cpuVoltagePlugin,
+  throttledPlugin,
   memoryUsedPlugin,
-  networkRxPlugin,
-  networkTxPlugin,
+  swapUsedPlugin,
   diskUsedPlugin,
-  cpuTemperaturePlugin
+  bootUsedPlugin,
+  networkRxPlugin,
+  networkTxPlugin
 ];
 
 export type PluginErrorHandler = (plugin: CollectorPlugin, error: unknown) => void;
