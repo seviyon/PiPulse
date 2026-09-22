@@ -11,11 +11,14 @@
     "dev": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server.ts"
   },
   "dependencies": {
+    "@fastify/websocket": "^11.3.1",
     "@pipulse/collector": "*",
     "@pipulse/storage": "*",
     "fastify": "^5.12.5"
   },
   "devDependencies": {
-    "tsx": "^4.23.15"
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.15",
+    "ws": "^8.21.3"
   }
 }

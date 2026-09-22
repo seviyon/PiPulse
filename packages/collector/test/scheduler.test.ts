@@ -131,3 +131,53 @@ describe('startScheduler', () => {
     await expect(stopped).resolves.toBe(false);
   });
 });
+
+describe('startScheduler onSample', () => {
+  it('reports each stored sample, after it has been written', async () => {
+    const plugin = fakePlugin('live', 1000, async () => 42);
+    const seen: { ts: number; metric: string; value: number; storedAtCall: number[] }[] = [];
+
+    const scheduler = startScheduler(db, [plugin], {
+      onSample: (sample) => seen.push({ ...sample, storedAtCall: timestamps(db, 'live') })
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await scheduler.stop();
+
+    expect(seen).toEqual([
+      { ts: 0, metric: 'live', value: 42, storedAtCall: [0] },
+      { ts: 1000, metric: 'live', value: 42, storedAtCall: [0, 1000] }
+    ]);
+  });
+
+  it('is not called for a null reading', async () => {
+    const onSample = vi.fn();
+
+    const scheduler = startScheduler(db, [fakePlugin('absent', 1000, async () => null)], {
+      onSample
+    });
+    await scheduler.stop();
+
+    expect(onSample).not.toHaveBeenCalled();
+  });
+
+  it('keeps storing and polling when the listener throws, reporting it via onError', async () => {
+    const plugin = fakePlugin('live', 1000, async () => 1);
+    const onError = vi.fn();
+
+    const scheduler = startScheduler(db, [plugin], {
+      onSample: () => {
+        throw new Error('listener broke');
+      },
+      onError
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await scheduler.stop();
+
+    expect(timestamps(db, 'live')).toEqual([0, 1000]);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledWith(
+      plugin,
+      expect.objectContaining({ message: 'listener broke' })
+    );
+  });
+});
