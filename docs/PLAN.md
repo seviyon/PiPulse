@@ -6,17 +6,17 @@
 
 The last real release is from 2018 (VERSION file: `2.13`); the GitHub org was only created 2026-07-14 to find volunteers to keep it alive. The whole thing is one 1,566-line Perl script (`rpimonitord`) plus a folder of `.conf` templates — no build step, no tests, no CI.
 
-| Component | Implementation | Notes |
-| --- | --- | --- |
-| Collector daemon | `rpimonitord`, single Perl file | Hand-rolled HTTP server (no framework), uses `IPC::ShareLite` for shared memory between its own forked processes |
-| Metric definitions | \~40 `.conf` templates in `/etc/rpimonitor/template/` (cpu, memory, network, storage, sdcard, plus per-board files: Allwinner H3, OrangePi, sunxi, xbian, raspbmc…) | Each metric ("KPI") is a `dynamic.N`/`static.N` entry: a source command or file, a regexp, a postprocess expression, and an optional RRD type |
-| Storage | RRDtool `.rrd` file per KPI under `/var/lib/rpimonitor/stat/` | Fixed-size ring buffers, \~1 year retention by default |
-| Web rendering | The *same* `.conf` templates also carry `web.status.*` / `web.statistics.*` entries — literal JS strings like `JustGageBar(...)` that the browser `eval`s against a JSON payload | Presentation logic lives inside the data-collection config, not in code |
-| Frontend | Static HTML + jQuery 1.x + Bootstrap 3 + Flot (canvas charts) + JustGage/Raphael (gauges) + `javascriptrrd` (parses `.rrd` binaries client-side over HTTP) + Sortable.js | \~2013-era stack, no bundler |
-| Alerting | Config-driven threshold engine (`alert.<name>.kpi`, hysteresis via `maxalertduration` / `cancelvalidation` / `resendperiod`) that execs a shell command on raise/cancel | e.g. a mail script |
-| SNMP | Daemon acts as an SNMP AgentX subagent, auto-numbering OIDs from `snmp.<kpi>.id` in the templates | For integration with existing NMS tooling |
-| Addons | Self-contained HTML/JS/CSS bundles in `web/addons/` (Shellinabox and Hawkeye embeds, a "top3" processes widget, an "about" page) | Loaded via `addons.json` |
-| Packaging | Debian package for Raspbian via `Makefile`; manual steps documented for other distros | No Docker image, no prebuilt binary |
+| Component          | Implementation                                                                                                                                                                   | Notes                                                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Collector daemon   | `rpimonitord`, single Perl file                                                                                                                                                  | Hand-rolled HTTP server (no framework), uses `IPC::ShareLite` for shared memory between its own forked processes                              |
+| Metric definitions | \~40 `.conf` templates in `/etc/rpimonitor/template/` (cpu, memory, network, storage, sdcard, plus per-board files: Allwinner H3, OrangePi, sunxi, xbian, raspbmc…)              | Each metric ("KPI") is a `dynamic.N`/`static.N` entry: a source command or file, a regexp, a postprocess expression, and an optional RRD type |
+| Storage            | RRDtool `.rrd` file per KPI under `/var/lib/rpimonitor/stat/`                                                                                                                    | Fixed-size ring buffers, \~1 year retention by default                                                                                        |
+| Web rendering      | The _same_ `.conf` templates also carry `web.status.*` / `web.statistics.*` entries — literal JS strings like `JustGageBar(...)` that the browser `eval`s against a JSON payload | Presentation logic lives inside the data-collection config, not in code                                                                       |
+| Frontend           | Static HTML + jQuery 1.x + Bootstrap 3 + Flot (canvas charts) + JustGage/Raphael (gauges) + `javascriptrrd` (parses `.rrd` binaries client-side over HTTP) + Sortable.js         | \~2013-era stack, no bundler                                                                                                                  |
+| Alerting           | Config-driven threshold engine (`alert.<name>.kpi`, hysteresis via `maxalertduration` / `cancelvalidation` / `resendperiod`) that execs a shell command on raise/cancel          | e.g. a mail script                                                                                                                            |
+| SNMP               | Daemon acts as an SNMP AgentX subagent, auto-numbering OIDs from `snmp.<kpi>.id` in the templates                                                                                | For integration with existing NMS tooling                                                                                                     |
+| Addons             | Self-contained HTML/JS/CSS bundles in `web/addons/` (Shellinabox and Hawkeye embeds, a "top3" processes widget, an "about" page)                                                 | Loaded via `addons.json`                                                                                                                      |
+| Packaging          | Debian package for Raspbian via `Makefile`; manual steps documented for other distros                                                                                            | No Docker image, no prebuilt binary                                                                                                           |
 
 The daemon exposes `static.json`, `dynamic.json`, `status.json`, `statistics.json`, `menu.json`, `friends.json`, `addons.json` and `version.json`; the browser polls these and evaluates the embedded JS strings to build the page.
 
@@ -47,15 +47,15 @@ What makes a 2026 rewrite worthwhile rather than a patch job:
 
 ## New system: decisions and why
 
-| Decision | Choice | Why |
-| --- | --- | --- |
-| Scope | Single device, 1:1 replacement | Matches the original; simplest correct architecture, and the plugin-based design below leaves room to grow into a fleet view later without a rewrite |
-| Runtime | Node.js + TypeScript | One language across collector, API, and frontend; the `systeminformation` npm package covers most `/proc`/`/sys` parsing the Perl script does by hand; you already have React experience to draw on |
-| Storage | SQLite (via `better-sqlite3`), WAL mode | Embedded, zero ops, plain SQL for ad-hoc queries and exports — no RRD-style fixed rollups decided up front |
-| Deployment | Both a native systemd service and an official Docker image | Matches how you run most of your homelab (Dockhand/Compose) while keeping a low-overhead native option close to how your Pi-hole box runs today |
-| API framework | Fastify (TypeScript-first, lightweight) | Small footprint suits a Pi; typed routes reduce the class of bug you'd otherwise catch in QA |
-| Frontend | React + Vite, built to static assets served by the API | Matches your own prior React project; no server-side rendering needed for a single-device dashboard |
-| Charts | A maintained canvas/SVG library (e.g. uPlot or Recharts) | Replaces Flot; better performance and touch support on a Pi-class CPU, no jQuery dependency |
+| Decision      | Choice                                                     | Why                                                                                                                                                                                                 |
+| ------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope         | Single device, 1:1 replacement                             | Matches the original; simplest correct architecture, and the plugin-based design below leaves room to grow into a fleet view later without a rewrite                                                |
+| Runtime       | Node.js + TypeScript                                       | One language across collector, API, and frontend; the `systeminformation` npm package covers most `/proc`/`/sys` parsing the Perl script does by hand; you already have React experience to draw on |
+| Storage       | SQLite (via `better-sqlite3`), WAL mode                    | Embedded, zero ops, plain SQL for ad-hoc queries and exports — no RRD-style fixed rollups decided up front                                                                                          |
+| Deployment    | Both a native systemd service and an official Docker image | Matches how you run most of your homelab (Dockhand/Compose) while keeping a low-overhead native option close to how your Pi-hole box runs today                                                     |
+| API framework | Fastify (TypeScript-first, lightweight)                    | Small footprint suits a Pi; typed routes reduce the class of bug you'd otherwise catch in QA                                                                                                        |
+| Frontend      | React + Vite, built to static assets served by the API     | Matches your own prior React project; no server-side rendering needed for a single-device dashboard                                                                                                 |
+| Charts        | A maintained canvas/SVG library (e.g. uPlot or Recharts)   | Replaces Flot; better performance and touch support on a Pi-class CPU, no jQuery dependency                                                                                                         |
 
 Suggested repo layout inside `PiPulse` (a TypeScript workspace, e.g. npm/pnpm workspaces):
 
@@ -134,39 +134,39 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 
 - Multi-stage build: stage 1 compiles TypeScript and builds the React app, stage 2 is a slim `node:20-alpine` runtime
 - Bind-mount a `/data` volume for the SQLite file
-- **Design risk to resolve early:** a *containerized system monitor* needs visibility into the *host's* `/proc`, `/sys`, and network stats, not the container's own. Plan to bind-mount `/proc` and `/sys:ro` and run with `pid: host` (and likely `network_mode: host` for accurate network counters) — call this out in the compose file's comments so it isn't mistaken for over-privileging later.
+- **Design risk to resolve early:** a _containerized system monitor_ needs visibility into the _host's_ `/proc`, `/sys`, and network stats, not the container's own. Plan to bind-mount `/proc` and `/sys:ro` and run with `pid: host` (and likely `network_mode: host` for accurate network counters) — call this out in the compose file's comments so it isn't mistaken for over-privileging later.
 
 **CI**: since this is a clean-slate repo, set up multi-arch builds (`linux/arm64` + `linux/arm/v7`, since Pi 3/4/5 differ) from day one via GitHub Actions — a smaller version of the pipeline architecture you already build professionally.
 
 ## Feature parity vs. legacy RPi-Monitor
 
-| Legacy feature | New plan |
-| --- | --- |
-| Status page (instant values) | React Dashboard page, WebSocket-driven |
-| Statistics page (historical graphs, zoom) | React History page, SQLite-backed queries, modern zoomable chart lib |
-| CPU / memory / network / storage / temperature KPIs | Ported via `systeminformation` plus a Pi-specific `vcgencmd` plugin |
-| Board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc) | Not carried over 1:1 — scope is your Pi only; the plugin model leaves the door open later |
-| Config-driven KPI/alert definitions | TypeScript plugin + rules files, no free-text `eval` |
-| Alerting with hysteresis + raise/cancel commands | Rules engine, same hysteresis concept, sandboxed actions (webhook/shell/log) |
-| Read-only mode | Config flag disables the SQLite writer; API still serves last-known values |
-| JSON export of metrics | REST endpoints kept and expanded |
-| SNMP integration | Open question — see next section; not in v1 unless you confirm you need it |
-| Addons (Shellinabox, Hawkeye, top3, about) | Dropped from core; a documented extension point (iframe/plugin slot) replaces ad hoc eval'd JS |
-| Drag-and-drop dashboard layout | Nice-to-have for v2, not blocking v1 |
-| Debian package | Replaced by a systemd unit + install script, plus a Docker image |
+| Legacy feature                                                        | New plan                                                                                       |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Status page (instant values)                                          | React Dashboard page, WebSocket-driven                                                         |
+| Statistics page (historical graphs, zoom)                             | React History page, SQLite-backed queries, modern zoomable chart lib                           |
+| CPU / memory / network / storage / temperature KPIs                   | Ported via `systeminformation` plus a Pi-specific `vcgencmd` plugin                            |
+| Board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc) | Not carried over 1:1 — scope is your Pi only; the plugin model leaves the door open later      |
+| Config-driven KPI/alert definitions                                   | TypeScript plugin + rules files, no free-text `eval`                                           |
+| Alerting with hysteresis + raise/cancel commands                      | Rules engine, same hysteresis concept, sandboxed actions (webhook/shell/log)                   |
+| Read-only mode                                                        | Config flag disables the SQLite writer; API still serves last-known values                     |
+| JSON export of metrics                                                | REST endpoints kept and expanded                                                               |
+| SNMP integration                                                      | Open question — see next section; not in v1 unless you confirm you need it                     |
+| Addons (Shellinabox, Hawkeye, top3, about)                            | Dropped from core; a documented extension point (iframe/plugin slot) replaces ad hoc eval'd JS |
+| Drag-and-drop dashboard layout                                        | Nice-to-have for v2, not blocking v1                                                           |
+| Debian package                                                        | Replaced by a systemd unit + install script, plus a Docker image                               |
 
 ## Step-by-step build plan
 
-| Phase | Goal | Key deliverables | Exit criteria |
-| --- | --- | --- | --- |
-| 0. Foundations | Get a clean TypeScript workspace running | ✅ Done. `PiPulse` scaffolded with the `collector`/`storage`/`api`/`web` packages, lint + test runner, GitHub Actions skeleton | `npm test` and `npm run build` succeed in CI |
-| 1. Collector core | Prove the plugin model end to end | Plugin API, CPU/memory/network/storage/temperature plugins via `systeminformation`, SQLite writer | Raw metric rows land in SQLite on a real Pi at the configured interval |
-| 2. API layer | Serve what's collected | Fastify REST endpoints (`latest`, `history`, `config`), WebSocket push channel | `curl` and a WebSocket client both return live data |
-| 3. Dashboard | Status-page parity | React Dashboard page consuming the WebSocket feed | Visually matches or beats the original `status.html` on the same device |
-| 4. History & charts | Statistics-page parity | React History page, zoomable charts, the rollup/downsampling job | A year-old-equivalent of data renders without loading the full raw table |
-| 5. Alerting | Reimplement the rules engine | Rule definitions, hysteresis logic, webhook action (e.g. to Apprise) | A manufactured threshold breach raises and later cancels correctly |
-| 6. Packaging | Make it installable | systemd unit + install script, multi-stage Dockerfile, multi-arch CI build | Fresh install works both ways on a real Pi |
-| 7. Cutover | Retire the legacy daemon | Run both side by side, compare readings, decommission `rpimonitord` | New system has run unattended for a full week with no data gaps |
+| Phase               | Goal                                     | Key deliverables                                                                                                               | Exit criteria                                                            |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| 0. Foundations      | Get a clean TypeScript workspace running | ✅ Done. `PiPulse` scaffolded with the `collector`/`storage`/`api`/`web` packages, lint + test runner, GitHub Actions skeleton | `npm test` and `npm run build` succeed in CI                             |
+| 1. Collector core   | Prove the plugin model end to end        | Plugin API, CPU/memory/network/storage/temperature plugins via `systeminformation`, SQLite writer                              | Raw metric rows land in SQLite on a real Pi at the configured interval   |
+| 2. API layer        | Serve what's collected                   | Fastify REST endpoints (`latest`, `history`, `config`), WebSocket push channel                                                 | `curl` and a WebSocket client both return live data                      |
+| 3. Dashboard        | Status-page parity                       | React Dashboard page consuming the WebSocket feed                                                                              | Visually matches or beats the original `status.html` on the same device  |
+| 4. History & charts | Statistics-page parity                   | React History page, zoomable charts, the rollup/downsampling job                                                               | A year-old-equivalent of data renders without loading the full raw table |
+| 5. Alerting         | Reimplement the rules engine             | Rule definitions, hysteresis logic, webhook action (e.g. to Apprise)                                                           | A manufactured threshold breach raises and later cancels correctly       |
+| 6. Packaging        | Make it installable                      | systemd unit + install script, multi-stage Dockerfile, multi-arch CI build                                                     | Fresh install works both ways on a real Pi                               |
+| 7. Cutover          | Retire the legacy daemon                 | Run both side by side, compare readings, decommission `rpimonitord`                                                            | New system has run unattended for a full week with no data gaps          |
 
 ## Risks, open questions, next steps
 
@@ -188,13 +188,13 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 
 Gap in the original (zero tests) — closed from day one, not bolted on later:
 
-| Layer | Tool | What it covers |
-| --- | --- | --- |
-| Collector plugins | Vitest | Mock `/proc`, `/sys`, `vcgencmd` output; assert parsed values and edge cases (missing sensor, malformed output) |
-| Storage | Vitest + an in-memory/temp SQLite file | Schema migrations, rollup/downsample correctness, retention pruning |
-| API | Fastify's built-in `inject()` | Route contracts, validation, error responses — no real server needed |
-| End-to-end | Playwright (already in your toolbox) | Dashboard loads, live values update over the WebSocket, history charts render |
-| Test-suite quality | Optional: Stryker (JS equivalent of the Pitest mutation testing you already use) | Confidence the tests actually catch regressions, not just that they pass |
+| Layer              | Tool                                                                             | What it covers                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Collector plugins  | Vitest                                                                           | Mock `/proc`, `/sys`, `vcgencmd` output; assert parsed values and edge cases (missing sensor, malformed output) |
+| Storage            | Vitest + an in-memory/temp SQLite file                                           | Schema migrations, rollup/downsample correctness, retention pruning                                             |
+| API                | Fastify's built-in `inject()`                                                    | Route contracts, validation, error responses — no real server needed                                            |
+| End-to-end         | Playwright (already in your toolbox)                                             | Dashboard loads, live values update over the WebSocket, history charts render                                   |
+| Test-suite quality | Optional: Stryker (JS equivalent of the Pitest mutation testing you already use) | Confidence the tests actually catch regressions, not just that they pass                                        |
 
 Make "tests pass in CI" an explicit exit criterion for every phase in the build plan above, not just Phase 0.
 
@@ -215,14 +215,14 @@ There's no LLM or natural-language input anywhere in this system, so prompt inje
 
 React was suggested mainly because you already have React experience. If a smaller/faster runtime matters more than reusing that experience:
 
-| Option | Client bundle | Trade-off |
-| --- | --- | --- |
-| **Preact + Vite** | \~3 KB, React-compatible API | Near drop-in for React code and most React libraries — smallest footprint that still feels like React |
-| Svelte / SvelteKit | Very small (compiles away, no virtual DOM) | Modern, less boilerplate; smaller ecosystem than React |
-| Solid.js | Very small, near-vanilla performance | Fine-grained reactivity, JSX-like syntax; less mainstream |
-| Vanilla JS + Vite + a chart library | Smallest possible | No framework at all; more manual DOM work, viable given how simple this UI actually is |
+| Option                              | Client bundle                              | Trade-off                                                                                             |
+| ----------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Preact + Vite**                   | \~3 KB, React-compatible API               | Near drop-in for React code and most React libraries — smallest footprint that still feels like React |
+| Svelte / SvelteKit                  | Very small (compiles away, no virtual DOM) | Modern, less boilerplate; smaller ecosystem than React                                                |
+| Solid.js                            | Very small, near-vanilla performance       | Fine-grained reactivity, JSX-like syntax; less mainstream                                             |
+| Vanilla JS + Vite + a chart library | Smallest possible                          | No framework at all; more manual DOM work, viable given how simple this UI actually is                |
 
-Note the client bundle runs in *your browser*, not on the Pi, so its weight affects load time, not the Pi's resource budget. Recommendation: **Preact** as the default — keeps your React/JSX knowledge and its library ecosystem while shipping a fraction of the runtime; React itself remains a perfectly fine choice if you'd rather stay on the exact stack you already know.
+Note the client bundle runs in _your browser_, not on the Pi, so its weight affects load time, not the Pi's resource budget. Recommendation: **Preact** as the default — keeps your React/JSX knowledge and its library ecosystem while shipping a fraction of the runtime; React itself remains a perfectly fine choice if you'd rather stay on the exact stack you already know.
 
 ## Keeping storage bounded (cleanup job)
 
@@ -246,9 +246,9 @@ Not needed for v1, and deliberately easy to bolt on later because of how storage
 Two separate problems: core code shouldn't rot as frameworks churn, and new features/plugins shouldn't require touching or breaking existing ones.
 
 - **Ports-and-adapters boundaries.** Core logic (scheduling, alert rules, rollups) depends only on small internal interfaces — never directly on Fastify, Preact, or `better-sqlite3` types. Thin adapter modules translate between the interface and the real library. Swapping any one of them later touches one adapter, not the whole codebase.
-- **A stable, versioned plugin API.** Collector plugins and alert actions implement one narrow interface (`CollectorPlugin`, `AlertAction`) — the *only* contact surface between core and plugin code. That interface carries its own semver and changelog, separate from the app version, the same idea as a browser extension's manifest version. Breaking it is a deliberate, documented decision, never a side effect of a core refactor.
+- **A stable, versioned plugin API.** Collector plugins and alert actions implement one narrow interface (`CollectorPlugin`, `AlertAction`) — the _only_ contact surface between core and plugin code. That interface carries its own semver and changelog, separate from the app version, the same idea as a browser extension's manifest version. Breaking it is a deliberate, documented decision, never a side effect of a core refactor.
 - **Self-contained plugin folders.** Each plugin ships as its own folder/package with a manifest (id, version, target interface version) and loads dynamically at startup — adding a plugin never means editing core files, the same model as Homebridge or Grafana plugins.
 - **Contract tests, not just unit tests.** A fixed Vitest suite runs against every plugin — built-in or third-party — asserting it satisfies the plugin interface's contract. This is what catches "core changed and broke a plugin" the moment it happens, not months later.
-- **Fewer, boring dependencies.** SQLite, Fastify, Preact, and `systeminformation` were picked partly *because* they're mature and slow-moving compared to typical JS-ecosystem churn. Fewer dependencies, each more boring, means less surface area to go stale.
+- **Fewer, boring dependencies.** SQLite, Fastify, Preact, and `systeminformation` were picked partly _because_ they're mature and slow-moving compared to typical JS-ecosystem churn. Fewer dependencies, each more boring, means less surface area to go stale.
 - **Automated, test-gated updates.** Renovate/Dependabot opens a PR on every dependency bump; the CI contract-test suite is the gate — upgrades merge only when they don't break a plugin's contract. This turns "keep dependencies current" from a manual chore into a background process.
 - **Versioned schema and config.** Both the SQLite schema and the plugin config file carry a version number and a migration path (a `migrations/` folder applied on startup), so a future PiPulse release can evolve either without breaking an existing install's data.
