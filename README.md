@@ -94,6 +94,12 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | `PIPULSE_PORT`    | `8888`           | HTTP/WebSocket port              |
 | `PIPULSE_WEB_DIR` | `packages/web/dist` | Built dashboard to serve at `/` (API-only if missing) |
 | `PIPULSE_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed on `/api/live`, comma-separated (e.g. behind a reverse proxy) |
+| `PIPULSE_RETENTION_RAW` | `2d` | How long raw samples are kept |
+| `PIPULSE_RETENTION_1M` | `14d` | How long 1-minute averages are kept |
+| `PIPULSE_RETENTION_1H` | `1y` | How long hourly averages are kept |
+| `PIPULSE_RETENTION_1D` | `forever` | How long daily averages are kept |
+
+Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages and deletes data past its retention, but only once the next level already covers it. Changing a value takes effect within a minute of restarting: a longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess. The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
 Endpoints: `GET /api/config` (device, plugins, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (unix ms, default last hour), and `ws://…/api/live` (a `snapshot` of latest values on connect, then one `sample` message per new reading). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 

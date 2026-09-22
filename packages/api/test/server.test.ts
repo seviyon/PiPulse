@@ -89,9 +89,39 @@ describe('api server process', () => {
     }[];
     expect(latest.map((sample) => sample.metric)).toContain('cpu_load');
 
+    const series = (await (
+      await fetch(`${baseUrl}/api/metrics/cpu_load/series?from=${Date.now() - 600_000}`)
+    ).json()) as {
+      resolution: string;
+      points: unknown[];
+    };
+    expect(series.resolution).toBe('raw');
+    expect(series.points.length).toBeGreaterThan(0);
+
     child.kill('SIGTERM');
     const [exitCode] = await once(child, 'exit');
     expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   }, 20000);
+
+  it('refuses to start with an invalid retention setting, naming the variable', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_PORT: '0',
+        PIPULSE_RETENTION_RAW: '10m'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const [exitCode] = await once(child, 'exit');
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('[pipulse] PIPULSE_RETENTION_RAW must be a duration like');
+    // A readable message, not a stack trace.
+    expect(stderr).not.toContain('    at ');
+  });
 });

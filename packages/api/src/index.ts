@@ -2,7 +2,16 @@ import { hostname, uptime } from 'node:os';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
-import { getHistory, getLatest, type PiPulseDb, type Sample } from '@pipulse/storage';
+import {
+  chooseResolution,
+  getHistory,
+  getLatest,
+  getSeries,
+  type PiPulseDb,
+  type Resolution,
+  type RetentionPolicy,
+  type Sample
+} from '@pipulse/storage';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {
@@ -70,6 +79,8 @@ export interface ServerOptions {
    * policy to WebSockets, so without this check any page could read the feed.
    */
   allowedOrigins?: string[];
+  /** Retention the housekeeping job applies; /series never picks a resolution it has pruned. */
+  retention?: RetentionPolicy;
   /** Directory holding the built dashboard (packages/web/dist); omitted = API only. */
   webRoot?: string;
   /** Time since boot in ms; defaults to os.uptime(). Injectable for tests. */
@@ -108,6 +119,15 @@ const historyQuerySchema = {
   properties: {
     from: { type: 'integer', minimum: 0 },
     to: { type: 'integer', minimum: 0 }
+  },
+  additionalProperties: false
+} as const;
+
+const seriesQuerySchema = {
+  type: 'object',
+  properties: {
+    ...historyQuerySchema.properties,
+    resolution: { type: 'string', enum: ['auto', 'raw', '1m', '1h', '1d'] }
   },
   additionalProperties: false
 } as const;
@@ -157,6 +177,28 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       }
 
       return getHistory(db, request.params.id, from, to);
+    }
+  );
+
+  app.get<{
+    Params: { id: string };
+    Querystring: HistoryQuery & { resolution?: Resolution | 'auto' };
+  }>(
+    '/api/metrics/:id/series',
+    { schema: { querystring: seriesQuerySchema } },
+    async (request, reply) => {
+      const now = Date.now();
+      const to = request.query.to ?? now;
+      const from = request.query.from ?? to - 24 * 60 * 60 * 1000;
+
+      if (from > to) {
+        return reply.status(400).send({ error: 'from must not be after to' });
+      }
+
+      const requested = request.query.resolution ?? 'auto';
+      const resolution =
+        requested === 'auto' ? chooseResolution(from, to, now, options.retention) : requested;
+      return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
   );
 

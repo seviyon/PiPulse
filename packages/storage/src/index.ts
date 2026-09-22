@@ -1,4 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
+import { migrate } from './migrations.js';
+
+export { migrate, SCHEMA_VERSION } from './migrations.js';
 
 export type PiPulseDb = DatabaseSync;
 
@@ -14,27 +17,9 @@ export function openDb(path: string): PiPulseDb {
   return db;
 }
 
-/** Creates the raw-samples and rollup tables if they don't already exist. */
+/** Creates or upgrades the schema; kept for callers that predate migrate(). */
 export function createSchema(db: PiPulseDb): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS metrics (
-      ts     INTEGER NOT NULL,
-      metric TEXT NOT NULL,
-      value  REAL,
-      PRIMARY KEY (metric, ts)
-    );
-    CREATE INDEX IF NOT EXISTS idx_metrics_metric_ts ON metrics(metric, ts);
-
-    CREATE TABLE IF NOT EXISTS metrics_rollup (
-      ts         INTEGER NOT NULL,
-      metric     TEXT NOT NULL,
-      resolution TEXT NOT NULL,
-      avg        REAL,
-      min        REAL,
-      max        REAL,
-      PRIMARY KEY (metric, resolution, ts)
-    );
-  `);
+  migrate(db);
 }
 
 export interface Sample {
@@ -78,3 +63,17 @@ export function getHistory(db: PiPulseDb, metric: string, from: number, to: numb
     )
     .all(metric, from, to) as unknown as Sample[];
 }
+
+export {
+  chooseResolution,
+  DEFAULT_RETENTION,
+  getSeries,
+  retentionFromEnv,
+  runHousekeeping,
+  startHousekeeping,
+  type HousekeepingOptions,
+  type HousekeepingResult,
+  type Resolution,
+  type RetentionPolicy,
+  type SeriesPoint
+} from './rollup.js';
