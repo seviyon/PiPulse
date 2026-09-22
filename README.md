@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha, Phase 1 complete.** The collector daemon polls CPU load, memory, network throughput, disk usage, and CPU temperature on per-plugin intervals and writes them to SQLite — verified on a real Raspberry Pi (armv7l). Phase 2 (HTTP/WebSocket API) is next — see [Roadmap](#roadmap).
+> **Status: pre-alpha, Phase 2 complete.** One server process collects CPU load, memory, network throughput, disk usage, and CPU temperature into SQLite and serves them over a REST API plus a live WebSocket feed — verified on a real Raspberry Pi (armv7l). Phase 3 (dashboard) is next — see [Roadmap](#roadmap).
 
 ## Why
 
@@ -77,16 +77,31 @@ cd PiPulse
 npm install
 npm run build     # storage -> collector -> api -> web, in dependency order
 npm test          # Vitest suites across all packages
-npm run dev       # runs the API (with its built-in collector loop) in watch mode
+npm run dev       # runs the server (collector + API) in watch mode
 ```
 
-To run the standalone collector daemon (writes to `PIPULSE_DB_PATH`, default `./pipulse.sqlite`; stop with Ctrl-C):
+To run the server (collector + REST API + WebSocket feed) from a build:
+
+```bash
+PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
+  node --disable-warning=ExperimentalWarning packages/api/dist/server.js
+```
+
+| Variable          | Default          | Purpose                          |
+| ----------------- | ---------------- | -------------------------------- |
+| `PIPULSE_DB_PATH` | `pipulse.sqlite` | SQLite database file             |
+| `PIPULSE_HOST`    | `0.0.0.0`        | Interface to bind                |
+| `PIPULSE_PORT`    | `8888`           | HTTP/WebSocket port              |
+
+Endpoints: `GET /api/config` (device + plugins), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (unix ms, default last hour), and `ws://…/api/live` (a `snapshot` of latest values on connect, then one `sample` message per new reading). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+
+To run only the collector daemon, without the API (writes to `PIPULSE_DB_PATH`, default `./pipulse.sqlite`; stop with Ctrl-C):
 
 ```bash
 PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages/collector
 ```
 
-> `npm run dev` currently starts the API package only (which polls metrics on its own interval and serves them). A combined collector+API+web dev command lands with the Phase 3 dashboard — check [Roadmap](#roadmap) for what's implemented today.
+> `npm run dev` does not start the web dashboard yet. A combined server+web dev command lands with the Phase 3 dashboard — check [Roadmap](#roadmap) for what's implemented today.
 
 ### Running in production
 
@@ -116,8 +131,8 @@ Configuration (collector plugins to enable, poll intervals, retention windows, a
 | --- | --- | --- |
 | 0 | Project scaffolding, lint/test setup, CI | ✅ Done |
 | 1 | Collector core (plugin API + first metrics + SQLite writer) | ✅ Done |
-| 2 | HTTP/WebSocket API | ⏳ Next |
-| 3 | Dashboard (status-page parity) |  |
+| 2 | HTTP/WebSocket API | ✅ Done |
+| 3 | Dashboard (status-page parity) | ⏳ Next |
 | 4 | History & charts (statistics-page parity) |  |
 | 5 | Alerting engine |  |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
