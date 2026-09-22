@@ -11,9 +11,13 @@ Read both before proposing what to build next — `README.md`'s roadmap table is
 
 ## Current status
 
-Phase 0 (foundations) is done: npm-workspaces monorepo (`packages/storage`, `packages/collector`, `packages/api`, `packages/web`), lint (ESLint flat config), tests (Vitest, 10/10 passing), CI (GitHub Actions, Node 22.x/24.x matrix). `npm test`, `npm run build`, `npm run lint`, `npm run format`, and `npm audit` are all green as of the last commit.
+Phase 0 (foundations) is done: npm-workspaces monorepo (`packages/storage`, `packages/collector`, `packages/api`, `packages/web`), lint (ESLint flat config), tests (Vitest), CI (GitHub Actions, Node 22.x/24.x matrix).
 
-Next up: **Phase 1 — Collector core** (see `docs/PLAN.md`'s step-by-step build plan for exact deliverables and exit criteria).
+Phase 1 (collector core) is done (PR #1): `packages/collector` has the versioned `CollectorPlugin` interface with runtime `validatePlugin()` checks and a contract suite run against every built-in plugin; six built-in plugins (`cpu_load`, `memory_used`, `network_rx`, `network_tx`, `disk_used`, `cpu_temperature`); `startScheduler()` (per-plugin intervals, skips a tick while the previous read is still in flight, `stop(timeoutMs)` drains before the db closes); and a `src/main.ts` daemon (`PIPULSE_DB_PATH`, clean SIGINT/SIGTERM shutdown). Exit criterion verified on the real Pi-hole Pi (armv7l): all six metrics landed at their configured 5 s / 10 s / 60 s intervals. 51 tests passing; `npm test`, `npm run build`, `npm run lint`, and `npm run format` all green.
+
+Deferred from Phase 1: a `vcgencmd` plugin (Pi volts/throttling flags) — needs real `vcgencmd` output captured from the Pi to test against.
+
+Next up: **Phase 2 — API layer** (see `docs/PLAN.md`'s step-by-step build plan for exact deliverables and exit criteria).
 
 ## Working conventions established so far
 
@@ -21,4 +25,5 @@ Next up: **Phase 1 — Collector core** (see `docs/PLAN.md`'s step-by-step build
 - Packages build in dependency order: storage → collector → api → web (no TS project references / `tsc -b` wired up — plain sequential `npm run build --workspace=...` calls in the root `package.json`).
 - Keep core logic decoupled from specific libraries (Fastify, Preact, node:sqlite) behind small interfaces — see "Future-proofing & extensibility" in `docs/PLAN.md` for the reasoning (stable versioned `CollectorPlugin` interface, thin adapters, contract tests).
 - Every phase's exit criterion includes tests passing in CI, not just Phase 0.
+- The target Pi (the Pi-hole box) is **armv7l** (32-bit) and its system Node at `/usr/bin/node` is NodeSource 16.x — too old for `node:sqlite`. Phase 1 was verified with a newer per-user Node (nvm). Phase 6's systemd unit must either upgrade the system Node or point `ExecStart` at a Node >=22.13; stick to Node 22 LTS for armv7l builds.
 - Commit messages here have included a `Co-Authored-By`/`Claude-Session` trailer from whichever Claude surface made the change — keep doing that if your environment sets one.
