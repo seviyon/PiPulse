@@ -1,6 +1,6 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
-export type PiPulseDb = Database.Database;
+export type PiPulseDb = DatabaseSync;
 
 /**
  * Opens (and creates, if needed) the PiPulse SQLite database at `path`,
@@ -8,8 +8,8 @@ export type PiPulseDb = Database.Database;
  * ensures the schema exists.
  */
 export function openDb(path: string): PiPulseDb {
-  const db = new Database(path);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
   createSchema(db);
   return db;
 }
@@ -54,7 +54,7 @@ export function insertSample(db: PiPulseDb, sample: Sample): void {
     );
     insertStatementCache.set(db, stmt);
   }
-  stmt.run(sample);
+  stmt.run({ ts: sample.ts, metric: sample.metric, value: sample.value });
 }
 
 /** Returns the most recent value recorded for every distinct metric. */
@@ -67,7 +67,7 @@ export function getLatest(db: PiPulseDb): Sample[] {
          SELECT metric, MAX(ts) as ts FROM metrics GROUP BY metric
        ) latest ON latest.metric = m.metric AND latest.ts = m.ts`
     )
-    .all() as Sample[];
+    .all() as unknown as Sample[];
 }
 
 /** Returns raw samples for one metric within an inclusive [from, to] window (unix ms). */
@@ -76,5 +76,5 @@ export function getHistory(db: PiPulseDb, metric: string, from: number, to: numb
     .prepare(
       'SELECT ts, metric, value FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? ORDER BY ts ASC'
     )
-    .all(metric, from, to) as Sample[];
+    .all(metric, from, to) as unknown as Sample[];
 }

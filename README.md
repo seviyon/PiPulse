@@ -57,7 +57,7 @@ PiPulse/
 | --- | --- |
 | Language | TypeScript (Node.js) end to end |
 | Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs |
-| Storage | SQLite (`better-sqlite3`), WAL mode |
+| Storage | SQLite (built-in `node:sqlite`), WAL mode |
 | API | [Fastify](https://fastify.io/) (HTTP + WebSocket) |
 | Frontend | Preact + Vite (React-compatible, ~3 KB runtime) |
 | Testing | Vitest (unit/integration), Playwright (end-to-end) |

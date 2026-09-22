@@ -10,3 +10,4 @@ dist/
 *.tsbuildinfo
 coverage/
 *.timestamp-*.mjs
+*.swp

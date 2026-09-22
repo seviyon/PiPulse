@@ -8,11 +8,5 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.11.1"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0"
   }
 }

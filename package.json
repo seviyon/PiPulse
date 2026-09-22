@@ -10,8 +10,8 @@
   "scripts": {
     "build": "npm run build --workspace=packages/storage && npm run build --workspace=packages/collector && npm run build --workspace=packages/api && npm run build --workspace=packages/web",
     "pretest": "npm run build --workspace=packages/storage && npm run build --workspace=packages/collector",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "test:watch": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
@@ -27,6 +27,6 @@
     "vitest": "^5.0.1"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   }
 }
