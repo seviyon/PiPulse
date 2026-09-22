@@ -232,9 +232,9 @@ Note the client bundle runs in _your browser_, not on the Pi, so its weight affe
 
 The rollup table introduced earlier is the mechanism, made explicit here since unbounded growth was a real concern with RRD too:
 
-- A scheduled housekeeping job (e.g. `node-cron`, hourly) downsamples raw rows older than N days into `metrics_rollup` (1m → 1h → 1d), then deletes the raw rows once safely rolled up, and prunes rollup rows past their own retention window (e.g. keep 1-minute resolution 7 days, hourly 90 days, daily indefinitely).
+- A housekeeping job (built in Phase 4: `startHousekeeping` in `packages/storage/src/rollup.ts`, run in-process by the server and the standalone collector, once at startup and then every minute via `setInterval`, no cron dependency) rolls complete buckets up raw → 1m → 1h → 1d, then deletes each resolution's rows past its retention, but only rows the next level already covers, so nothing is lost if a rollup falls behind. Default retention: raw 2 days, 1-minute 14 days, hourly 1 year, daily forever (~35 MB), overridable with `PIPULSE_RETENTION_RAW` / `_1M` / `_1H` / `_1D`.
 - This bounds the SQLite file size the same way RRD's fixed-size ring buffers did, but the retention numbers are config, not baked into a file format.
-- Add a `PRAGMA optimize` / periodic `VACUUM` (e.g. weekly) — SQLite doesn't auto-shrink the file after deletes, so without this the file only grows.
+- Not built yet: a `PRAGMA optimize` / periodic `VACUUM` (e.g. weekly). SQLite reuses pages freed by deletes but doesn't shrink the file, so it stays at its high-water mark (e.g. after lowering a retention) until this lands.
 - Surface the retention settings on the Settings page so they're tunable without a redeploy (Phase 5):
   - **Precedence:** environment variable › value saved from the UI › built-in default. A field set by an environment variable is shown locked, naming the variable, so the UI never pretends to change something a restart would undo.
   - **Persistence and live apply:** UI values are stored in a `settings` table (schema migration 3); housekeeping re-reads the policy on every run, so a change applies within a minute, no restart.
