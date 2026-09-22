@@ -1,7 +1,12 @@
 import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '@pipulse/storage';
+import {
+  openDb,
+  retentionFromEnv,
+  startHousekeeping,
+  type RetentionPolicy
+} from '@pipulse/storage';
 import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
 import { buildServer, createLiveFeed } from './index.js';
 
@@ -30,10 +35,26 @@ const WEB_DIR =
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
+/**
+ * How long each resolution is kept (PIPULSE_RETENTION_RAW/_1M/_1H/_1D).
+ * Read before touching the database, so a typo stops startup instead of
+ * pruning with a policy nobody asked for.
+ */
+function readRetention(): RetentionPolicy {
+  try {
+    return retentionFromEnv(process.env);
+  } catch (error) {
+    console.error(`[pipulse] ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+const RETENTION = readRetention();
+
 const db = openDb(DB_PATH);
 const live = createLiveFeed();
 const app = buildServer(db, {
   live,
+  retention: RETENTION,
   device: await readDeviceInfo(),
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
@@ -43,6 +64,13 @@ const app = buildServer(db, {
     unit,
     intervalMs
   }))
+});
+// Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every minute.
+const housekeeping = startHousekeeping(db, {
+  retention: RETENTION,
+  onError: (error) => {
+    console.error('[pipulse] housekeeping failed:', error);
+  }
 });
 const scheduler = startScheduler(db, builtinPlugins, {
   onSample: live.publish,
@@ -72,6 +100,7 @@ async function shutdown(): Promise<void> {
     process.exit(1);
   }
   shuttingDown = true;
+  housekeeping.stop();
   const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
   db.close();
   if (!drained) {
