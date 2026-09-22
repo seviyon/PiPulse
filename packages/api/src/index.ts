@@ -1,6 +1,7 @@
 import { hostname } from 'node:os';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
+import fastifyStatic from '@fastify/static';
 import { getHistory, getLatest, type PiPulseDb, type Sample } from '@pipulse/storage';
 
 /** What the API exposes about each collector plugin via /api/config. */
@@ -64,6 +65,8 @@ export interface ServerOptions {
    * policy to WebSockets, so without this check any page could read the feed.
    */
   allowedOrigins?: string[];
+  /** Directory holding the built dashboard (packages/web/dist); omitted = API only. */
+  webRoot?: string;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -118,7 +121,9 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
 
   app.get('/health', async () => ({ status: 'ok' }));
 
-  app.get('/api/config', async () => ({ device, plugins }));
+  // serverTime lets the dashboard measure staleness and pick history windows
+  // on the Pi's clock rather than the viewer's, which may disagree.
+  app.get('/api/config', async () => ({ device, plugins, serverTime: Date.now() }));
 
   app.get('/api/metrics/latest', async () => getLatest(db));
 
@@ -196,6 +201,10 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
         }
       );
     });
+  }
+
+  if (options.webRoot) {
+    void app.register(fastifyStatic, { root: options.webRoot });
   }
 
   return app;

@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { openDb } from '@pipulse/storage';
 import { builtinPlugins, startScheduler } from '@pipulse/collector';
 import { buildServer, createLiveFeed } from './index.js';
@@ -18,6 +20,13 @@ const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
   .map((origin) => origin.trim())
   .filter((origin) => origin !== '');
 
+/**
+ * The built dashboard. Defaults to packages/web/dist beside this package's
+ * dist/; if it hasn't been built, the server runs API-only.
+ */
+const WEB_DIR =
+  process.env['PIPULSE_WEB_DIR'] ?? fileURLToPath(new URL('../../web/dist', import.meta.url));
+
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
@@ -26,6 +35,7 @@ const live = createLiveFeed();
 const app = buildServer(db, {
   live,
   allowedOrigins: ALLOWED_ORIGINS,
+  ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
     id,
     label,

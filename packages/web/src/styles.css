@@ -1,0 +1,369 @@
+/*
+ * PiPulse dashboard. One panel of instrument tiles divided by hairlines;
+ * the hostname is the only large type, and the live dot is the only motion.
+ * Status colours come from a fixed status palette and always sit beside an
+ * icon and a word, never on text.
+ */
+
+:root {
+  color-scheme: light;
+  --page: #eceff3;
+  --surface: #fbfcfd;
+  --hairline: #d5dbe2;
+  --ink: #17202b;
+  --ink-2: #4f5b69;
+  --ink-3: #66717e;
+  --accent: #2a78d6;
+  --accent-track: #dce8f8;
+  --accent-wash: rgb(42 120 214 / 0.1);
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --focus: #2a78d6;
+
+  --font: 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0f1318;
+    --surface: #171c23;
+    --hairline: #29313b;
+    --ink: #edf1f5;
+    --ink-2: #b3bcc7;
+    --ink-3: #8f99a6;
+    --accent: #3987e5;
+    --accent-track: #1f3350;
+    --accent-wash: rgb(57 135 229 / 0.14);
+    --focus: #6aa6ee;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 5vw, 3.5rem) 16px 3rem;
+}
+
+/* ---- Device header: the hostname is the page's one loud element ---- */
+
+.device {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 2rem;
+  margin-bottom: clamp(1.25rem, 3vw, 2rem);
+}
+
+.device h1 {
+  font-size: clamp(3.5rem, 13vw, 7.5rem);
+  font-weight: 800;
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+}
+
+.device .platform {
+  margin-top: 0.6rem;
+  color: var(--ink-2);
+}
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding-bottom: 0.35rem;
+  color: var(--ink-2);
+}
+
+.connection strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.pulse {
+  position: relative;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex: none;
+}
+
+.connection[data-status='live'] .pulse {
+  background: var(--good);
+}
+
+/* One ring per incoming sample: the dashboard's heartbeat. */
+.pulse[data-beat]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--good);
+  animation: beat 900ms ease-out forwards;
+}
+
+@keyframes beat {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse[data-beat]::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* ---- Tiles: one panel, divided by hairlines ---- */
+
+/*
+ * Each tile draws its own right and bottom hairline. The grid is pulled 1px
+ * past the panel's right and bottom edges, so the outermost of those lines
+ * tuck under the panel's border instead of doubling it.
+ */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  margin: 0 -1px -1px 0;
+}
+
+.tile {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.9rem;
+  min-width: 0;
+  padding: 1.25rem 1.25rem 1.1rem;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.tile h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.status svg {
+  flex: none;
+}
+
+.reading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.2rem;
+}
+
+.reading .value {
+  font-size: 2.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.reading .unit {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.tile[data-stale] .reading .value {
+  color: var(--ink-3);
+}
+
+.note {
+  font-size: 0.875rem;
+  color: var(--ink-3);
+}
+
+.waiting {
+  align-self: center;
+  color: var(--ink-3);
+}
+
+/* ---- Meter ---- */
+
+.meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-track);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.tile[data-status='warning'] .meter-fill {
+  background: var(--warning);
+}
+
+.tile[data-status='critical'] .meter-fill {
+  background: var(--critical);
+}
+
+/* ---- Sparkline ---- */
+
+.spark {
+  position: relative;
+  align-self: end;
+  height: 3rem;
+  touch-action: none;
+}
+
+.spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.spark .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark .area {
+  fill: var(--accent-wash);
+}
+
+.spark .cursor {
+  stroke: var(--hairline);
+  stroke-width: 1;
+}
+
+/* HTML dots so they stay round while the SVG stretches to the tile's width. */
+.spark .dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+
+.spark .tip {
+  /* Below the line, over the range labels, so it never hides the tile's value. */
+  position: absolute;
+  top: calc(100% + 2px);
+  z-index: 1;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.spark .tip time {
+  color: var(--ink-3);
+  margin-left: 0.4rem;
+}
+
+.spark-range {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+}
+
+/* ---- Messages ---- */
+
+.problem {
+  max-width: 40rem;
+  padding: 1.25rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.problem h2 {
+  font-size: 1.25rem;
+  margin-bottom: 0.4rem;
+}
+
+.problem p {
+  color: var(--ink-2);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .meter-fill,
+  .spark .dot,
+  .pulse {
+    background: CanvasText;
+  }
+  .spark .line {
+    stroke: CanvasText;
+  }
+}

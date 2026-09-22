@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "build": "npm run build --workspace=packages/storage && npm run build --workspace=packages/collector && npm run build --workspace=packages/api && npm run build --workspace=packages/web",
-    "pretest": "npm run build --workspace=packages/storage && npm run build --workspace=packages/collector && npm run build --workspace=packages/api",
+    "pretest": "npm run build --workspace=packages/storage && npm run build --workspace=packages/collector && npm run build --workspace=packages/api && npm run build --workspace=packages/web",
     "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
     "test:watch": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest",
     "lint": "eslint .",
