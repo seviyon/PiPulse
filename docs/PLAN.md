@@ -51,10 +51,10 @@ What makes a 2026 rewrite worthwhile rather than a patch job:
 | ------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scope         | Single device, 1:1 replacement                             | Matches the original; simplest correct architecture, and the plugin-based design below leaves room to grow into a fleet view later without a rewrite                                                |
 | Runtime       | Node.js + TypeScript                                       | One language across collector, API, and frontend; the `systeminformation` npm package covers most `/proc`/`/sys` parsing the Perl script does by hand; you already have React experience to draw on |
-| Storage       | SQLite (via `better-sqlite3`), WAL mode                    | Embedded, zero ops, plain SQL for ad-hoc queries and exports — no RRD-style fixed rollups decided up front                                                                                          |
+| Storage       | SQLite (via built-in `node:sqlite`), WAL mode              | Embedded, zero ops, plain SQL for ad-hoc queries and exports — no RRD-style fixed rollups decided up front                                                                                          |
 | Deployment    | Both a native systemd service and an official Docker image | Matches how you run most of your homelab (Dockhand/Compose) while keeping a low-overhead native option close to how your Pi-hole box runs today                                                     |
 | API framework | Fastify (TypeScript-first, lightweight)                    | Small footprint suits a Pi; typed routes reduce the class of bug you'd otherwise catch in QA                                                                                                        |
-| Frontend      | React + Vite, built to static assets served by the API     | Matches your own prior React project; no server-side rendering needed for a single-device dashboard                                                                                                 |
+| Frontend      | Preact + Vite, built to static assets served by the API    | React-compatible (reuses your React/JSX experience) at \~3 KB runtime — see "Frontend alternatives" below; no server-side rendering needed for a single-device dashboard                            |
 | Charts        | A maintained canvas/SVG library (e.g. uPlot or Recharts)   | Replaces Flot; better performance and touch support on a Pi-class CPU, no jQuery dependency                                                                                                         |
 
 Suggested repo layout inside `PiPulse` (a TypeScript workspace, e.g. npm/pnpm workspaces):
@@ -65,7 +65,7 @@ PiPulse/
     collector/   # metric plugins + scheduler
     storage/     # SQLite schema, migrations, query helpers
     api/         # Fastify HTTP + WebSocket server
-    web/         # React + Vite dashboard
+    web/         # Preact + Vite dashboard
   deploy/
     systemd/     # unit file, install script
     docker/      # Dockerfile, compose.yml
@@ -113,7 +113,7 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 - `GET /api/alerts` — active and historical alerts
 - A **WebSocket** channel pushes new samples as they're collected — the dashboard updates live instead of polling `dynamic.json` on a timer, a real UX upgrade over the original.
 
-**Frontend** (React + Vite, built to static assets the API serves):
+**Frontend** (Preact + Vite, built to static assets the API serves):
 
 - **Dashboard** page — status cards per KPI, live via the WebSocket (replaces `status.html`)
 - **History** page — zoomable time-series charts per metric group (replaces `statistics.html`)
@@ -132,7 +132,7 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 
 **Docker image** — matches how you run almost everything else (Dockhand/Compose):
 
-- Multi-stage build: stage 1 compiles TypeScript and builds the React app, stage 2 is a slim `node:20-alpine` runtime
+- Multi-stage build: stage 1 compiles TypeScript and builds the Preact app, stage 2 is a slim `node:22-alpine` runtime (Node >=22.13 is required for `node:sqlite`)
 - Bind-mount a `/data` volume for the SQLite file
 - **Design risk to resolve early:** a _containerized system monitor_ needs visibility into the _host's_ `/proc`, `/sys`, and network stats, not the container's own. Plan to bind-mount `/proc` and `/sys:ro` and run with `pid: host` (and likely `network_mode: host` for accurate network counters) — call this out in the compose file's comments so it isn't mistaken for over-privileging later.
 
@@ -142,8 +142,8 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 
 | Legacy feature                                                        | New plan                                                                                       |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Status page (instant values)                                          | React Dashboard page, WebSocket-driven                                                         |
-| Statistics page (historical graphs, zoom)                             | React History page, SQLite-backed queries, modern zoomable chart lib                           |
+| Status page (instant values)                                          | Preact Dashboard page, WebSocket-driven                                                        |
+| Statistics page (historical graphs, zoom)                             | Preact History page, SQLite-backed queries, modern zoomable chart lib                          |
 | CPU / memory / network / storage / temperature KPIs                   | Ported via `systeminformation` plus a Pi-specific `vcgencmd` plugin                            |
 | Board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc) | Not carried over 1:1 — scope is your Pi only; the plugin model leaves the door open later      |
 | Config-driven KPI/alert definitions                                   | TypeScript plugin + rules files, no free-text `eval`                                           |
@@ -162,8 +162,8 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 | 0. Foundations      | Get a clean TypeScript workspace running | ✅ Done. `PiPulse` scaffolded with the `collector`/`storage`/`api`/`web` packages, lint + test runner, GitHub Actions skeleton | `npm test` and `npm run build` succeed in CI                             |
 | 1. Collector core   | Prove the plugin model end to end        | ✅ Done. Plugin API, CPU/memory/network/storage/temperature plugins via `systeminformation`, SQLite writer                     | Raw metric rows land in SQLite on a real Pi at the configured interval   |
 | 2. API layer        | Serve what's collected                   | Fastify REST endpoints (`latest`, `history`, `config`), WebSocket push channel                                                 | `curl` and a WebSocket client both return live data                      |
-| 3. Dashboard        | Status-page parity                       | React Dashboard page consuming the WebSocket feed                                                                              | Visually matches or beats the original `status.html` on the same device  |
-| 4. History & charts | Statistics-page parity                   | React History page, zoomable charts, the rollup/downsampling job                                                               | A year-old-equivalent of data renders without loading the full raw table |
+| 3. Dashboard        | Status-page parity                       | Preact Dashboard page consuming the WebSocket feed                                                                             | Visually matches or beats the original `status.html` on the same device  |
+| 4. History & charts | Statistics-page parity                   | Preact History page, zoomable charts, the rollup/downsampling job                                                              | A year-old-equivalent of data renders without loading the full raw table |
 | 5. Alerting         | Reimplement the rules engine             | Rule definitions, hysteresis logic, webhook action (e.g. to Apprise)                                                           | A manufactured threshold breach raises and later cancels correctly       |
 | 6. Packaging        | Make it installable                      | systemd unit + install script, multi-stage Dockerfile, multi-arch CI build                                                     | Fresh install works both ways on a real Pi                               |
 | 7. Cutover          | Retire the legacy daemon                 | Run both side by side, compare readings, decommission `rpimonitord`                                                            | New system has run unattended for a full week with no data gaps          |
@@ -204,10 +204,10 @@ The legacy daemon has no authentication and executes config-supplied strings (po
 
 - **No arbitrary eval.** Collector and alert-action logic is compiled TypeScript, not strings evaluated at runtime — this alone removes the injection class the original relies on operator trust to avoid.
 - **Add real authentication.** The original has none. Put the API behind the same `.lan` reverse-proxy + certificate setup you already use for other services, and add an API key or Basic Auth in front of it rather than exposing it unauthenticated.
-- **Parameterize every query.** Any endpoint taking `from`/`to`/`resolution` as input must use `better-sqlite3`'s parameter binding, never string-built SQL.
+- **Parameterize every query.** Any endpoint taking `from`/`to`/`resolution` as input must use `node:sqlite`'s parameter binding (prepared statements), never string-built SQL.
 - **Keep alert actions operator-defined only.** Webhook/shell alert actions belong in a config file you control, never in anything an API client can register or trigger — don't reintroduce a remote way to run arbitrary commands.
 - **Docker privilege awareness.** Mounting `/proc`, `/sys`, and `pid: host` for accurate metrics makes that container meaningfully more privileged than a typical app container — treat it accordingly: don't expose its port to the internet, keep it LAN-only like the rest of your stack.
-- **Dependency hygiene.** Lockfile plus Dependabot/Renovate; Node's ecosystem sees frequent CVEs, so keep the dependency list as small as the plan above already aims for (`systeminformation`, `better-sqlite3`, `fastify`, a chart library).
+- **Dependency hygiene.** Lockfile plus Dependabot/Renovate; Node's ecosystem sees frequent CVEs, so keep the dependency list as small as the plan above already aims for (`systeminformation`, `fastify`, `preact`, a chart library — SQLite is built into Node, so it adds no dependency at all).
 
 There's no LLM or natural-language input anywhere in this system, so prompt injection in that sense doesn't apply — but the underlying principle is the same one the plugin architecture already satisfies: never let external input become an executable code path.
 
@@ -223,6 +223,8 @@ React was suggested mainly because you already have React experience. If a small
 | Vanilla JS + Vite + a chart library | Smallest possible                          | No framework at all; more manual DOM work, viable given how simple this UI actually is                |
 
 Note the client bundle runs in _your browser_, not on the Pi, so its weight affects load time, not the Pi's resource budget. Recommendation: **Preact** as the default — keeps your React/JSX knowledge and its library ecosystem while shipping a fraction of the runtime; React itself remains a perfectly fine choice if you'd rather stay on the exact stack you already know.
+
+**Decision (Phase 0):** Preact + Vite was adopted — `packages/web` ships Preact with `@preact/preset-vite`. React-specific wording elsewhere in this plan has been updated to match.
 
 ## Keeping storage bounded (cleanup job)
 
@@ -245,7 +247,7 @@ Not needed for v1, and deliberately easy to bolt on later because of how storage
 
 Two separate problems: core code shouldn't rot as frameworks churn, and new features/plugins shouldn't require touching or breaking existing ones.
 
-- **Ports-and-adapters boundaries.** Core logic (scheduling, alert rules, rollups) depends only on small internal interfaces — never directly on Fastify, Preact, or `better-sqlite3` types. Thin adapter modules translate between the interface and the real library. Swapping any one of them later touches one adapter, not the whole codebase.
+- **Ports-and-adapters boundaries.** Core logic (scheduling, alert rules, rollups) depends only on small internal interfaces — never directly on Fastify, Preact, or `node:sqlite` types. Thin adapter modules translate between the interface and the real library. Swapping any one of them later touches one adapter, not the whole codebase.
 - **A stable, versioned plugin API.** Collector plugins and alert actions implement one narrow interface (`CollectorPlugin`, `AlertAction`) — the _only_ contact surface between core and plugin code. That interface carries its own semver and changelog, separate from the app version, the same idea as a browser extension's manifest version. Breaking it is a deliberate, documented decision, never a side effect of a core refactor.
 - **Self-contained plugin folders.** Each plugin ships as its own folder/package with a manifest (id, version, target interface version) and loads dynamically at startup — adding a plugin never means editing core files, the same model as Homebridge or Grafana plugins.
 - **Contract tests, not just unit tests.** A fixed Vitest suite runs against every plugin — built-in or third-party — asserting it satisfies the plugin interface's contract. This is what catches "core changed and broke a plugin" the moment it happens, not months later.
