@@ -11,3 +11,4 @@ dist/
 coverage/
 *.timestamp-*.mjs
 *.swp
+.playwright-mcp/

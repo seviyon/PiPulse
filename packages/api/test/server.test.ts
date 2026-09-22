@@ -46,6 +46,10 @@ describe('api server process', () => {
       })
     ]);
 
+    const dashboard = await fetch(`${baseUrl}/`);
+    expect(dashboard.status).toBe(200);
+    expect(await dashboard.text()).toContain('<div id="app">');
+
     const config = (await (await fetch(`${baseUrl}/api/config`)).json()) as {
       plugins: { id: string }[];
     };
