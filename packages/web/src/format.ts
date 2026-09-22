@@ -21,6 +21,13 @@ export function formatValue(value: number, unit: string): FormattedValue {
       return value >= 1024
         ? { text: round(value / 1024, 1), unit: 'GB' }
         : { text: round(value, 0), unit };
+    case 'MHz':
+      return { text: round(value, 0), unit };
+    case 'flags':
+      // vcgencmd's throttle bitmask: low bits are happening now, bits 16+ since boot.
+      if ((value & 0xf) !== 0) return { text: 'Now', unit: '' };
+      if (value !== 0) return { text: 'Since boot', unit: '' };
+      return { text: 'None', unit: '' };
     case 'B/s':
       if (value >= 1_000_000) return { text: round(value / 1_000_000, 1), unit: 'MB/s' };
       if (value >= 1000) return { text: round(value / 1000, 1), unit: 'kB/s' };
@@ -40,4 +47,14 @@ export function formatAge(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
   return `${Math.floor(minutes / 60)} h ago`;
+}
+
+/** "5 min", "3 h 12 min", "16 days 11 h". */
+export function formatUptime(ms: number): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days} ${days === 1 ? 'day' : 'days'} ${hours % 24} h`;
+  if (hours > 0) return `${hours} h ${minutes % 60} min`;
+  return `${minutes} min`;
 }

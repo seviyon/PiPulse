@@ -1,6 +1,6 @@
 import { formatAge, formatValue } from './format.js';
 import { Sparkline } from './sparkline.js';
-import { meterMax, statusFor, type StatusLevel } from './status.js';
+import { showsShareOfMax, statusFor, type StatusLevel } from './status.js';
 import { isStale } from './store.js';
 import type { PluginInfo, Sample } from './types.js';
 
@@ -12,6 +12,8 @@ interface TileProps {
   /** When the dashboard started waiting for data (page load); used to spot missing sensors. */
   waitingSince: number;
   windowMs: number;
+  /** Full scale for the meter; no meter when omitted. */
+  max?: number | undefined;
 }
 
 function StatusIcon({ level }: { level: Exclude<StatusLevel, 'ok'> }) {
@@ -31,7 +33,7 @@ function StatusIcon({ level }: { level: Exclude<StatusLevel, 'ok'> }) {
 }
 
 /** One metric: its current reading, a meter when it has a ceiling, and a recent trend. */
-export function Tile({ plugin, latest, series, now, waitingSince, windowMs }: TileProps) {
+export function Tile({ plugin, latest, series, now, waitingSince, windowMs, max }: TileProps) {
   if (!latest) {
     // Same rule as a stale value: three missed polls.
     const missing = now - waitingSince > plugin.intervalMs * 3;
@@ -52,7 +54,8 @@ export function Tile({ plugin, latest, series, now, waitingSince, windowMs }: Ti
   const { text, unit } = formatValue(latest.value, plugin.unit);
   const status = statusFor(plugin.id, latest.value);
   const stale = isStale(latest, plugin.intervalMs, now);
-  const max = meterMax(plugin.id);
+  // A bitmask has no magnitude to meter or trend.
+  const isFlags = plugin.unit === 'flags';
 
   return (
     <section
@@ -78,7 +81,13 @@ export function Tile({ plugin, latest, series, now, waitingSince, windowMs }: Ti
         {stale && <p class="note">No update since {formatAge(now - latest.ts)}</p>}
       </div>
       <div class="tile-foot">
-        {max !== undefined && (
+        {max !== undefined && showsShareOfMax(plugin.id) && (
+          <p class="note">
+            {Math.round((latest.value / max) * 100)}% of {formatValue(max, plugin.unit).text}{' '}
+            {formatValue(max, plugin.unit).unit}
+          </p>
+        )}
+        {max !== undefined && !isFlags && (
           <div
             class="meter"
             role="meter"
@@ -93,13 +102,15 @@ export function Tile({ plugin, latest, series, now, waitingSince, windowMs }: Ti
             />
           </div>
         )}
-        <Sparkline
-          series={series}
-          unit={plugin.unit}
-          label={plugin.label}
-          end={now}
-          windowMs={windowMs}
-        />
+        {!isFlags && (
+          <Sparkline
+            series={series}
+            unit={plugin.unit}
+            label={plugin.label}
+            end={now}
+            windowMs={windowMs}
+          />
+        )}
       </div>
     </section>
   );
