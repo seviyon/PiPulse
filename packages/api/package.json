@@ -1,0 +1,21 @@
+{
+  "name": "@pipulse/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@pipulse/collector": "*",
+    "@pipulse/storage": "*",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.1"
+  }
+}
