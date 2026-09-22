@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: planning / pre-alpha.** Architecture and roadmap are defined; implementation is starting. See [Roadmap](#roadmap) for current phase.
+> **Status: pre-alpha, Phase 0 complete.** Monorepo scaffold, storage/collector/api/web packages, lint, tests, and CI are all in place and green. Phase 1 (collector core) is next — see [Roadmap](#roadmap).
 
 ## Why
 
@@ -53,26 +53,34 @@ PiPulse/
 
 ## Tech stack
 
-| Layer | Choice |
-| --- | --- |
-| Language | TypeScript (Node.js) end to end |
-| Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs |
-| Storage | SQLite (built-in `node:sqlite`), WAL mode |
-| API | [Fastify](https://fastify.io/) (HTTP + WebSocket) |
-| Frontend | Preact + Vite (React-compatible, ~3 KB runtime) |
-| Testing | Vitest (unit/integration), Playwright (end-to-end) |
-| Deployment | systemd unit **and** a multi-arch Docker image (`linux/arm64`, `linux/arm/v7`) |
+| Layer | Choice | Version |
+| --- | --- | --- |
+| Runtime | Node.js | >=22.13.0 (needed for built-in `node:sqlite` without a flag) |
+| Language | TypeScript, end to end | 5.9.3 |
+| Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs | 5.33.13 |
+| Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode — no native module, no install step | Node built-in |
+| API | [Fastify](https://fastify.io/) (HTTP + WebSocket) | 5.12.5 |
+| Frontend | Preact + Vite (React-compatible, ~3 KB runtime) | Preact 10.29.8, Vite 8.3.0 |
+| Testing | Vitest (unit/integration today), Playwright (end-to-end, planned) | Vitest 5.0.1 |
+| Lint/format | ESLint (flat config) + Prettier | ESLint 10.11.0, Prettier 3.9.8 |
+| Deployment | systemd unit **and** a multi-arch Docker image (`linux/arm64`, `linux/arm/v7`) | — |
+
+Dependency versions above reflect the last verified clean install (`npm install`, 0 vulnerabilities); see `package.json`/`package-lock.json` for exact ranges.
 
 ## Getting started
 
-> These commands describe the intended developer workflow and will start working as each package lands — check [Roadmap](#roadmap) for what's actually implemented today.
+Requires **Node.js >=22.13.0** (for built-in `node:sqlite` support with no experimental flag).
 
 ```bash
 git clone https://github.com/<your-username>/PiPulse.git
 cd PiPulse
 npm install
-npm run dev      # runs the collector, API, and web dashboard together in dev mode
+npm run build     # storage -> collector -> api -> web, in dependency order
+npm test          # 10 tests across storage/collector/api
+npm run dev       # runs the API (with its built-in collector loop) in watch mode
 ```
+
+> `npm run dev` currently starts the API package only (which polls metrics on its own interval and serves them). A combined collector+API+web dev command lands with the Phase 3 dashboard — check [Roadmap](#roadmap) for what's implemented today.
 
 ### Running in production
 
@@ -98,16 +106,16 @@ Configuration (collector plugins to enable, poll intervals, retention windows, a
 
 ## Roadmap
 
-| Phase | Goal |
-| --- | --- |
-| 0 | Project scaffolding, lint/test setup, CI |
-| 1 | Collector core (plugin API + first metrics + SQLite writer) |
-| 2 | HTTP/WebSocket API |
-| 3 | Dashboard (status-page parity) |
-| 4 | History & charts (statistics-page parity) |
-| 5 | Alerting engine |
-| 6 | Packaging (systemd + Docker, multi-arch CI) |
-| 7 | Cutover from the legacy daemon |
+| Phase | Goal | Status |
+| --- | --- | --- |
+| 0 | Project scaffolding, lint/test setup, CI | ✅ Done |
+| 1 | Collector core (plugin API + first metrics + SQLite writer) | ⏳ Next |
+| 2 | HTTP/WebSocket API |  |
+| 3 | Dashboard (status-page parity) |  |
+| 4 | History & charts (statistics-page parity) |  |
+| 5 | Alerting engine |  |
+| 6 | Packaging (systemd + Docker, multi-arch CI) |  |
+| 7 | Cutover from the legacy daemon |  |
 
 ## Credits
 
