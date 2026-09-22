@@ -52,14 +52,27 @@ describe('api server process', () => {
     expect(config.plugins.map((plugin) => plugin.id)).toContain('cpu_load');
 
     const socket = new WebSocket(`${baseUrl.replace('http', 'ws')}/api/live`);
-    const liveSample = new Promise<{ type: string; metric: string }>((resolve) => {
-      socket.on('message', (data) => {
-        const message = JSON.parse(data.toString()) as { type: string; metric: string };
-        if (message.type === 'sample') resolve(message);
-      });
+    type LiveMessage =
+      { type: 'snapshot'; samples: { metric: string }[] } | { type: 'sample'; metric: string };
+    let resolvePushed: (metric: string) => void;
+    let resolveCpuLoad: () => void;
+    const pushed = new Promise<string>((resolve) => (resolvePushed = resolve));
+    // Plugins finish their first read at different times (cpu_load's takes
+    // ~500 ms on CI runners), so wait for cpu_load specifically — from the
+    // snapshot if it landed before we connected, else from a pushed sample.
+    const cpuLoadSeen = new Promise<void>((resolve) => (resolveCpuLoad = resolve));
+    socket.on('message', (data) => {
+      const message = JSON.parse(data.toString()) as LiveMessage;
+      const metrics =
+        message.type === 'snapshot'
+          ? message.samples.map((sample) => sample.metric)
+          : [message.metric];
+      if (message.type === 'sample') resolvePushed(message.metric);
+      if (metrics.includes('cpu_load')) resolveCpuLoad();
     });
     // cpu_load/memory_used poll every 5 s, so a pushed sample arrives within ~5 s.
-    expect((await liveSample).metric).toEqual(expect.any(String));
+    expect(await pushed).toEqual(expect.any(String));
+    await cpuLoadSeen;
     socket.close();
 
     const latest = (await (await fetch(`${baseUrl}/api/metrics/latest`)).json()) as {
