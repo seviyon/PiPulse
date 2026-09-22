@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@pipulse/storage": "*",
-    "systeminformation": "^5.23.5"
+    "systeminformation": "^5.33.13"
   }
 }
