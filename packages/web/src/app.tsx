@@ -2,6 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
 import { AlertsPage } from './alerts-page.js';
+import {
+  authEvents,
+  getJson,
+  HttpError,
+  loadSession,
+  NO_SESSION,
+  sendJson,
+  type Session
+} from './api.js';
+import { SignIn } from './sign-in.js';
 import { applyAlertEvent, worstAlert } from './alerts.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
@@ -21,12 +31,6 @@ const platformNames: Record<string, string> = {
 
 /** How much recent history each tile's sparkline shows. */
 const WINDOW_MS = 15 * 60 * 1000;
-
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
-  if (!response.ok) throw new Error(`${path} answered ${response.status}`);
-  return (await response.json()) as T;
-}
 
 function liveUrl(): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -93,6 +97,11 @@ function ConnectionLine({
 
 export function App() {
   const [config, setConfig] = useState<Config>();
+  const [session, setSession] = useState<Session>(NO_SESSION);
+  /** Reads need a sign-in and there is no session: show only the form. */
+  const [needSignIn, setNeedSignIn] = useState(false);
+  /** Bumped after signing in, to load the config again. */
+  const [loadKey, setLoadKey] = useState(0);
   /** Set while /api/config is failing: how long until the next attempt. */
   const [unreachable, setUnreachable] = useState<{ retryInMs: number }>();
   const [data, setData] = useState<LiveState>(emptyState);
@@ -140,8 +149,12 @@ export function App() {
           setUnreachable(undefined);
           setConfig(loaded);
         },
-        () => {
+        (error: unknown) => {
           if (cancelled) return;
+          if (error instanceof HttpError && error.status === 401) {
+            setNeedSignIn(true);
+            return;
+          }
           setUnreachable({ retryInMs: retryMs });
           timer = setTimeout(attempt, retryMs);
           retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
@@ -149,10 +162,26 @@ export function App() {
       );
     };
     attempt();
+    void loadSession().then((loaded) => {
+      if (!cancelled) setSession(loaded);
+    });
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
+  }, [loadKey]);
+
+  // Any 401 (an expired session, a restarted server): re-check, and if reads
+  // are protected, go back to the sign-in form.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      void loadSession().then((loaded) => {
+        setSession(loaded);
+        if (loaded.protectReads && !loaded.signedIn) setNeedSignIn(true);
+      });
+    };
+    authEvents.addEventListener('unauthorized', onUnauthorized);
+    return () => authEvents.removeEventListener('unauthorized', onUnauthorized);
   }, []);
 
   const loadHistory = useCallback((plugins: Config['plugins']) => {
@@ -179,6 +208,7 @@ export function App() {
     let connectedBefore = false;
     return connectLive({
       url: liveUrl(),
+      onUnauthorized: () => authEvents.dispatchEvent(new Event('unauthorized')),
       onMessage: (message) => {
         if (message.type === 'snapshot') {
           setData((state) => applySnapshot(state, message.samples));
@@ -204,6 +234,26 @@ export function App() {
       }
     });
   }, [config, loadHistory]);
+
+  const signedIn = () => {
+    setNeedSignIn(false);
+    setSession((current) => ({ ...current, signedIn: true }));
+    setLoadKey((key) => key + 1);
+  };
+  const signOut = () => {
+    void sendJson('POST', '/api/logout').finally(() => {
+      setSession((current) => ({ ...current, signedIn: false }));
+      if (session.protectReads) setNeedSignIn(true);
+    });
+  };
+
+  if (needSignIn) {
+    return (
+      <main class="page">
+        <SignIn heading="Sign in to PiPulse" onSignedIn={signedIn} />
+      </main>
+    );
+  }
 
   if (unreachable) {
     return (
@@ -244,6 +294,11 @@ export function App() {
           />
         </div>
         <ConnectionLine status={connection.status} retryInMs={connection.retryInMs} beat={beat} />
+        {session.signedIn && (
+          <button type="button" class="link-button" onClick={signOut}>
+            Sign out
+          </button>
+        )}
       </header>
       <nav class="pages" aria-label="Pages">
         <a

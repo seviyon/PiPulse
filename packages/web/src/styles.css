@@ -594,3 +594,43 @@ button:hover {
 .alert-list a {
   margin-left: auto;
 }
+/* ---- Sign-in and settings ---- */
+
+.sign-in {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 22rem;
+  padding: 1.25rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sign-in label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--ink-2);
+}
+
+.sign-in input,
+.settings-page input[type='text'] {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink);
+}
+
+.form-error {
+  color: var(--critical);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}

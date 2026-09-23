@@ -9,6 +9,8 @@ export interface LiveOptions {
   onStatus(status: ConnectionStatus, retryInMs?: number): void;
   /** Injectable for tests; defaults to the browser's WebSocket. */
   WebSocketImpl?: typeof WebSocket;
+  /** The server closed with 4401 (sign-in needed); no reconnect follows. */
+  onUnauthorized?: () => void;
 }
 
 export const FIRST_RETRY_MS = 1000;
@@ -42,8 +44,14 @@ export function connectLive(options: LiveOptions): () => void {
       }
       options.onMessage(message);
     };
-    socket.onclose = () => {
+    socket.onclose = (event?: CloseEvent) => {
       if (stopped) return;
+      if (event?.code === 4401) {
+        // Retrying can't help until someone signs in; the app shows the form.
+        stopped = true;
+        options.onUnauthorized?.();
+        return;
+      }
       options.onStatus('reconnecting', retryMs);
       timer = setTimeout(open, retryMs);
       retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
