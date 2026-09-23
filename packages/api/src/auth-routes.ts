@@ -102,9 +102,11 @@ export function registerAuth(
           .status(429)
           .send({ error: 'too many sign-in attempts; try again in 15 minutes' });
       }
+      // Count the attempt before the slow check, so parallel guesses can't
+      // all get past the limit while scrypt runs; a success clears it.
+      limiter.fail(request.ip);
       // The hook has already answered 403 when there is no password.
       if (!(await verifyPassword(request.body.password, passwordHash!))) {
-        limiter.fail(request.ip);
         await delay(failureDelayMs);
         return reply.status(401).send({ error: 'sign-in failed' });
       }

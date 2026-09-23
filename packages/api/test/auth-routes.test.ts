@@ -164,6 +164,17 @@ describe('sign-in', () => {
     expect(blocked.statusCode).toBe(429);
   });
 
+  it('counts parallel wrong passwords against the limit as they start', async () => {
+    const api = server({ passwordHash });
+    const statuses = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        api.inject({ method: 'POST', url: '/api/login', payload: { password: 'guess' } })
+      )
+    ).then((responses) => responses.map((res) => res.statusCode));
+    expect(statuses.filter((code) => code === 401)).toHaveLength(5);
+    expect(statuses.filter((code) => code === 429)).toHaveLength(5);
+  });
+
   it('signs out, and the old cookie stops working', async () => {
     const api = server({ passwordHash, protectReads: true });
     const cookie = await signIn(api);
