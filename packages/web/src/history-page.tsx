@@ -48,24 +48,36 @@ async function fetchSeries(
   return (await response.json()) as Series;
 }
 
+/** Finest to coarsest; a coarser level never has more rows in a window. */
+const RESOLUTIONS: Resolution[] = ['raw', '1m', '1h', '1d'];
+
 /**
  * A chart's series, all at one resolution. The server picks per metric by
  * counting its rows, and paired metrics (network rx/tx, on separate timers)
- * can land either side of the point limit in the same window; so the first
- * metric picks and the rest follow, rather than one line smoothed and the
- * other not under a label true for only one of them. A lead with no
- * readings falls through to raw, which could pull days of raw rows for its
- * partner, so then the rest pick for themselves.
+ * can land either side of the point limit in the same window, which would
+ * draw one line smoothed and the other not under a label true for only one.
+ * So every metric picks for itself, in parallel, and any that picked finer
+ * than the coarsest pick among those with readings is refetched at it:
+ * coarser can't exceed the limit, and usually they agree and nothing is
+ * refetched. A metric with no readings is left out of the choice, since
+ * what the server picks for no rows (raw, minutes or days, depending on
+ * the window and whether it was ever collected) says nothing about the rest.
+ * A metric younger than one bucket of the coarser level has no rows there
+ * yet, so it keeps its own pick: two resolutions beat a blank line.
  */
 async function fetchGroup(group: ChartGroup, window: Window): Promise<[string, Series][]> {
-  const [first, ...rest] = group.metrics.map((metric) => metric.id);
-  const lead = await fetchSeries(first!, window);
-  const others = await Promise.all(
-    rest.map((metric) =>
-      fetchSeries(metric, window, lead.points.length > 0 ? lead.resolution : 'auto')
-    )
+  const ids = group.metrics.map((metric) => metric.id);
+  const picked = await Promise.all(ids.map((id) => fetchSeries(id, window)));
+  const withData = picked.filter((series) => series.points.length > 0);
+  const target = RESOLUTIONS[Math.max(...withData.map((s) => RESOLUTIONS.indexOf(s.resolution)))];
+  const series = await Promise.all(
+    picked.map(async (s, i) => {
+      if (!target || s.points.length === 0 || s.resolution === target) return s;
+      const coarser = await fetchSeries(ids[i]!, window, target);
+      return coarser.points.length > 0 ? coarser : s;
+    })
   );
-  return [[first!, lead], ...rest.map((metric, i): [string, Series] => [metric, others[i]!])];
+  return ids.map((id, i): [string, Series] => [id, series[i]!]);
 }
 
 /** The dashed core-count line and its plain-words note, for the load chart. */
