@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha, Phase 3 complete.** One server process collects 11 metrics (CPU load, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite and serves a live web dashboard, a REST API and a WebSocket feed — verified side by side with RPi-Monitor on a Raspberry Pi 2 (armv7l). Phase 4 (history & charts) is next — see [Roadmap](#roadmap).
+> **Status: pre-alpha, Phase 4 complete.** One server process collects 11 metrics (CPU load, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite and serves a live web dashboard, a History page with zoomable charts from 1 hour to 1 year, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5 (alerting & settings) is next — see [Roadmap](#roadmap).
 
 ## Why
 
@@ -99,9 +99,9 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | `PIPULSE_RETENTION_1H` | `1y` | How long hourly averages are kept |
 | `PIPULSE_RETENTION_1D` | `forever` | How long daily averages are kept |
 
-Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages and deletes data past its retention, but only once the next level already covers it. Changing a value takes effect within a minute of restarting: a longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess. The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
+Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Changing a value takes effect within a minute of restarting: a longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess. The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/config` (device, plugins, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (unix ms, default last hour), and `ws://…/api/live` (a `snapshot` of latest values on connect, then one `sample` message per new reading). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/config` (device, plugins, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one retention still covers that keeps the answer under ~1500 points), and `ws://…/api/live` (a `snapshot` of latest values on connect, then one `sample` message per new reading). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -143,8 +143,8 @@ Configuration (collector plugins to enable, poll intervals, retention windows, a
 | 1 | Collector core (plugin API + first metrics + SQLite writer) | ✅ Done |
 | 2 | HTTP/WebSocket API | ✅ Done |
 | 3 | Dashboard (status-page parity) | ✅ Done |
-| 4 | History & charts (statistics-page parity) | ⏳ Next |
-| 5 | Alerting engine & settings (authenticated, UI-editable retention) |  |
+| 4 | History & charts (statistics-page parity) | ✅ Done |
+| 5 | Alerting engine & settings (authenticated, UI-editable retention) | ⏳ Next |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 
