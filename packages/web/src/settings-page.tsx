@@ -71,6 +71,20 @@ export function SettingsPage({
         return;
       }
     }
+    if (error instanceof HttpError && error.status === 409) {
+      // Data changed since the review: show the server's preview and ask again.
+      setReview({ status: 'ready', preview: error.body as Preview });
+      setConfirmed(false);
+      setMessage('This change deletes data. Confirm it below to save.');
+      return;
+    }
+    if (error instanceof HttpError) {
+      const reason = (error.body as { error?: string } | undefined)?.error;
+      setMessage(
+        `The PiPulse server refused the change${reason ? `: ${reason}` : ''}. Nothing was saved.`
+      );
+      return;
+    }
     setMessage("Couldn't reach the PiPulse server. Nothing was saved.");
   };
 

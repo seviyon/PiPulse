@@ -100,8 +100,8 @@ describe('POST /api/settings/preview', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().deletions.raw).toEqual({
-      deletesRows: 48,
-      from: NOW - 3 * DAY,
+      deletesRows: 24,
+      from: NOW - 2 * DAY,
       to: NOW - DAY
     });
     expect(res.json().estimatedBytes).toBeGreaterThan(0);
@@ -135,13 +135,19 @@ describe('PUT /api/settings', () => {
     await start();
     const refused = await put({ retention: { raw: '1d' } });
     expect(refused.statusCode).toBe(409);
-    expect(refused.json().deletions.raw.deletesRows).toBe(48);
+    expect(refused.json().deletions.raw.deletesRows).toBe(24);
     expect(getRetention().raw.source).toBe('default');
 
     const saved = await put({ retention: { raw: '1d' }, confirmDeletion: true });
     expect(saved.statusCode).toBe(200);
     expect(saved.json().retention.raw).toMatchObject({ text: '1d', source: 'saved' });
     expect(getRetention().raw.ms).toBe(DAY);
+  });
+
+  it('saves a change that deletes nothing even while overdue rows wait for housekeeping', async () => {
+    await start();
+    // Raw rows older than 2 days exist (seeded from 3 days back); lengthening hourly deletes none.
+    expect((await put({ retention: { '1h': '2y' } })).statusCode).toBe(200);
   });
 
   it('saves a longer retention without confirmation', async () => {

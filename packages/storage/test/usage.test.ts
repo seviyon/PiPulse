@@ -36,11 +36,29 @@ describe('storageUsage', () => {
 });
 
 describe('previewDeletion', () => {
-  it('counts what a shorter policy would delete, and the span it covers', () => {
-    const preview = previewDeletion(db, { ...DEFAULT_RETENTION, raw: DAY, '1h': 7 * DAY }, NOW);
-    expect(preview.raw).toEqual({ deletesRows: 48, from: NOW - 3 * DAY, to: NOW - DAY });
+  it('counts only what the change itself removes, and the span it covers', () => {
+    const preview = previewDeletion(
+      db,
+      { ...DEFAULT_RETENTION, raw: DAY, '1h': 7 * DAY },
+      DEFAULT_RETENTION,
+      NOW
+    );
+    // Raw rows older than 2 days were due anyway: only [NOW - 2d, NOW - 1d) is the change's doing.
+    expect(preview.raw).toEqual({ deletesRows: 24, from: NOW - 2 * DAY, to: NOW - DAY });
     expect(preview['1h']).toEqual({ deletesRows: 1, from: NOW - 10 * DAY, to: NOW - 7 * DAY });
     expect(preview['1d']).toEqual({ deletesRows: 0, from: null, to: null });
+  });
+
+  it('counts nothing for unchanged or longer levels, even with overdue rows', () => {
+    // Raw rows past the current 2-day cutoff exist (housekeeping runs once a minute).
+    const preview = previewDeletion(
+      db,
+      { ...DEFAULT_RETENTION, '1h': 2 * 365 * DAY },
+      DEFAULT_RETENTION,
+      NOW
+    );
+    expect(preview.raw.deletesRows).toBe(0);
+    expect(preview['1h'].deletesRows).toBe(0);
   });
 });
 

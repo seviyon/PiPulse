@@ -114,7 +114,7 @@ export function registerSettingsRoutes(
       ok: true as const,
       levels: result.levels,
       preview: {
-        deletions: previewDeletion(db, policy, now()),
+        deletions: previewDeletion(db, policy, policyOf(options.getRetention()), now()),
         estimatedBytes: estimateBytes(policy, options.metrics, storageUsage(db))
       }
     };

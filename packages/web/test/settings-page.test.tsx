@@ -60,10 +60,12 @@ const preview = {
 
 let root: HTMLElement;
 let putStatus: number;
+let previewAnswer: typeof preview;
 const calls: { method: string; path: string; body?: unknown }[] = [];
 
 beforeEach(() => {
   putStatus = 200;
+  previewAnswer = preview;
   calls.length = 0;
   vi.stubGlobal(
     'fetch',
@@ -72,11 +74,15 @@ beforeEach(() => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, path: url, body });
       if (url === '/api/settings' && method === 'GET') return Response.json(settings);
-      if (url === '/api/settings/preview') return Response.json(preview);
+      if (url === '/api/settings/preview') return Response.json(previewAnswer);
       if (url === '/api/settings' && method === 'PUT') {
-        return Response.json(putStatus === 200 ? settings : { error: 'sign in required' }, {
-          status: putStatus
-        });
+        const answers: Record<number, unknown> = {
+          200: settings,
+          401: { error: 'sign in required' },
+          403: { error: 'editing is disabled: no admin password configured' },
+          409: { error: 'this change deletes data; confirm it first', ...preview }
+        };
+        return Response.json(answers[putStatus], { status: putStatus });
       }
       return new Response('not found', { status: 404 });
     })
@@ -171,6 +177,40 @@ describe('SettingsPage', () => {
       confirmDeletion: true
     });
     expect(root.textContent).toContain('Saved');
+  });
+
+  it('shows the fresh preview when the server says the change now deletes data', async () => {
+    putStatus = 409;
+    previewAnswer = {
+      ...preview,
+      deletions: { ...preview.deletions, raw: { deletesRows: 0, from: null, to: null } }
+    };
+    render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
+    await settle();
+    // Lengthening previews no deletion, so Save goes without confirmation…
+    await type('raw', '7d');
+    await click('Review changes');
+    expect(root.querySelector('input[type=checkbox]')).toBeNull();
+    await click('Save');
+    // …and the server's 409 brings up its preview and the confirmation instead.
+    expect(root.textContent).toMatch(/Deletes ~190,000 raw readings/);
+    expect(root.querySelector('input[type=checkbox]')).not.toBeNull();
+    expect(root.textContent).not.toContain("Couldn't reach");
+  });
+
+  it('explains a refused save instead of blaming the network', async () => {
+    putStatus = 403;
+    previewAnswer = {
+      ...preview,
+      deletions: { ...preview.deletions, raw: { deletesRows: 0, from: null, to: null } }
+    };
+    render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
+    await settle();
+    await type('raw', '7d');
+    await click('Review changes');
+    await click('Save');
+    expect(root.textContent).toMatch(/refused the change/);
+    expect(root.textContent).not.toContain("Couldn't reach");
   });
 
   it('falls back to the sign-in form when the session is gone (server restarted)', async () => {

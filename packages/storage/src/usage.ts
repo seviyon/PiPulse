@@ -26,26 +26,33 @@ export interface LevelDeletion {
   to: number | null;
 }
 
-function levelQuery(db: DatabaseSync, resolution: Resolution, before?: number): LevelUsage {
-  const row = (
-    resolution === 'raw'
-      ? before === undefined
-        ? db.prepare('SELECT COUNT(*) AS rows, MIN(ts) AS oldest FROM metrics').get()
-        : db
-            .prepare('SELECT COUNT(*) AS rows, MIN(ts) AS oldest FROM metrics WHERE ts < ?')
-            .get(before)
-      : before === undefined
-        ? db
-            .prepare(
-              'SELECT COUNT(*) AS rows, MIN(ts) AS oldest FROM metrics_rollup WHERE resolution = ?'
-            )
-            .get(resolution)
-        : db
-            .prepare(
-              'SELECT COUNT(*) AS rows, MIN(ts) AS oldest FROM metrics_rollup WHERE resolution = ? AND ts < ?'
-            )
-            .get(resolution, before)
-  ) as { rows: number; oldest: number | null };
+/** Rows and the oldest row of one level, optionally only those in [since, before). */
+function levelQuery(
+  db: DatabaseSync,
+  resolution: Resolution,
+  range: { since?: number; before?: number } = {}
+): LevelUsage {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (resolution !== 'raw') {
+    where.push('resolution = ?');
+    params.push(resolution);
+  }
+  if (range.since !== undefined) {
+    where.push('ts >= ?');
+    params.push(range.since);
+  }
+  if (range.before !== undefined) {
+    where.push('ts < ?');
+    params.push(range.before);
+  }
+  const table = resolution === 'raw' ? 'metrics' : 'metrics_rollup';
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS rows, MIN(ts) AS oldest FROM ${table}` +
+        (where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '')
+    )
+    .get(...params) as { rows: number; oldest: number | null };
   return { rows: Number(row.rows), oldest: row.oldest };
 }
 
@@ -57,24 +64,30 @@ export function storageUsage(db: DatabaseSync): StorageUsage {
 }
 
 /**
- * What housekeeping would delete under `policy`: rows older than each
- * level's cutoff. An upper bound — raw rows not yet rolled up wait a
- * minute longer.
+ * What changing from `current` to `proposed` deletes: per level whose
+ * retention gets shorter, the rows between the new cutoff and the current
+ * one. Rows already past the current cutoff (housekeeping runs once a
+ * minute) were going anyway and don't count.
  */
 export function previewDeletion(
   db: DatabaseSync,
-  policy: RetentionPolicy,
+  proposed: RetentionPolicy,
+  current: RetentionPolicy,
   now: number
 ): Record<Resolution, LevelDeletion> {
   const preview = {} as Record<Resolution, LevelDeletion>;
   for (const resolution of RESOLUTIONS) {
-    const ms = policy[resolution];
-    if (!Number.isFinite(ms)) {
+    const ms = proposed[resolution];
+    const currentMs = current[resolution];
+    if (!(ms < currentMs)) {
       preview[resolution] = { deletesRows: 0, from: null, to: null };
       continue;
     }
     const cutoff = now - ms;
-    const doomed = levelQuery(db, resolution, cutoff);
+    const doomed = levelQuery(db, resolution, {
+      ...(Number.isFinite(currentMs) ? { since: now - currentMs } : {}),
+      before: cutoff
+    });
     preview[resolution] =
       doomed.rows === 0
         ? { deletesRows: 0, from: null, to: null }
