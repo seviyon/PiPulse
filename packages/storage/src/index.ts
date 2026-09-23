@@ -80,3 +80,19 @@ export {
 } from './rollup.js';
 
 export { getSettings, saveSettings } from './settings.js';
+
+export {
+  DEFAULT_RETENTION_TEXT,
+  policyOf,
+  RESOLUTION_LABELS,
+  RESOLUTIONS,
+  resolveRetention,
+  RETENTION_VARIABLES,
+  retentionSource,
+  saveRetention,
+  validateRetention,
+  type LookBack,
+  type RetentionCheck,
+  type RetentionLevel,
+  type RetentionSettings
+} from './retention.js';
