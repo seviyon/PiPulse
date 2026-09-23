@@ -10,7 +10,7 @@ import {
   type ChartGroup
 } from './history.js';
 import { RANGES, routeHash, type RangeId } from './router.js';
-import type { Config, PluginInfo, Series } from './types.js';
+import type { Config, PluginInfo, Resolution, Series } from './types.js';
 
 interface HistoryPageProps {
   config: Config;
@@ -37,10 +37,35 @@ function describeWindow({ from, to }: Window): string {
   return `${format(from)} to ${format(to)}`;
 }
 
-async function fetchSeries(metric: string, { from, to }: Window): Promise<Series> {
-  const response = await fetch(`/api/metrics/${metric}/series?from=${from}&to=${to}`);
+async function fetchSeries(
+  metric: string,
+  { from, to }: Window,
+  resolution: Resolution | 'auto' = 'auto'
+): Promise<Series> {
+  const query = `from=${from}&to=${to}${resolution === 'auto' ? '' : `&resolution=${resolution}`}`;
+  const response = await fetch(`/api/metrics/${metric}/series?${query}`);
   if (!response.ok) throw new Error(`series for ${metric} answered ${response.status}`);
   return (await response.json()) as Series;
+}
+
+/**
+ * A chart's series, all at one resolution. The server picks per metric by
+ * counting its rows, and paired metrics (network rx/tx, on separate timers)
+ * can land either side of the point limit in the same window; so the first
+ * metric picks and the rest follow, rather than one line smoothed and the
+ * other not under a label true for only one of them. A lead with no
+ * readings falls through to raw, which could pull days of raw rows for its
+ * partner, so then the rest pick for themselves.
+ */
+async function fetchGroup(group: ChartGroup, window: Window): Promise<[string, Series][]> {
+  const [first, ...rest] = group.metrics.map((metric) => metric.id);
+  const lead = await fetchSeries(first!, window);
+  const others = await Promise.all(
+    rest.map((metric) =>
+      fetchSeries(metric, window, lead.points.length > 0 ? lead.resolution : 'auto')
+    )
+  );
+  return [[first!, lead], ...rest.map((metric, i): [string, Series] => [metric, others[i]!])];
 }
 
 /** The dashed core-count line and its plain-words note, for the load chart. */
@@ -99,7 +124,9 @@ function GroupChart({
   const reference = loadReference(group, config.device.cpus);
   const perMetric = group.metrics.map((metric) => series[metric.id]?.points ?? []);
   const data = useMemo(() => toChartData(perMetric), [series]);
-  const resolution = series[group.metrics[0]!.id]?.resolution ?? 'raw';
+  // From a metric with readings: an empty one's resolution says nothing about the chart.
+  const shown = group.metrics.map((metric) => series[metric.id]);
+  const resolution = (shown.find((s) => s && s.points.length > 0) ?? shown[0])?.resolution ?? 'raw';
   const band = group.metrics.length === 1 && resolution !== 'raw';
   const single = group.metrics.length === 1;
 
@@ -167,14 +194,13 @@ export function HistoryPage({ config, range, now }: HistoryPageProps) {
     let cancelled = false;
     setPending(true);
     setLoad((current) => (current.status === 'ready' ? current : { status: 'loading' }));
-    const metrics = groups.flatMap((group) => group.metrics.map((metric) => metric.id));
-    Promise.all(metrics.map((metric) => fetchSeries(metric, window))).then(
+    Promise.all(groups.map((group) => fetchGroup(group, window))).then(
       (results) => {
         if (cancelled) return;
         setPending(false);
         setLoad({
           status: 'ready',
-          series: Object.fromEntries(metrics.map((metric, i) => [metric, results[i]!])),
+          series: Object.fromEntries(results.flat()),
           window
         });
       },
