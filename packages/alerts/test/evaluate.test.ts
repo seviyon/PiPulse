@@ -51,7 +51,7 @@ const silent: Rule = {
 
 /** Readings every poll across [NOW - span, NOW] with the given min/max. */
 function covering(span: number, min: number, max: number, withBits = 0): WindowSummary {
-  return { count: span / I + 1, oldest: NOW - span, newest: NOW, min, max, withBits };
+  return { count: span / I + 1, oldest: NOW - span, newest: NOW, min, max, withBits, maxGap: I };
 }
 
 const input = (over: Partial<CheckInput>): CheckInput => ({
@@ -108,6 +108,19 @@ describe('threshold rules', () => {
 
   it('never clear across a collection gap', () => {
     expect(evaluate(hot, input({ open: true, window: EMPTY_WINDOW }))).toEqual({ action: 'none' });
+  });
+
+  it('decide nothing across a gap in the middle of the window', () => {
+    const gappy = { ...covering(2 * MIN, 60, 70), maxGap: 4 * I };
+    expect(evaluate(hot, input({ open: true, window: gappy }))).toEqual({ action: 'none' });
+    expect(evaluate(hot, input({ window: { ...gappy, min: 80, max: 85 } }))).toEqual({
+      action: 'none'
+    });
+  });
+
+  it('tolerate a couple of missed polls in a row', () => {
+    const skipped = { ...covering(2 * MIN, 60, 70), maxGap: 3 * I };
+    expect(evaluate(hot, input({ open: true, window: skipped }))).toEqual({ action: 'clear' });
   });
 
   it('handle atMost symmetrically', () => {

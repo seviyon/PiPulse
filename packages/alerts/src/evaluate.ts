@@ -9,6 +9,8 @@ export interface WindowSummary {
   max: number | null;
   /** Readings with any of the rule's bitsSet bits (0 when it has none). */
   withBits: number;
+  /** Longest time between consecutive readings; null with fewer than two. */
+  maxGap: number | null;
 }
 
 export interface Reading {
@@ -38,7 +40,8 @@ export const EMPTY_WINDOW: WindowSummary = {
   newest: null,
   min: null,
   max: null,
-  withBits: 0
+  withBits: 0,
+  maxGap: null
 };
 
 const MIN = 60_000;
@@ -56,7 +59,10 @@ export function windowMs(rule: Rule, open: boolean): number {
   return open ? rule.clearAfterMs : rule.forMs;
 }
 
-/** Readings span the window: from within two polls of its start to within two polls of now. */
+/**
+ * Readings span the window: from within two polls of its start to within two
+ * polls of now, missing no more than two polls in a row anywhere between.
+ */
 function covered(w: WindowSummary, now: number, span: number, intervalMs: number): boolean {
   const slack = 2 * intervalMs;
   return (
@@ -64,7 +70,8 @@ function covered(w: WindowSummary, now: number, span: number, intervalMs: number
     w.oldest !== null &&
     w.newest !== null &&
     w.oldest <= now - span + slack &&
-    w.newest >= now - slack
+    w.newest >= now - slack &&
+    (w.maxGap ?? 0) <= 3 * intervalMs
   );
 }
 

@@ -41,15 +41,19 @@ describe('summarizeWindow', () => {
       newest: 3000,
       min: 0,
       max: 0x50000,
-      withBits: 1
+      withBits: 1,
+      maxGap: 1000
     });
+    expect(summarizeWindow(db, 'throttled', 1000, 9000).maxGap).toBe(6000);
+    expect(summarizeWindow(db, 'throttled', 8000, 9000).maxGap).toBeNull();
     expect({ ...summarizeWindow(db, 'throttled', 4000, 5000) }).toEqual({
       count: 0,
       oldest: null,
       newest: null,
       min: null,
       max: null,
-      withBits: 0
+      withBits: 0,
+      maxGap: null
     });
   });
 

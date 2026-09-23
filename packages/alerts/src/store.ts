@@ -21,8 +21,10 @@ const COLUMNS = `id, rule_id AS ruleId, metric, severity, message, value,
 /** Parameters: mask, metric, from, to. Exported so a test can check its query plan. */
 export const WINDOW_SQL = `SELECT COUNT(*) AS count, MIN(ts) AS oldest, MAX(ts) AS newest,
     MIN(value) AS min, MAX(value) AS max,
-    COALESCE(SUM((CAST(value AS INTEGER) & ?) != 0), 0) AS withBits
-  FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ?`;
+    COALESCE(SUM((CAST(value AS INTEGER) & ?) != 0), 0) AS withBits,
+    MAX(gap) AS maxGap
+  FROM (SELECT ts, value, ts - LAG(ts) OVER (ORDER BY ts) AS gap
+    FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ?)`;
 
 /** One metric's raw readings in [from, to], via the (metric, ts) primary key. */
 export function summarizeWindow(
