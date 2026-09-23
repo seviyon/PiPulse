@@ -105,3 +105,12 @@ export {
   type VacuumOptions,
   type VacuumResult
 } from './vacuum.js';
+
+export {
+  estimateBytes,
+  previewDeletion,
+  storageUsage,
+  type LevelDeletion,
+  type LevelUsage,
+  type StorageUsage
+} from './usage.js';
