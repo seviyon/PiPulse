@@ -1,4 +1,4 @@
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
@@ -72,7 +72,12 @@ describe('enforcement', () => {
     ['signed in', true, 'GET', '/api/metrics/latest', 200],
     // Past the hook: no settings routes are registered in this test server.
     ['signed in', false, 'PUT', '/api/settings', 404],
-    ['signed out', true, 'GET', '/health', 200]
+    ['signed out', true, 'GET', '/health', 200],
+    // Percent-encoded paths reach the same routes; the hook must see them too.
+    ['signed out', true, 'GET', '/%61pi/metrics/latest', 401],
+    ['signed out', true, 'GET', '/%61%70%69/config', 401],
+    ['read-only', false, 'PUT', '/%61pi/settings', 403],
+    ['signed out', false, 'PUT', '/%61pi/settings', 401]
   ] as const)(
     '%s, protect reads %s: %s %s → %i',
     async (mode, protectReads, method, url, expected) => {
@@ -89,6 +94,29 @@ describe('enforcement', () => {
       headers: { cookie, origin: 'http://evil.example', host: 'io.lan:8889' }
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('absolute-form request targets', () => {
+  // inject() normalises the target, so this needs a real socket.
+  it('cannot slip a write past the hook', async () => {
+    const api = server({});
+    await api.listen({ port: 0, host: '127.0.0.1' });
+    const port = (api.server.address() as AddressInfo).port;
+    const body = '{"retention":{}}';
+    const response = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.write(
+          `PUT http://x/api/settings HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n` +
+            `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`
+        );
+      });
+      let data = '';
+      socket.on('data', (chunk) => (data += String(chunk)));
+      socket.on('end', () => resolve(data));
+      socket.on('error', reject);
+    });
+    expect(response.split('\r\n')[0]).toBe('HTTP/1.1 403 Forbidden');
   });
 });
 

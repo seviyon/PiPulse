@@ -25,6 +25,22 @@ export interface AuthOptions {
   failureDelayMs?: number;
 }
 
+/**
+ * The path a request is really for. The router matches decoded paths and
+ * Node accepts absolute-form targets ("PUT http://x/api/settings"), so the
+ * raw URL can hide an /api route: use the matched route, else the decoded,
+ * normalised path.
+ */
+function requestPath(request: FastifyRequest): string {
+  const route = request.routeOptions.url;
+  if (route !== undefined) return route;
+  try {
+    return decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+  } catch {
+    return request.url;
+  }
+}
+
 /** Reads anyone may make even with read protection on. */
 const PUBLIC_READS = new Set(['/api/session']);
 
@@ -53,7 +69,7 @@ export function registerAuth(
   const secure = (request: FastifyRequest) => request.protocol === 'https';
 
   app.addHook('onRequest', async (request, reply) => {
-    const path = request.url.split('?', 1)[0]!;
+    const path = requestPath(request);
     if (!path.startsWith('/api/')) return;
     if (request.method === 'GET' || request.method === 'HEAD') {
       // The WebSocket handler closes an unauthorised socket with 4401 itself.
