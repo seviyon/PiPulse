@@ -10,7 +10,7 @@ import {
   type ChartGroup
 } from './history.js';
 import { RANGES, routeHash, type RangeId } from './router.js';
-import type { Config, PluginInfo, Series } from './types.js';
+import type { Config, PluginInfo, Resolution, Series } from './types.js';
 
 interface HistoryPageProps {
   config: Config;
@@ -37,10 +37,49 @@ function describeWindow({ from, to }: Window): string {
   return `${format(from)} to ${format(to)}`;
 }
 
-async function fetchSeries(metric: string, { from, to }: Window): Promise<Series> {
-  const response = await fetch(`/api/metrics/${metric}/series?from=${from}&to=${to}`);
+async function fetchSeries(
+  metric: string,
+  { from, to }: Window,
+  resolution: Resolution | 'auto' = 'auto'
+): Promise<Series> {
+  const query = `from=${from}&to=${to}${resolution === 'auto' ? '' : `&resolution=${resolution}`}`;
+  const response = await fetch(`/api/metrics/${metric}/series?${query}`);
   if (!response.ok) throw new Error(`series for ${metric} answered ${response.status}`);
   return (await response.json()) as Series;
+}
+
+/** Finest to coarsest; a coarser level never has more rows in a window. */
+const RESOLUTIONS: Resolution[] = ['raw', '1m', '1h', '1d'];
+
+/**
+ * A chart's series, all at one resolution. The server picks per metric by
+ * counting its rows, and paired metrics (network rx/tx, on separate timers)
+ * can land either side of the point limit in the same window, which would
+ * draw one line smoothed and the other not under a label true for only one.
+ * So every metric picks for itself, in parallel, and any that picked finer
+ * than the coarsest pick among those with readings is refetched at it:
+ * coarser can't exceed the limit, and usually they agree and nothing is
+ * refetched. A metric with no readings is left out of the choice, since
+ * what the server picks for no rows (raw, minutes or days, depending on
+ * the window and whether it was ever collected) says nothing about the rest.
+ * A metric whose readings in the window all fall after the coarser
+ * level's last finished bucket (it is newer than one bucket, or came back
+ * from an outage since) has no rows there yet, so it keeps its own pick:
+ * two resolutions, each labelled, beat a blank line.
+ */
+async function fetchGroup(group: ChartGroup, window: Window): Promise<[string, Series][]> {
+  const ids = group.metrics.map((metric) => metric.id);
+  const picked = await Promise.all(ids.map((id) => fetchSeries(id, window)));
+  const withData = picked.filter((series) => series.points.length > 0);
+  const target = RESOLUTIONS[Math.max(...withData.map((s) => RESOLUTIONS.indexOf(s.resolution)))];
+  const series = await Promise.all(
+    picked.map(async (s, i) => {
+      if (!target || s.points.length === 0 || s.resolution === target) return s;
+      const coarser = await fetchSeries(ids[i]!, window, target);
+      return coarser.points.length > 0 ? coarser : s;
+    })
+  );
+  return ids.map((id, i): [string, Series] => [id, series[i]!]);
 }
 
 /** The dashed core-count line and its plain-words note, for the load chart. */
@@ -99,9 +138,23 @@ function GroupChart({
   const reference = loadReference(group, config.device.cpus);
   const perMetric = group.metrics.map((metric) => series[metric.id]?.points ?? []);
   const data = useMemo(() => toChartData(perMetric), [series]);
-  const resolution = series[group.metrics[0]!.id]?.resolution ?? 'raw';
+  // From a metric with readings: an empty one's resolution says nothing about the chart.
+  const shown = group.metrics.map((metric) => series[metric.id]);
+  const resolution = (shown.find((s) => s && s.points.length > 0) ?? shown[0])?.resolution ?? 'raw';
   const band = group.metrics.length === 1 && resolution !== 'raw';
   const single = group.metrics.length === 1;
+  // Usually one resolution for the chart; fetchGroup's fallback can leave a
+  // pair at two, and then each line is named with its own.
+  const withReadings = group.metrics.flatMap((metric) => {
+    const s = series[metric.id];
+    return s && s.points.length > 0 ? [{ label: metric.label, resolution: s.resolution }] : [];
+  });
+  const mixed = new Set(withReadings.map((m) => m.resolution)).size > 1;
+  const resolutionText = mixed
+    ? withReadings
+        .map((m) => `${m.label}: ${resolutionLabel(m.resolution).toLowerCase()}`)
+        .join('. ')
+    : resolutionLabel(resolution);
 
   const summaries = group.metrics.map((metric, i) => {
     const summary = summarize(perMetric[i]!);
@@ -115,7 +168,7 @@ function GroupChart({
       <div class="history-chart-head">
         <h2 id={`chart-${group.id}`}>{group.label}</h2>
         <p class="note">
-          {resolutionLabel(resolution)}
+          {resolutionText}
           {band && '. The band spans each period’s low to high.'}
         </p>
       </div>
@@ -127,7 +180,11 @@ function GroupChart({
           labels={group.metrics.map((metric) => metric.label)}
           unit={group.unit}
           band={band}
-          title={`${group.label}, ${resolutionLabel(resolution).toLowerCase()}`}
+          title={
+            mixed
+              ? `${group.label}. ${resolutionText}`
+              : `${group.label}, ${resolutionText.toLowerCase()}`
+          }
           {...(reference ? { reference: reference.line } : {})}
           onZoom={onZoom}
         />
@@ -167,14 +224,13 @@ export function HistoryPage({ config, range, now }: HistoryPageProps) {
     let cancelled = false;
     setPending(true);
     setLoad((current) => (current.status === 'ready' ? current : { status: 'loading' }));
-    const metrics = groups.flatMap((group) => group.metrics.map((metric) => metric.id));
-    Promise.all(metrics.map((metric) => fetchSeries(metric, window))).then(
+    Promise.all(groups.map((group) => fetchGroup(group, window))).then(
       (results) => {
         if (cancelled) return;
         setPending(false);
         setLoad({
           status: 'ready',
-          series: Object.fromEntries(metrics.map((metric, i) => [metric, results[i]!])),
+          series: Object.fromEntries(results.flat()),
           window
         });
       },

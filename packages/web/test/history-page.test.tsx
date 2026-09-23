@@ -48,11 +48,17 @@ let fail: boolean;
 /** While set, series requests wait for it to resolve. */
 let hold: Promise<void> | undefined;
 let root: HTMLElement;
+/** What the fake server picks for `resolution=auto`, per metric (default 1m). */
+let autoResolution: Record<string, Series['resolution']>;
+/** Metrics the fake server has no readings for. */
+let noData: Set<string>;
+/** Levels a metric has no rows at yet, e.g. too young for an hourly bucket. */
+let emptyAt: Record<string, Series['resolution'][]>;
 
-function seriesFor(metric: string): Series {
+function seriesFor(metric: string, resolution: Series['resolution'] = '1m'): Series {
   const base = metric === 'cpu_load' ? 2 : 1000;
   return {
-    resolution: '1m',
+    resolution,
     points: [
       { ts: NOW - 2 * 60_000, avg: base, min: base / 2, max: base * 2, count: 12 },
       { ts: NOW - 60_000, avg: base * 3, min: base, max: base * 4, count: 12 }
@@ -80,6 +86,9 @@ beforeEach(() => {
   requests = [];
   fail = false;
   hold = undefined;
+  autoResolution = {};
+  noData = new Set();
+  emptyAt = {};
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
@@ -88,7 +97,10 @@ beforeEach(() => {
       await hold;
       if (fail) return new Response('boom', { status: 500 });
       const metric = /\/api\/metrics\/(\w+)\/series/.exec(parsed.pathname)?.[1] ?? '';
-      return Response.json(seriesFor(metric));
+      const asked = parsed.searchParams.get('resolution') as Series['resolution'] | null;
+      const series = seriesFor(metric, asked ?? autoResolution[metric] ?? '1m');
+      const empty = noData.has(metric) || emptyAt[metric]?.includes(series.resolution);
+      return Response.json(empty ? { ...series, points: [] } : series);
     })
   );
   root = document.createElement('div');
@@ -294,6 +306,82 @@ describe('<HistoryPage>', () => {
     release();
     await eventually(() => expect(root.querySelector('[role="status"]')).toBeNull());
     expect(root.querySelector('.history-charts')?.hasAttribute('aria-busy')).toBe(false);
+  });
+
+  /** The series requests made for `id`, in order. */
+  const requestsFor = (id: string) => requests.filter((r) => r.pathname.includes(`/${id}/`));
+  const forced = (id: string) => requestsFor(id).map((r) => r.searchParams.get('resolution'));
+
+  it('refetches the finer half of a pair at the coarser resolution, whichever metric comes first', async () => {
+    // Near the point limit the server can pick differently for each direction.
+    autoResolution = { network_rx: 'raw', network_tx: '1m' };
+    render(<HistoryPage config={config} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(forced('network_rx')).toEqual([null, '1m']));
+
+    expect(forced('network_tx')).toEqual([null]);
+    expect(forced('cpu_load')).toEqual([null]);
+    await eventually(() =>
+      expect(chartSection('Network').textContent).toContain('1-minute averages')
+    );
+  });
+
+  it('makes no second request when a pair agrees', async () => {
+    render(<HistoryPage config={config} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(FakePlot.instances).toHaveLength(2));
+    expect(requests).toHaveLength(3);
+  });
+
+  it('never forces a metric finer than it picked, so its partner cannot exceed the point limit', async () => {
+    // A metric with readings for only part of the range fits finer data;
+    // its partner, with the whole range, must not be pulled down to it.
+    autoResolution = { network_rx: 'raw', network_tx: '1h' };
+    render(<HistoryPage config={config} range="7d" now={() => NOW} />, root);
+    await eventually(() => expect(forced('network_rx')).toEqual([null, '1h']));
+
+    expect(forced('network_tx')).toEqual([null]);
+  });
+
+  it('leaves a metric with no readings out of the choice', async () => {
+    // What the server picks for no rows (here raw) says nothing about the partner.
+    autoResolution = { network_rx: 'raw', network_tx: '1h' };
+    noData = new Set(['network_rx']);
+    render(<HistoryPage config={config} range="7d" now={() => NOW} />, root);
+    await eventually(() => expect(FakePlot.instances.length).toBeGreaterThan(0));
+
+    expect(forced('network_rx')).toEqual([null]);
+    expect(forced('network_tx')).toEqual([null]);
+    expect(chartSection('Network').textContent).toContain('Hourly averages');
+  });
+
+  it('does not let an empty metric that picked days blank its partner on a young database', async () => {
+    // Never collected, over a year: the server picks daily rows, of which a
+    // day-old database has none; the partner keeps its own minutes.
+    autoResolution = { network_rx: '1d', network_tx: '1m' };
+    noData = new Set(['network_rx']);
+    render(<HistoryPage config={config} range="1y" now={() => NOW} />, root);
+    await eventually(() => expect(FakePlot.instances.length).toBeGreaterThan(0));
+
+    expect(forced('network_tx')).toEqual([null]);
+    expect(chartSection('Network').textContent).toContain('1-minute averages');
+  });
+
+  it('keeps a metric at its own pick when it has no rows yet at the coarser level', async () => {
+    // Sent started half an hour ago: hourly has nothing for it, so moving it
+    // to its partner's level would blank its line.
+    autoResolution = { network_rx: '1h', network_tx: 'raw' };
+    emptyAt = { network_tx: ['1h'] };
+    render(<HistoryPage config={config} range="7d" now={() => NOW} />, root);
+    await eventually(() => expect(forced('network_tx')).toEqual([null, '1h']));
+
+    await eventually(() =>
+      expect(chartSection('Network').textContent).toContain('Sent: low 500 B/s')
+    );
+    // Two resolutions on one chart: each line is labelled with its own.
+    const label = 'Received: hourly averages. Sent: every reading';
+    expect(chartSection('Network').querySelector('.note')?.textContent).toBe(label);
+    expect(chartSection('Network').querySelector('.chart')?.getAttribute('aria-label')).toBe(
+      `Network. ${label}`
+    );
   });
 
   it('explains a failed load and retries on request', async () => {

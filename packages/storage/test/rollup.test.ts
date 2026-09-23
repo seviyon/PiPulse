@@ -260,6 +260,31 @@ describe('getSeries', () => {
 
 describe('chooseResolution', () => {
   const now = T0;
+  const rollupInsert = () =>
+    db.prepare(
+      'INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max, count) VALUES (?, ?, ?, 1, 1, 1, 1)'
+    );
+
+  /** Rows for cpu_load at `step` from `since` up to `until`, raw or rolled up. */
+  function fill(resolution: string, step: number, since: number, until = now) {
+    const raw = db.prepare('INSERT INTO metrics (ts, metric, value) VALUES (?, ?, 1)');
+    const rollup = rollupInsert();
+    db.exec('BEGIN');
+    for (let ts = since; ts < until; ts += step) {
+      if (resolution === 'raw') raw.run(ts, 'cpu_load');
+      else rollup.run(ts, 'cpu_load', resolution);
+    }
+    db.exec('COMMIT');
+  }
+
+  /** What default retention leaves behind after a year of 5 s polling. */
+  function matureDatabase() {
+    fill('raw', 5000, now - 2 * DAY);
+    fill('1m', MIN, now - 14 * DAY);
+    fill('1h', HOUR, now - 365 * DAY);
+    fill('1d', DAY, now - 365 * DAY);
+  }
+
   it.each([
     [HOUR, 'raw'],
     [DAY, '1m'],
@@ -267,13 +292,61 @@ describe('chooseResolution', () => {
     [30 * DAY, '1h'],
     [90 * DAY, '1d'],
     [365 * DAY, '1d']
-  ])('picks the finest resolution that keeps a %i ms view under ~1500 points: %s', (span, res) => {
-    expect(chooseResolution(now - span, now, now)).toBe(res);
-  });
+  ])(
+    'on a mature database, picks the finest resolution that keeps a %i ms view under ~1500 points: %s',
+    (span, res) => {
+      matureDatabase();
+      expect(chooseResolution(db, 'cpu_load', now - span, now, now)).toBe(res);
+    }
+  );
 
   it('skips a resolution whose retention no longer covers the start of the range', () => {
+    matureDatabase();
     // A one-hour window three days ago: raw is gone (2-day retention), 1m remains.
-    expect(chooseResolution(now - 3 * DAY, now - 3 * DAY + HOUR, now)).toBe('1m');
+    expect(chooseResolution(db, 'cpu_load', now - 3 * DAY, now - 3 * DAY + HOUR, now)).toBe('1m');
+  });
+
+  it('does not pick a level whose retention ends inside the window, even if its rows fit', () => {
+    matureDatabase();
+    // One hour straddling raw's 2-day edge: raw holds only its last 30 minutes.
+    const from = now - 2 * DAY - 30 * MIN;
+    expect(chooseResolution(db, 'cpu_load', from, from + HOUR, now)).toBe('1m');
+  });
+
+  it('shows the readings so far for 7 days on a database too new for any hourly rollup', () => {
+    fill('raw', 5000, now - 50 * MIN);
+    fill('1m', MIN, now - 50 * MIN, now - MIN);
+
+    const resolution = chooseResolution(db, 'cpu_load', now - 7 * DAY, now, now);
+    expect(resolution).toBe('raw');
+    expect(getSeries(db, 'cpu_load', now - 7 * DAY, now, resolution)).toHaveLength(600);
+  });
+
+  it('falls back to minutes once the raw readings no longer fit', () => {
+    fill('raw', 5000, now - 3 * HOUR);
+    fill('1m', MIN, now - 3 * HOUR, now - MIN);
+    fill('1h', HOUR, now - 3 * HOUR, now - HOUR);
+
+    expect(chooseResolution(db, 'cpu_load', now - 7 * DAY, now, now)).toBe('1m');
+  });
+
+  it('prefers finer data a young database has in full over a handful of coarse points', () => {
+    // One day old: a year's view gets its 1440 minutes, not one daily point.
+    fill('raw', 5000, now - DAY);
+    fill('1m', MIN, now - DAY);
+    fill('1h', HOUR, now - DAY);
+    fill('1d', DAY, now - DAY);
+
+    expect(chooseResolution(db, 'cpu_load', now - 365 * DAY, now, now)).toBe('1m');
+  });
+
+  it('decides per metric, so a slower-polled metric can stay finer', () => {
+    matureDatabase();
+    const raw = db.prepare("INSERT INTO metrics (ts, metric, value) VALUES (?, 'disk_used', 1)");
+    for (let ts = now - DAY; ts < now; ts += MIN) raw.run(ts);
+
+    expect(chooseResolution(db, 'cpu_load', now - DAY, now, now)).toBe('1m');
+    expect(chooseResolution(db, 'disk_used', now - DAY, now, now)).toBe('raw');
   });
 });
 
@@ -289,7 +362,7 @@ describe('Phase 4 exit criterion', () => {
     runHousekeeping(db, T0);
 
     const from = T0 - 365 * DAY;
-    const resolution = chooseResolution(from, T0, T0);
+    const resolution = chooseResolution(db, 'cpu_load', from, T0, T0);
     const points = getSeries(db, 'cpu_load', from, T0, resolution);
 
     expect(resolution).toBe('1d');
