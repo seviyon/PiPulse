@@ -25,6 +25,8 @@ const key = (ruleId: string, metric: string) => `${ruleId}\u0000${metric}`;
  * the last run stopped. At start, alerts whose rule (or rule and metric)
  * no longer exists are closed as "rule_removed". A failing rule is
  * reported and the rest still run; a throwing listener never stops checks.
+ * If reading the open alerts fails (a transient SQLite error, disk error, etc.),
+ * the error is reported via `onError` with no rule, and the next check still runs.
  */
 export function startAlerts(
   db: PiPulseDb,
@@ -34,7 +36,7 @@ export function startAlerts(
     intervalMs?: number;
     now?: () => number;
     onChange?: (event: AlertEvent) => void;
-    onError?: (rule: Rule, error: unknown) => void;
+    onError?: (error: unknown, rule?: Rule) => void;
   }
 ): { check(): void; stop(): void } {
   const now = options.now ?? Date.now;
@@ -63,47 +65,51 @@ export function startAlerts(
   let lastCheck: number | undefined;
 
   const check = () => {
-    const t = now();
-    // The Pi has no RTC: NTP can move the clock hours at once after boot,
-    // and a long pause looks the same. Count silence afresh from here.
-    if (lastCheck !== undefined && (t < lastCheck || t - lastCheck > 3 * intervalMs)) since = t;
-    lastCheck = t;
-    const open = new Map(openAlerts(db).map((alert) => [key(alert.ruleId, alert.metric), alert]));
-    for (const rule of options.rules) {
-      for (const metric of targets(rule)) {
-        try {
-          const current = open.get(key(rule.id, metric.id));
-          const span = windowMs(rule, current !== undefined);
-          const decision = evaluate(rule, {
-            now: t,
-            since,
-            intervalMs: metric.intervalMs,
-            open: current !== undefined,
-            latest: latestReading(db, metric.id),
-            window:
-              span > 0 && rule.noReadingFor === undefined
-                ? summarizeWindow(db, metric.id, t - span, t, rule.bitsSet ?? 0)
-                : EMPTY_WINDOW
-          });
-          if (decision.action === 'raise' && current === undefined) {
-            emit({
-              type: 'raised',
-              alert: raiseAlert(db, {
-                ruleId: rule.id,
-                metric: metric.id,
-                severity: rule.severity,
-                message: rule.message,
-                value: decision.value,
-                raisedAt: t
-              })
+    try {
+      const t = now();
+      // The Pi has no RTC: NTP can move the clock hours at once after boot,
+      // and a long pause looks the same. Count silence afresh from here.
+      if (lastCheck !== undefined && (t < lastCheck || t - lastCheck > 3 * intervalMs)) since = t;
+      lastCheck = t;
+      const open = new Map(openAlerts(db).map((alert) => [key(alert.ruleId, alert.metric), alert]));
+      for (const rule of options.rules) {
+        for (const metric of targets(rule)) {
+          try {
+            const current = open.get(key(rule.id, metric.id));
+            const span = windowMs(rule, current !== undefined);
+            const decision = evaluate(rule, {
+              now: t,
+              since,
+              intervalMs: metric.intervalMs,
+              open: current !== undefined,
+              latest: latestReading(db, metric.id),
+              window:
+                span > 0 && rule.noReadingFor === undefined
+                  ? summarizeWindow(db, metric.id, t - span, t, rule.bitsSet ?? 0)
+                  : EMPTY_WINDOW
             });
-          } else if (decision.action === 'clear' && current !== undefined) {
-            emit({ type: 'cleared', alert: clearAlert(db, current.id, t, 'condition') });
+            if (decision.action === 'raise' && current === undefined) {
+              emit({
+                type: 'raised',
+                alert: raiseAlert(db, {
+                  ruleId: rule.id,
+                  metric: metric.id,
+                  severity: rule.severity,
+                  message: rule.message,
+                  value: decision.value,
+                  raisedAt: t
+                })
+              });
+            } else if (decision.action === 'clear' && current !== undefined) {
+              emit({ type: 'cleared', alert: clearAlert(db, current.id, t, 'condition') });
+            }
+          } catch (error) {
+            options.onError?.(error, rule);
           }
-        } catch (error) {
-          options.onError?.(rule, error);
         }
       }
+    } catch (error) {
+      options.onError?.(error);
     }
   };
 

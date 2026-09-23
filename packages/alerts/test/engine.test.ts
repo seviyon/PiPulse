@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 /** Checks run only when a test calls check(); the interval matters for clock-jump detection. */
-function start(rules: Rule[], onError?: (rule: Rule, error: unknown) => void, intervalMs = 1e9) {
+function start(rules: Rule[], onError?: (error: unknown, rule?: Rule) => void, intervalMs = 1e9) {
   const engine = startAlerts(db, {
     rules,
     metrics,
@@ -150,7 +150,9 @@ describe('startAlerts', () => {
         throw new Error('boom');
       }
     };
-    start([broken, hot], (rule) => errors.push(rule.id));
+    start([broken, hot], (error, rule) => {
+      if (rule) errors.push(rule.id);
+    });
     expect(errors).toEqual(['broken']);
     expect(events).toMatchObject([{ type: 'raised', alert: { ruleId: 'cpu_hot' } }]);
   });
@@ -167,5 +169,37 @@ describe('startAlerts', () => {
       }
     }).stop();
     expect(openAlerts(db)).toHaveLength(1);
+  });
+
+  it('reports a failed open-alerts read and still checks after recovery', () => {
+    readings('cpu_temperature', T0 - 3 * MIN, T0, 85);
+    const errors: Array<{ error: unknown; rule?: Rule }> = [];
+    const engine = start([hot], (error, rule) => {
+      errors.push({ error, rule });
+    });
+    expect(events).toHaveLength(1); // initially raised
+
+    // Break the alerts table
+    db.exec('ALTER TABLE alerts RENAME TO alerts_away');
+
+    // check() should not throw, should report error with no rule
+    engine.check();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.rule).toBeUndefined();
+    expect(events).toHaveLength(1); // no new events from failed check
+
+    // Restore the table
+    db.exec('ALTER TABLE alerts_away RENAME TO alerts');
+
+    // check() should work again; add a breach to verify
+    now = T0 + 5 * MIN;
+    readings('cpu_temperature', T0 + 10_000, now, 60);
+    engine.check();
+    expect(events).toHaveLength(2); // raised + cleared
+    expect(events[1]).toMatchObject({
+      type: 'cleared',
+      alert: { clearedBy: 'condition', clearedAt: now }
+    });
+    expect(errors).toHaveLength(1); // no new errors on recovery
   });
 });
