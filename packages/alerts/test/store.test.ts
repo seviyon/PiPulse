@@ -127,7 +127,14 @@ describe('alert rows', () => {
     expect(
       listAlerts(db, { state: 'cleared', from: 0, to: 10_000, limit: 10 }).map((a) => a.id)
     ).toEqual([first.id]);
-    expect(listAlerts(db, { state: 'cleared', from: 1500, to: 10_000, limit: 10 })).toEqual([]);
+    expect(listAlerts(db, { state: 'cleared', from: 3500, to: 10_000, limit: 10 })).toEqual([]);
+    // Raised before the window but cleared inside it: it was active in the window.
+    expect(
+      listAlerts(db, { state: 'cleared', from: 2500, to: 10_000, limit: 10 }).map((a) => a.id)
+    ).toEqual([first.id]);
+    expect(
+      listAlerts(db, { state: 'all', from: 2500, to: 10_000, limit: 10 }).map((a) => a.id)
+    ).toEqual([second.id, first.id]);
     expect(listAlerts(db, { state: 'all', from: 0, to: 10_000, limit: 1 })).toHaveLength(1);
   });
 

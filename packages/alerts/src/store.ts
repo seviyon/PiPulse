@@ -71,24 +71,25 @@ export function openAlerts(db: PiPulseDb): Alert[] {
 }
 
 /**
- * Newest first. 'active': every open alert; 'cleared': cleared ones raised in
- * [from, to]; 'all': both.
+ * 'active': every open alert, newest raised first. 'cleared': alerts cleared
+ * in [from, to], newest cleared first. 'all': every alert active at some point
+ * in [from, to] (open ones however old), newest raised first.
  */
 export function listAlerts(
   db: PiPulseDb,
   query: { state: 'active' | 'cleared' | 'all'; from: number; to: number; limit: number }
 ): Alert[] {
-  const where = {
-    active: 'cleared_at IS NULL',
-    cleared: 'cleared_at IS NOT NULL AND raised_at BETWEEN ? AND ?',
-    all: '(cleared_at IS NULL OR raised_at BETWEEN ? AND ?)'
+  // Parameters: ?1 from, ?2 to, ?3 limit.
+  const [where, order] = {
+    active: ['cleared_at IS NULL', 'raised_at'],
+    cleared: ['cleared_at BETWEEN ?1 AND ?2', 'cleared_at'],
+    all: ['(cleared_at IS NULL OR (raised_at <= ?2 AND cleared_at >= ?1))', 'raised_at']
   }[query.state];
-  const params = query.state === 'active' ? [query.limit] : [query.from, query.to, query.limit];
   return db
     .prepare(
-      `SELECT ${COLUMNS} FROM alerts WHERE ${where} ORDER BY raised_at DESC, id DESC LIMIT ?`
+      `SELECT ${COLUMNS} FROM alerts WHERE ${where} ORDER BY ${order} DESC, id DESC LIMIT ?3`
     )
-    .all(...params) as unknown as Alert[];
+    .all(query.from, query.to, query.limit) as unknown as Alert[];
 }
 
 export function raiseAlert(

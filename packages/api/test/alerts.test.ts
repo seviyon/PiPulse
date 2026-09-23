@@ -25,6 +25,8 @@ describe('GET /api/alerts', () => {
     clearAlert(db, old.id, now - 39 * DAY, 'condition');
     const recent = raiseAlert(db, { ...alert, raisedAt: now - DAY });
     clearAlert(db, recent.id, now - DAY + 60_000, 'condition');
+    const long = raiseAlert(db, { ...alert, raisedAt: now - 45 * DAY });
+    clearAlert(db, long.id, now - 2 * DAY, 'condition');
     const open = raiseAlert(db, {
       ...alert,
       ruleId: 'disk_full',
@@ -34,7 +36,7 @@ describe('GET /api/alerts', () => {
 
     const res = await buildServer(db).inject({ method: 'GET', url: '/api/alerts' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().map((a: { id: number }) => a.id)).toEqual([recent.id, open.id]);
+    expect(res.json().map((a: { id: number }) => a.id)).toEqual([recent.id, long.id, open.id]);
 
     const active = await buildServer(db).inject({ method: 'GET', url: '/api/alerts?state=active' });
     expect(active.json().map((a: { id: number }) => a.id)).toEqual([open.id]);
@@ -43,7 +45,7 @@ describe('GET /api/alerts', () => {
       method: 'GET',
       url: '/api/alerts?state=cleared'
     });
-    expect(cleared.json().map((a: { id: number }) => a.id)).toEqual([recent.id]);
+    expect(cleared.json().map((a: { id: number }) => a.id)).toEqual([recent.id, long.id]);
   });
 
   // Unknown fields aren't listed: Fastify's default validator strips them rather than rejecting.
