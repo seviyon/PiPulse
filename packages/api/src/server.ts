@@ -125,9 +125,10 @@ const rulesInForce = () => RULES.read().rules;
 
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
-// The engine starts after the scheduler, below; recheck reaches it through
-// this variable once it exists.
-let alerts: { check(): void; stop(): void } | undefined;
+// buildServer runs before the alert engine starts (below), but its recheck
+// hook needs to reach the engine once it exists; held in a property assigned
+// later instead of a reassigned `let`.
+const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
   device: await readDeviceInfo(),
@@ -139,7 +140,7 @@ const app = buildServer(db, {
     unit,
     intervalMs
   })),
-  alertRules: { source: RULES, recheck: () => alerts?.check() },
+  alertRules: { source: RULES, recheck: () => engine.alerts?.check() },
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) }
@@ -168,7 +169,7 @@ const scheduler = startScheduler(db, builtinPlugins, {
   }
 });
 // Checks every alert rule now and then every 15 s; raises and clears go to /api/live.
-alerts = startAlerts(db, {
+engine.alerts = startAlerts(db, {
   rules: rulesInForce,
   metrics: METRICS,
   onChange: alertFeed.publish,
@@ -206,7 +207,7 @@ async function shutdown(): Promise<void> {
   }
   shuttingDown = true;
   housekeeping.stop();
-  alerts?.stop();
+  engine.alerts?.stop();
   const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
   db.close();
   if (!drained) {

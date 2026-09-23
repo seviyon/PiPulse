@@ -13,11 +13,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': [
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
-      ],
-      // A handle created after another value that must be able to call it
-      // back (e.g. server.ts's `alerts`) is legitimately read in a closure
-      // before its one assignment; that isn't a `const` candidate.
-      'prefer-const': ['error', { ignoreReadBeforeAssign: true }]
+      ]
     }
   }
 );
