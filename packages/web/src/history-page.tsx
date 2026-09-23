@@ -62,8 +62,10 @@ const RESOLUTIONS: Resolution[] = ['raw', '1m', '1h', '1d'];
  * refetched. A metric with no readings is left out of the choice, since
  * what the server picks for no rows (raw, minutes or days, depending on
  * the window and whether it was ever collected) says nothing about the rest.
- * A metric younger than one bucket of the coarser level has no rows there
- * yet, so it keeps its own pick: two resolutions beat a blank line.
+ * A metric whose readings in the window all fall after the coarser
+ * level's last finished bucket (it is newer than one bucket, or came back
+ * from an outage since) has no rows there yet, so it keeps its own pick:
+ * two resolutions, each labelled, beat a blank line.
  */
 async function fetchGroup(group: ChartGroup, window: Window): Promise<[string, Series][]> {
   const ids = group.metrics.map((metric) => metric.id);
@@ -141,6 +143,18 @@ function GroupChart({
   const resolution = (shown.find((s) => s && s.points.length > 0) ?? shown[0])?.resolution ?? 'raw';
   const band = group.metrics.length === 1 && resolution !== 'raw';
   const single = group.metrics.length === 1;
+  // Usually one resolution for the chart; fetchGroup's fallback can leave a
+  // pair at two, and then each line is named with its own.
+  const withReadings = group.metrics.flatMap((metric) => {
+    const s = series[metric.id];
+    return s && s.points.length > 0 ? [{ label: metric.label, resolution: s.resolution }] : [];
+  });
+  const mixed = new Set(withReadings.map((m) => m.resolution)).size > 1;
+  const resolutionText = mixed
+    ? withReadings
+        .map((m) => `${m.label}: ${resolutionLabel(m.resolution).toLowerCase()}`)
+        .join('. ')
+    : resolutionLabel(resolution);
 
   const summaries = group.metrics.map((metric, i) => {
     const summary = summarize(perMetric[i]!);
@@ -154,7 +168,7 @@ function GroupChart({
       <div class="history-chart-head">
         <h2 id={`chart-${group.id}`}>{group.label}</h2>
         <p class="note">
-          {resolutionLabel(resolution)}
+          {resolutionText}
           {band && '. The band spans each period’s low to high.'}
         </p>
       </div>
@@ -166,7 +180,11 @@ function GroupChart({
           labels={group.metrics.map((metric) => metric.label)}
           unit={group.unit}
           band={band}
-          title={`${group.label}, ${resolutionLabel(resolution).toLowerCase()}`}
+          title={
+            mixed
+              ? `${group.label}. ${resolutionText}`
+              : `${group.label}, ${resolutionText.toLowerCase()}`
+          }
           {...(reference ? { reference: reference.line } : {})}
           onZoom={onZoom}
         />

@@ -376,6 +376,12 @@ describe('<HistoryPage>', () => {
     await eventually(() =>
       expect(chartSection('Network').textContent).toContain('Sent: low 500 B/s')
     );
+    // Two resolutions on one chart: each line is labelled with its own.
+    const label = 'Received: hourly averages. Sent: every reading';
+    expect(chartSection('Network').querySelector('.note')?.textContent).toBe(label);
+    expect(chartSection('Network').querySelector('.chart')?.getAttribute('aria-label')).toBe(
+      `Network. ${label}`
+    );
   });
 
   it('explains a failed load and retries on request', async () => {
