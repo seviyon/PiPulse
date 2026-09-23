@@ -168,7 +168,10 @@ export function App() {
 
   useEffect(() => {
     if (!config) return;
+    // Loaded up front, not on the first 'live', so tiles fill even when the
+    // WebSocket can't connect (e.g. a proxy that doesn't pass upgrades).
     loadHistory(config.plugins);
+    let connectedBefore = false;
     return connectLive({
       url: liveUrl(),
       onMessage: (message) => {
@@ -185,8 +188,11 @@ export function App() {
       },
       onStatus: (status, retryInMs) => {
         setConnection({ status, ...(retryInMs === undefined ? {} : { retryInMs }) });
-        // Refill anything missed while disconnected.
-        if (status === 'live') loadHistory(config.plugins);
+        if (status !== 'live') return;
+        // Refill anything missed while disconnected; the first connect
+        // has nothing to refill beyond the load above.
+        if (connectedBefore) loadHistory(config.plugins);
+        connectedBefore = true;
       }
     });
   }, [config, loadHistory]);

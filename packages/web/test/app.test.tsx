@@ -150,6 +150,22 @@ describe('<App>', () => {
     expect(tile('Network received').textContent).toContain('1.5kB/s');
   });
 
+  it('loads history once on first connect and again after a reconnect', async () => {
+    const historyCalls = () =>
+      vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/cpu_load/history'))
+        .length;
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    await act(() => FakeSocket.instances.at(-1)!.onopen?.());
+    await flush();
+    expect(historyCalls()).toBe(1);
+
+    await act(() => FakeSocket.instances.at(-1)!.onclose?.());
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(2), 2000);
+    await act(() => FakeSocket.instances.at(-1)!.onopen?.());
+    await eventually(() => expect(historyCalls()).toBe(2));
+  });
+
   it('describes a hot CPU in words, not only in color', async () => {
     render(<App />, root);
     await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
