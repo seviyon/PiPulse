@@ -11,6 +11,7 @@ import {
   hashPassword,
   parsePasswordHash,
   readCookie,
+  readAuthConfig,
   readPasswordHashFile,
   sessionCookie,
   verifyPassword
@@ -119,6 +120,35 @@ describe('cookies', () => {
     expect(sessionCookie('id', true)).toMatch(/; Secure$/);
     expect(clearedSessionCookie(false)).toBe(
       'pipulse_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
+    );
+  });
+});
+
+describe('readAuthConfig', () => {
+  it('is read-only with public reads by default', () => {
+    expect(readAuthConfig({})).toEqual({ protectReads: false });
+  });
+
+  it('reads the hash file and read protection', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'pipulse-')), 'hash');
+    writeFileSync(path, await hashPassword('pw', CHEAP));
+    const config = readAuthConfig({
+      PIPULSE_ADMIN_PASSWORD_HASH_FILE: path,
+      PIPULSE_PROTECT_READS: 'true'
+    });
+    expect(config.protectReads).toBe(true);
+    expect(await verifyPassword('pw', config.passwordHash!)).toBe(true);
+  });
+
+  it('refuses a bad PIPULSE_PROTECT_READS value', () => {
+    expect(() => readAuthConfig({ PIPULSE_PROTECT_READS: 'maybe' })).toThrow(
+      /^PIPULSE_PROTECT_READS must be true or false \(got "maybe"\)$/
+    );
+  });
+
+  it('refuses read protection without a password, which would lock everyone out', () => {
+    expect(() => readAuthConfig({ PIPULSE_PROTECT_READS: 'true' })).toThrow(
+      /^PIPULSE_PROTECT_READS=true needs PIPULSE_ADMIN_PASSWORD_HASH_FILE/
     );
   });
 });

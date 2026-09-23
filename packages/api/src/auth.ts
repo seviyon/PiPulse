@@ -79,6 +79,38 @@ export function readPasswordHashFile(
   }
 }
 
+/** What PiPulse's sign-in runs with, from the environment. */
+export interface AuthConfig {
+  /** Unset: read-only. */
+  passwordHash?: PasswordHash;
+  protectReads: boolean;
+}
+
+/**
+ * Reads PIPULSE_ADMIN_PASSWORD_HASH_FILE and PIPULSE_PROTECT_READS.
+ * Throws AuthConfigError (one line for the operator) on a bad value, and on
+ * read protection without a password, which would lock everyone out.
+ */
+export function readAuthConfig(env: Record<string, string | undefined>): AuthConfig {
+  const protect = env['PIPULSE_PROTECT_READS'];
+  if (protect !== undefined && protect !== 'true' && protect !== 'false') {
+    throw new AuthConfigError(
+      `PIPULSE_PROTECT_READS must be true or false (got ${JSON.stringify(protect)})`
+    );
+  }
+  const protectReads = protect === 'true';
+  const path = env['PIPULSE_ADMIN_PASSWORD_HASH_FILE'];
+  if (!path) {
+    if (protectReads) {
+      throw new AuthConfigError(
+        'PIPULSE_PROTECT_READS=true needs PIPULSE_ADMIN_PASSWORD_HASH_FILE, or nobody could sign in'
+      );
+    }
+    return { protectReads };
+  }
+  return { passwordHash: readPasswordHashFile(path), protectReads };
+}
+
 export async function verifyPassword(password: string, stored: PasswordHash): Promise<boolean> {
   const candidate = await derive(password, stored.salt, stored.hash.length, {
     N: stored.N,

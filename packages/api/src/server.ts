@@ -17,7 +17,7 @@ import {
   type AlertEvent,
   type Rule
 } from '@pipulse/alerts';
-import { readPasswordHashFile, type PasswordHash } from './auth.js';
+import { readAuthConfig, type AuthConfig } from './auth.js';
 import { buildServer, createFeed, createLiveFeed, longestLookBack } from './index.js';
 
 const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
@@ -52,26 +52,17 @@ function fail(error: unknown): never {
   process.exit(1);
 }
 
-/** PIPULSE_ADMIN_PASSWORD_HASH_FILE; unset leaves PiPulse read-only. */
-function readPasswordHash(): PasswordHash | undefined {
-  const path = process.env['PIPULSE_ADMIN_PASSWORD_HASH_FILE'];
-  if (!path) return undefined;
+/** Sign-in settings (PIPULSE_ADMIN_PASSWORD_HASH_FILE, PIPULSE_PROTECT_READS). */
+function readAuth(): AuthConfig {
   try {
-    return readPasswordHashFile(path);
+    return readAuthConfig(process.env);
   } catch (error) {
     fail(error);
   }
 }
-const PASSWORD_HASH = readPasswordHash();
-
-/** PIPULSE_PROTECT_READS=true|false (default false). */
-function readProtectReads(): boolean {
-  const value = process.env['PIPULSE_PROTECT_READS'];
-  if (value === undefined || value === 'false') return false;
-  if (value === 'true') return true;
-  fail(`PIPULSE_PROTECT_READS must be true or false (got ${JSON.stringify(value)})`);
-}
-const PROTECT_READS = readProtectReads();
+const AUTH = readAuth();
+const PASSWORD_HASH = AUTH.passwordHash;
+const PROTECT_READS = AUTH.protectReads;
 
 const db = openDb(DB_PATH);
 
