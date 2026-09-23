@@ -67,6 +67,8 @@ export function registerAuth(
   const sessionId = (request: FastifyRequest) => readCookie(request.headers.cookie, SESSION_COOKIE);
   const signedIn = (request: FastifyRequest) => sessions.valid(sessionId(request));
   const secure = (request: FastifyRequest) => request.protocol === 'https';
+  /** Addresses with a password check running: each check costs 32 MB and a core on a Pi 2. */
+  const checking = new Set<string>();
 
   app.addHook('onRequest', async (request, reply) => {
     const path = requestPath(request);
@@ -97,7 +99,7 @@ export function registerAuth(
     '/api/login',
     { schema: { body: loginSchema } },
     async (request, reply) => {
-      if (limiter.blocked(request.ip)) {
+      if (limiter.blocked(request.ip) || checking.has(request.ip)) {
         return reply
           .status(429)
           .send({ error: 'too many sign-in attempts; try again in 15 minutes' });
@@ -105,10 +107,15 @@ export function registerAuth(
       // Count the attempt before the slow check, so parallel guesses can't
       // all get past the limit while scrypt runs; a success clears it.
       limiter.fail(request.ip);
-      // The hook has already answered 403 when there is no password.
-      if (!(await verifyPassword(request.body.password, passwordHash!))) {
-        await delay(failureDelayMs);
-        return reply.status(401).send({ error: 'sign-in failed' });
+      checking.add(request.ip);
+      try {
+        // The hook has already answered 403 when there is no password.
+        if (!(await verifyPassword(request.body.password, passwordHash!))) {
+          await delay(failureDelayMs);
+          return reply.status(401).send({ error: 'sign-in failed' });
+        }
+      } finally {
+        checking.delete(request.ip);
       }
       limiter.succeed(request.ip);
       reply.header('set-cookie', sessionCookie(sessions.create(), secure(request)));

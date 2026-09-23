@@ -164,15 +164,28 @@ describe('sign-in', () => {
     expect(blocked.statusCode).toBe(429);
   });
 
-  it('counts parallel wrong passwords against the limit as they start', async () => {
+  it('checks one password at a time per address, refusing the rest with 429', async () => {
     const api = server({ passwordHash });
     const statuses = await Promise.all(
       Array.from({ length: 10 }, () =>
         api.inject({ method: 'POST', url: '/api/login', payload: { password: 'guess' } })
       )
     ).then((responses) => responses.map((res) => res.statusCode));
-    expect(statuses.filter((code) => code === 401)).toHaveLength(5);
-    expect(statuses.filter((code) => code === 429)).toHaveLength(5);
+    expect(statuses.filter((code) => code === 401)).toHaveLength(1);
+    expect(statuses.filter((code) => code === 429)).toHaveLength(9);
+  });
+
+  it('still counts sequential failures toward the limit', async () => {
+    const api = server({ passwordHash });
+    for (let i = 0; i < 5; i++) {
+      await api.inject({ method: 'POST', url: '/api/login', payload: { password: 'guess' } });
+    }
+    const res = await api.inject({
+      method: 'POST',
+      url: '/api/login',
+      payload: { password: 'secret' }
+    });
+    expect(res.statusCode).toBe(429);
   });
 
   it('signs out, and the old cookie stops working', async () => {
