@@ -8,9 +8,9 @@ let db: PiPulseDb | undefined;
 afterEach(() => db?.close());
 
 describe('settings', () => {
-  it('is schema version 5 with an empty settings table', () => {
+  it('is at the current schema version with an empty settings table', () => {
     db = openDb(':memory:');
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
     expect(getSettings(db)).toEqual({});
   });
 

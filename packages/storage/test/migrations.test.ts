@@ -222,4 +222,11 @@ describe('schema migrations', () => {
       db.close();
     });
   });
+
+  it('adds acknowledged_at and rule_hash to alerts (migration 6)', () => {
+    const db = openDb(join(dir, 'six.db'));
+    expect(SCHEMA_VERSION).toBe(6);
+    expect(columns(db, 'alerts')).toEqual(expect.arrayContaining(['acknowledged_at', 'rule_hash']));
+    db.close();
+  });
 });

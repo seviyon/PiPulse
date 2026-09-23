@@ -2,6 +2,8 @@ import type { PiPulseDb } from '@pipulse/storage';
 import type { Reading, WindowSummary } from './evaluate.js';
 import type { Severity } from './rules.js';
 
+export type ClearedBy = 'condition' | 'rule_removed' | 'rule_changed';
+
 export interface Alert {
   id: number;
   ruleId: string;
@@ -12,11 +14,21 @@ export interface Alert {
   value: number | null;
   raisedAt: number;
   clearedAt: number | null;
-  clearedBy: 'condition' | 'rule_removed' | null;
+  clearedBy: ClearedBy | null;
+  /** When someone marked it as seen; null until then. Cleared with the alert. */
+  acknowledgedAt: number | null;
+  /** Fingerprint of the rule that raised it (see ruleHash); null before migration 6. */
+  ruleHash: string | null;
 }
 
+export type NewAlert = Pick<
+  Alert,
+  'ruleId' | 'metric' | 'severity' | 'message' | 'value' | 'raisedAt'
+> & { ruleHash?: string | null };
+
 const COLUMNS = `id, rule_id AS ruleId, metric, severity, message, value,
-  raised_at AS raisedAt, cleared_at AS clearedAt, cleared_by AS clearedBy`;
+  raised_at AS raisedAt, cleared_at AS clearedAt, cleared_by AS clearedBy,
+  acknowledged_at AS acknowledgedAt, rule_hash AS ruleHash`;
 
 /** Parameters: mask, metric, from, to. Exported so a test can check its query plan. */
 export const WINDOW_SQL = `SELECT COUNT(*) AS count, MIN(ts) AS oldest, MAX(ts) AS newest,
@@ -92,14 +104,11 @@ export function listAlerts(
     .all(query.from, query.to, query.limit) as unknown as Alert[];
 }
 
-export function raiseAlert(
-  db: PiPulseDb,
-  alert: Omit<Alert, 'id' | 'clearedAt' | 'clearedBy'>
-): Alert {
+export function raiseAlert(db: PiPulseDb, alert: NewAlert): Alert {
   return db
     .prepare(
-      `INSERT INTO alerts (rule_id, metric, severity, message, value, raised_at)
-       VALUES (?, ?, ?, ?, ?, ?) RETURNING ${COLUMNS}`
+      `INSERT INTO alerts (rule_id, metric, severity, message, value, raised_at, rule_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING ${COLUMNS}`
     )
     .get(
       alert.ruleId,
@@ -107,7 +116,8 @@ export function raiseAlert(
       alert.severity,
       alert.message,
       alert.value,
-      alert.raisedAt
+      alert.raisedAt,
+      alert.ruleHash ?? null
     ) as unknown as Alert;
 }
 
@@ -115,9 +125,28 @@ export function clearAlert(
   db: PiPulseDb,
   id: number,
   clearedAt: number,
-  clearedBy: 'condition' | 'rule_removed'
+  clearedBy: ClearedBy
 ): Alert {
   return db
     .prepare(`UPDATE alerts SET cleared_at = ?, cleared_by = ? WHERE id = ? RETURNING ${COLUMNS}`)
     .get(clearedAt, clearedBy, id) as unknown as Alert;
+}
+
+/**
+ * Marks an open alert as seen. Acknowledging again keeps the first time; a
+ * cleared alert can't be acknowledged (the next raise is a new row anyway).
+ */
+export function acknowledgeAlert(
+  db: PiPulseDb,
+  id: number,
+  at: number
+): Alert | 'not_found' | 'cleared' {
+  const updated = db
+    .prepare(
+      `UPDATE alerts SET acknowledged_at = COALESCE(acknowledged_at, ?)
+       WHERE id = ? AND cleared_at IS NULL RETURNING ${COLUMNS}`
+    )
+    .get(at, id) as unknown as Alert | undefined;
+  if (updated) return updated;
+  return db.prepare('SELECT 1 FROM alerts WHERE id = ?').get(id) ? 'cleared' : 'not_found';
 }
