@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha, Phase 4 complete.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite and serves a live web dashboard, a History page with zoomable charts from 1 hour to 1 year, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5 (alerting & settings) is next — see [Roadmap](#roadmap).
+> **Status: pre-alpha, Phase 5a complete.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5b (settings) is next — see [Roadmap](#roadmap).
 
 ## Why
 
@@ -38,6 +38,7 @@ PiPulse/
   packages/
     collector/   # metric plugins + scheduler
     storage/     # SQLite schema, migrations, query helpers
+    alerts/      # alert rules, raise/clear decisions, 15 s engine
     api/         # Fastify HTTP + WebSocket server
     web/         # frontend dashboard (build)
   deploy/
@@ -49,7 +50,7 @@ PiPulse/
 - **Storage** — SQLite (WAL mode). Raw samples are periodically downsampled into 1-minute/1-hour/1-day rollups and pruned, keeping the database size bounded the way RRD's fixed-size files did, but with configurable retention instead of a format baked in at file-creation time.
 - **API** — a Fastify server exposes REST endpoints for current values, historical queries, and config, plus a WebSocket channel that pushes new samples as they arrive.
 - **Web** — a browser dashboard consuming the API/WebSocket: a live status view, historical charts, and an alerts view.
-- **Alerting** — a rules engine evaluates the same KPI values with configurable hysteresis (raise/cancel duration, resend interval) and triggers webhook/shell/log actions.
+- **Alerting** — a rules engine evaluates the same KPI values with hysteresis (a condition must last `for` a while to raise and be normal for `clearAfter` to clear) and shows open alerts on the dashboard; webhook/shell/log actions come later.
 
 ## Tech stack
 
@@ -75,7 +76,7 @@ Requires **Node.js >=22.13.0** (for built-in `node:sqlite` support with no exper
 git clone https://github.com/<your-username>/PiPulse.git
 cd PiPulse
 npm install
-npm run build     # storage -> collector -> api -> web, in dependency order
+npm run build     # storage -> collector -> alerts -> api -> web, in dependency order
 npm test          # builds, then runs the Vitest suites across all packages
 npm run dev       # runs the server (collector + API) in watch mode
 ```
@@ -98,10 +99,11 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | `PIPULSE_RETENTION_1M` | `14d` | How long 1-minute averages are kept |
 | `PIPULSE_RETENTION_1H` | `1y` | How long hourly averages are kept |
 | `PIPULSE_RETENTION_1D` | `forever` | How long daily averages are kept |
+| `PIPULSE_ALERTS_FILE` | _(none)_ | JSON file of alert rules merged over the built-ins (see [Alerts](#alerts)) |
 
 Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Changing a value takes effect within a minute of restarting: a longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess. The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/config` (device, including its CPU count, plugins, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), and `ws://…/api/live` (a `snapshot` of latest values on connect, then one `sample` message per new reading). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default) or `active`; open alerts plus history, default last 30 days, newest first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -131,9 +133,45 @@ docker compose -f deploy/docker/compose.yml up -d
 
 The Docker image needs host visibility to report accurate host metrics — the compose file mounts `/proc` and `/sys` (read-only) and runs with `pid: host`. Keep the container on your LAN only; don't publish its port to the internet.
 
+## Alerts
+
+PiPulse checks its alert rules every 15 seconds and shows open alerts on the dashboard: a badge on the Alerts link, a line on the affected tile, and the Alerts page (open, the last 30 days, and the rules in force). Tiles take their colours from the same rules, reacting to the current reading; alerts wait until a condition has lasted.
+
+Built-in rules: CPU temperature ≥ 70 °C for 10 min (warning) or ≥ 80 °C for 2 min (critical); throttling or under-voltage now for 1 min (critical) or since boot (warning, clears after a reboot); `/` or `/boot` ≥ 70 % (warning) or ≥ 90 % (critical) for 10 min; load above the core count, CPU ≥ 90 %, or swap ≥ 80 % (warning) / ≥ 95 % (critical), each sustained; and any metric with no reading for 5 polls (at least 2 min).
+
+To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries are merged by `id`: a new id adds a rule, an existing one replaces it, `"disabled": true` removes it (disabling an id that doesn't exist is an error, so a typo can't silently leave a rule on). Each rule has exactly one condition — `atLeast`, `atMost`, `bitsSet` or `noReadingFor` — plus optional `for` and `clearAfter` durations (`30s`, `5min`, `2h`; no bare `m`). An invalid file stops PiPulse at startup with a message naming the problem.
+
+```json
+{
+  "rules": [
+    {
+      "id": "cpu_warm",
+      "metric": "cpu_temperature",
+      "atLeast": 65,
+      "for": "10min",
+      "severity": "warning",
+      "message": "CPU running warm"
+    },
+    { "id": "cpu_busy", "disabled": true },
+    {
+      "id": "disk_nearly_full",
+      "metric": "disk_used",
+      "atLeast": 95,
+      "for": "5min",
+      "severity": "critical",
+      "message": "Disk nearly full"
+    }
+  ]
+}
+```
+
+The temperature defaults suit a Pi 5 with an active cooler (it holds a busy Pi 5 around 55–65 °C) as well as a passively cooled Pi. For a hot enclosure, raise `cpu_warm`; for a fan you want to know about early, lower it.
+
+Alerts show on the dashboard only for now. Editing rules in the browser, acknowledging alerts, and notifications (e.g. a webhook to Apprise) come with the Settings phase.
+
 ## Configuration
 
-Configuration (collector plugins to enable, poll intervals, retention windows, alert rules, notification targets) lives in a single config file — details will be documented here once the config format is finalized in the collector/API packages.
+Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention and alert rules become editable from a Settings page in Phase 5b; plugin selection and poll intervals are fixed in code until then.
 
 ## Roadmap
 
@@ -144,7 +182,8 @@ Configuration (collector plugins to enable, poll intervals, retention windows, a
 | 2 | HTTP/WebSocket API | ✅ Done |
 | 3 | Dashboard (status-page parity) | ✅ Done |
 | 4 | History & charts (statistics-page parity) | ✅ Done |
-| 5 | Alerting engine & settings (authenticated, UI-editable retention) | ⏳ Next |
+| 5a | Alerting (rules, dashboard alerts) | ✅ Done |
+| 5b | Settings (authentication, retention editor, rule editing) | ⏳ Next |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 
