@@ -78,3 +78,5 @@ export {
   type RetentionPolicy,
   type SeriesPoint
 } from './rollup.js';
+
+export { getSettings, saveSettings } from './settings.js';
