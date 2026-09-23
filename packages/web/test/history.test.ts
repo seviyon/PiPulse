@@ -172,6 +172,10 @@ describe('historyOnly', () => {
     expect(historyOnly.has('load_1')).toBe(true);
     expect(historyOnly.has('cpu_load')).toBe(false);
   });
+
+  it('keeps swap traffic off the Now page', () => {
+    expect(historyOnly.has('swap_io')).toBe(true);
+  });
 });
 
 describe('resolutionLabel', () => {

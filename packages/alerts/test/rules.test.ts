@@ -54,6 +54,12 @@ describe('builtinRules', () => {
       forMs: 15 * MIN
     });
     expect(byId.get('not_collecting')).toMatchObject({ metric: '*', noReadingFor: 'auto' });
+    expect(byId.get('swap_heavy')).toMatchObject({
+      metric: 'swap_io',
+      atLeast: 250,
+      forMs: 10 * MIN
+    });
+    expect(byId.get('swap_full')).toMatchObject({ metric: 'swap_used', atLeast: 95 });
     for (const rule of byId.values()) {
       expect(rule.source).toBe('built-in');
       if (rule.noReadingFor === undefined) expect(rule.clearAfterMs).toBe(rule.forMs);

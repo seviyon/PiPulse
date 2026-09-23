@@ -143,8 +143,11 @@ export function builtinRules(cores: number): Rule[] {
     }),
     rule({
       id: 'swap_heavy',
-      metric: 'swap_used',
-      atLeast: 80,
+      // Pages moving to and from swap, not how full it is: a small swap file
+      // holding idle pages sits "full" for weeks without any pressure.
+      // 250 pages/s is about 1 MB/s with 4 KiB pages.
+      metric: 'swap_io',
+      atLeast: 250,
       forMs: 10 * MIN,
       severity: 'warning',
       message: 'Swapping heavily'
