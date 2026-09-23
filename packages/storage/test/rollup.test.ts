@@ -12,8 +12,11 @@ import {
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
-/** A fixed "now" on a day boundary (2026-09-01T00:00Z) keeps bucket maths readable. */
-const T0 = Date.UTC(2026, 8, 1);
+/**
+ * A fixed "now" on a local day boundary: midnight 2026-09-01 in the pinned
+ * test timezone (Europe/Madrid, UTC+2 here), i.e. 2026-08-31T22:00Z.
+ */
+const T0 = new Date(2026, 8, 1).getTime();
 
 let db: PiPulseDb;
 
@@ -110,6 +113,96 @@ describe('runHousekeeping rollups', () => {
 
     expect(rollups('1m', 'cpu_load').map((r) => r.avg)).toEqual([1]);
     expect(rollups('1m', 'memory_used').map((r) => r.avg)).toEqual([500]);
+  });
+});
+
+describe('daily rollups follow local days', () => {
+  it('runs under the pinned timezone', () => {
+    expect(new Date(T0).toISOString()).toBe('2026-08-31T22:00:00.000Z');
+  });
+
+  it('starts each day at local midnight, not UTC midnight', () => {
+    // 23:30 local on Sep 1 is 21:30Z the same day; 01:00 local on Sep 2 is 23:00Z on Sep 1.
+    insertSample(db, { ts: new Date(2026, 8, 1, 23, 30).getTime(), metric: 'cpu_load', value: 2 });
+    insertSample(db, { ts: new Date(2026, 8, 2, 1, 0).getTime(), metric: 'cpu_load', value: 8 });
+
+    runHousekeeping(db, new Date(2026, 8, 3).getTime());
+
+    expect(rollups('1d').map((r) => [new Date(r.ts).toString().slice(4, 24), r.avg])).toEqual([
+      ['Sep 01 2026 00:00:00', 2],
+      ['Sep 02 2026 00:00:00', 8]
+    ]);
+  });
+
+  it('gives the day DST ends its full 25 hours', () => {
+    // Europe/Madrid falls back on 2026-10-25: that local day is 25 hours long.
+    const dayStart = new Date(2026, 9, 25).getTime();
+    const nextDay = new Date(2026, 9, 26).getTime();
+    expect(nextDay - dayStart).toBe(25 * HOUR);
+    insertSample(db, { ts: dayStart + 30 * MIN, metric: 'cpu_load', value: 1 });
+    insertSample(db, { ts: nextDay - 30 * MIN, metric: 'cpu_load', value: 3 });
+    insertSample(db, { ts: nextDay + 30 * MIN, metric: 'cpu_load', value: 9 });
+
+    runHousekeeping(db, nextDay + DAY);
+
+    expect(rollups('1d')).toEqual([
+      { ts: dayStart, avg: 2, min: 1, max: 3, count: 2 },
+      { ts: nextDay, avg: 9, min: 9, max: 9, count: 1 }
+    ]);
+  });
+
+  it('does not close a local day before local midnight', () => {
+    insertSample(db, { ts: T0 + HOUR, metric: 'cpu_load', value: 1 });
+    runHousekeeping(db, T0 + DAY - MIN);
+    expect(rollups('1d')).toEqual([]);
+  });
+});
+
+describe('daily rollups across a timezone change', () => {
+  /** Runs `fn` with the server timezone set to `tz`, then restores the pinned one. */
+  function inTimezone<T>(tz: string, fn: () => T): T {
+    const pinned = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+      return fn();
+    } finally {
+      process.env.TZ = pinned;
+    }
+  }
+
+  const sample = (ts: number, value: number) => insertSample(db, { ts, metric: 'cpu_load', value });
+  const totalCount = () => rollups('1d').reduce((sum, row) => sum + row.count, 0);
+
+  it('picks up where the last day ended, without recounting or skipping hours', () => {
+    sample(Date.UTC(2026, 8, 9, 12), 1);
+    // After midnight UTC but before midnight in New York (04:00Z).
+    sample(Date.UTC(2026, 8, 10, 2), 3);
+    sample(Date.UTC(2026, 8, 10, 12), 5);
+
+    inTimezone('UTC', () => runHousekeeping(db, Date.UTC(2026, 8, 10, 0, 30)));
+    expect(rollups('1d').map((r) => [r.ts, r.avg])).toEqual([[Date.UTC(2026, 8, 9), 1]]);
+
+    // Moving west: New York's Sep 9 began at 04:00Z, 20 hours of which the UTC day already counts.
+    inTimezone('America/New_York', () => runHousekeeping(db, Date.UTC(2026, 8, 12, 12)));
+    expect(rollups('1d').map((r) => [r.ts, r.avg])).toEqual([
+      [Date.UTC(2026, 8, 9), 1],
+      [Date.UTC(2026, 8, 9, 4), 3],
+      [Date.UTC(2026, 8, 10, 4), 5]
+    ]);
+    expect(totalCount()).toBe(3);
+  });
+
+  it('merges into a day row the new timezone shares instead of overwriting it', () => {
+    // Lagos (UTC+1 all year) and London's Oct 25 (the day BST ends, 25 hours
+    // long) both start at 23:00Z on Oct 24, but Lagos's ends an hour sooner.
+    sample(Date.UTC(2026, 9, 25, 12), 2);
+    inTimezone('Africa/Lagos', () => runHousekeeping(db, Date.UTC(2026, 9, 25, 23, 30)));
+    sample(Date.UTC(2026, 9, 25, 23, 30), 6);
+
+    inTimezone('Europe/London', () => runHousekeeping(db, Date.UTC(2026, 9, 27, 12)));
+    expect(rollups('1d')).toEqual([
+      { ts: Date.UTC(2026, 9, 24, 23), avg: 4, min: 2, max: 6, count: 2 }
+    ]);
   });
 });
 

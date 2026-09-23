@@ -38,6 +38,100 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       CREATE INDEX idx_metrics_ts ON metrics(ts);
       CREATE INDEX idx_rollup_resolution_ts ON metrics_rollup(resolution, ts);
     `);
+  },
+  // 3: daily rollups move from UTC days to the server's local days, built
+  // from 1-minute rollups, and record in rollup_progress where they stopped
+  // (a local day's end depends on the timezone it was cut in, so the newest
+  // row can't say). Daily rows that minute data overlaps are dropped and
+  // rebuilt on local days; older ones have no finer data left, so they stay
+  // on their UTC days rather than being lost.
+  //
+  // Minute data starts partway through a day (pruning cuts mid-day), so the
+  // rebuild takes hourly rows up to where minute data takes over; otherwise,
+  // once hourly retention passed, daily history would keep a partial day
+  // forever. It starts where the newest kept UTC day ends, so no hour is
+  // counted twice, and stops at the last local midnight minute data has
+  // reached. If minute data starts in a day that hasn't ended, the rebuild
+  // still takes that day's hours before it, and housekeeping merges the
+  // rest in at midnight. The day helpers and merge are inlined, not imported
+  // from rollup.ts, because a shipped migration must not change behaviour
+  // when that does.
+  (db) => {
+    db.exec(`
+      CREATE TABLE rollup_progress (
+        resolution TEXT PRIMARY KEY,
+        until      INTEGER NOT NULL
+      );
+    `);
+    const MIN = 60_000;
+    const HOUR = 60 * MIN;
+    const DAY = 24 * HOUR;
+    const one = (sql: string) => (db.prepare(sql).get() as { ts: number | null }).ts;
+    const setProgress = (until: number) =>
+      db.prepare("INSERT INTO rollup_progress (resolution, until) VALUES ('1d', ?)").run(until);
+
+    const firstMinute = one("SELECT MIN(ts) AS ts FROM metrics_rollup WHERE resolution = '1m'");
+    if (firstMinute === null) {
+      const newestDay = one("SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = '1d'");
+      if (newestDay !== null) setProgress(newestDay + DAY);
+      return;
+    }
+    db.prepare("DELETE FROM metrics_rollup WHERE resolution = '1d' AND ts > ?").run(
+      firstMinute - DAY
+    );
+
+    const localDayStart = (ts: number) => {
+      const date = new Date(ts);
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    };
+    const nextLocalDay = (dayStart: number) => {
+      const date = new Date(dayStart);
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+    };
+    const newestDay = one("SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = '1d'");
+    const firstHour = one("SELECT MIN(ts) AS ts FROM metrics_rollup WHERE resolution = '1h'");
+    const newestHour = one("SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = '1h'");
+    const lastMinute = one("SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = '1m'")!;
+
+    // Kept UTC days cover [ts, ts + 24h); a kept day always ends before
+    // minute data begins.
+    const start =
+      newestDay !== null
+        ? newestDay + DAY
+        : localDayStart(Math.min(firstMinute, firstHour ?? firstMinute));
+    // Hourly rows stand in for minutes up to the end of the hour holding the
+    // first minute row (its earlier minutes were pruned), provided that hour
+    // has closed; if it hasn't, none of its minutes were pruned.
+    const firstFullHour = Math.ceil(firstMinute / HOUR) * HOUR;
+    const hoursUntil =
+      newestHour !== null && newestHour + HOUR >= firstFullHour ? firstFullHour : firstMinute;
+    // Minute rows only exist for closed minutes, so all of them are final.
+    const minutesUntil = lastMinute + MIN;
+    const end = Math.min(Math.max(localDayStart(minutesUntil), hoursUntil), minutesUntil);
+    if (start >= end) {
+      if (newestDay !== null) setProgress(start);
+      return;
+    }
+
+    const rebuild = db.prepare(
+      `INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max, count)
+       SELECT ?, metric, '1d', SUM(avg * count) / SUM(count), MIN(min), MAX(max), SUM(count)
+       FROM metrics_rollup
+       WHERE (resolution = '1h' AND ts >= ? AND ts < ?) OR (resolution = '1m' AND ts >= ? AND ts < ?)
+       GROUP BY metric
+       ON CONFLICT (metric, resolution, ts) DO UPDATE SET
+         avg = (avg * count + excluded.avg * excluded.count) / (count + excluded.count),
+         min = MIN(min, excluded.min),
+         max = MAX(max, excluded.max),
+         count = count + excluded.count`
+    );
+    for (let from = start; from < end;) {
+      const day = localDayStart(from);
+      const to = Math.min(nextLocalDay(day), end);
+      rebuild.run(day, from, Math.min(hoursUntil, to), Math.max(from, hoursUntil), to);
+      from = to;
+    }
+    setProgress(end);
   }
 ];
 

@@ -101,6 +101,8 @@ CREATE TABLE metrics_rollup (
 
 A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw data — the same spirit as RRD's rollups, but explicit, queryable, and tunable rather than fixed at file-creation time.
 
+**Update (Phase 4, daily rollups):** daily buckets are the server's local calendar days (23 or 25 hours across DST), built from 1-minute rollups. Because a local day's end depends on the timezone it was cut in, a `rollup_progress (resolution, until)` table (schema version 3) records where daily rollups stopped; the next run continues from exactly there and merges any partial day into its row, so a timezone change never recounts or skips data.
+
 **Update (Phase 0, storage engine):** shipped with `better-sqlite3` initially, then swapped to Node's built-in `node:sqlite` (`DatabaseSync`) after a real npm bug ([npm/cli#9450](https://github.com/npm/cli/issues/9450)) made it impossible to selectively allow just `better-sqlite3`'s install script under `ignore-scripts=true` — a security setting kept on for good reason. `node:sqlite` needs Node 22.13+/24+ (bumped `engines.node` accordingly, CI now runs 22.x/24.x instead of 20.x/22.x) and has no install step at all, so this class of failure can't recur. `openDb`/`insertSample`/`getLatest`/`getHistory` are unchanged; only the internals moved.
 
 ## API and web frontend
