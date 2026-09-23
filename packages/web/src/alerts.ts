@@ -2,10 +2,20 @@ import { formatValue } from './format.js';
 import { RANGES, type RangeId } from './router.js';
 import type { Alert, PluginInfo, Rule } from './types.js';
 
-/** Applies one live raise or clear to the open alerts, newest first. */
-export function applyAlertEvent(open: Alert[], event: 'raised' | 'cleared', alert: Alert): Alert[] {
+/** Applies one live raise, clear or acknowledgement to the open alerts, newest first. */
+export function applyAlertEvent(
+  open: Alert[],
+  event: 'raised' | 'cleared' | 'acknowledged',
+  alert: Alert
+): Alert[] {
+  if (event === 'acknowledged') return open.map((a) => (a.id === alert.id ? alert : a));
   const rest = open.filter((a) => a.id !== alert.id);
   return event === 'raised' ? [alert, ...rest] : rest;
+}
+
+/** Open alerts nobody has acknowledged yet: what the nav badge counts. */
+export function unacknowledged(open: Alert[]): Alert[] {
+  return open.filter((alert) => !alert.acknowledgedAt);
 }
 
 /** The alert to show for a group: critical before warning, then the one open longest. */

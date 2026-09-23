@@ -266,6 +266,10 @@ p {
   font-weight: 600;
 }
 
+.alert-line[data-acknowledged='true'] {
+  opacity: 0.65;
+}
+
 /* ---- Meter ---- */
 
 .meter {

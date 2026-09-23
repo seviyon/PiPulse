@@ -13,14 +13,14 @@ import {
   type Session
 } from './api.js';
 import { SignIn } from './sign-in.js';
-import { applyAlertEvent, worstAlert } from './alerts.js';
+import { applyAlertEvent, unacknowledged, worstAlert } from './alerts.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
 import { HistoryPage } from './history-page.js';
 import { historyOnly } from './history.js';
 import { routeHash, useRoute } from './router.js';
 import { StatusIcon, Tile } from './tile.js';
-import type { Alert, Config, DeviceInfo, Sample } from './types.js';
+import type { Alert, Config, DeviceInfo, Rule, Sample } from './types.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {
@@ -107,6 +107,8 @@ export function App() {
   const [unreachable, setUnreachable] = useState<{ retryInMs: number }>();
   const [data, setData] = useState<LiveState>(emptyState);
   const [openAlerts, setOpenAlerts] = useState<Alert[]>([]);
+  /** Rules pushed live after an edit; the config's rules until the first push. */
+  const [liveRules, setLiveRules] = useState<Rule[]>();
   const [connection, setConnection] = useState<{ status: ConnectionStatus; retryInMs?: number }>({
     status: 'connecting'
   });
@@ -149,6 +151,7 @@ export function App() {
           waitingSince.current = Date.now() + clockOffset.current;
           setUnreachable(undefined);
           setConfig(loaded);
+          setLiveRules(undefined);
         },
         (error: unknown) => {
           if (cancelled) return;
@@ -216,6 +219,8 @@ export function App() {
           setOpenAlerts(message.alerts ?? []);
         } else if (message.type === 'alert') {
           setOpenAlerts((open) => applyAlertEvent(open, message.event, message.alert));
+        } else if (message.type === 'rules') {
+          setLiveRules(message.rules);
         } else {
           const { type: _type, ...sample } = message;
           // A pushed sample is stamped just before it is sent, so its ts is
@@ -279,7 +284,9 @@ export function App() {
   }
 
   const { device } = config;
-  const worstOpen = worstAlert(openAlerts);
+  const rules = liveRules ?? config.rules ?? [];
+  const loud = unacknowledged(openAlerts);
+  const worstOpen = worstAlert(loud);
 
   return (
     <main class="page">
@@ -320,15 +327,13 @@ export function App() {
         <a
           href={routeHash({ page: 'alerts' })}
           aria-current={route.page === 'alerts' ? 'page' : undefined}
-          aria-label={
-            worstOpen ? `Alerts, ${openAlerts.length} open, ${worstOpen.severity}` : undefined
-          }
+          aria-label={worstOpen ? `Alerts, ${loud.length} open, ${worstOpen.severity}` : undefined}
         >
           Alerts
           {worstOpen && (
             <span class="badge" data-severity={worstOpen.severity}>
               <StatusIcon level={worstOpen.severity} />
-              {openAlerts.length}
+              {loud.length}
             </span>
           )}
         </a>
@@ -368,7 +373,7 @@ export function App() {
                 <Tile
                   key={plugin.id}
                   plugin={plugin}
-                  rules={config.rules ?? []}
+                  rules={rules}
                   alert={worstAlert(openAlerts.filter((a) => a.metric === plugin.id))}
                   latest={data.latest[plugin.id]}
                   series={data.series[plugin.id] ?? []}

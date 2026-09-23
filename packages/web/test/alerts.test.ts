@@ -4,6 +4,7 @@ import {
   describeRule,
   formatDuration,
   rangeCovering,
+  unacknowledged,
   worstAlert
 } from '../src/alerts.js';
 import type { Alert, PluginInfo } from '../src/types.js';
@@ -32,6 +33,24 @@ describe('applyAlertEvent', () => {
     expect(
       applyAlertEvent([a, b], 'cleared', { ...b, clearedAt: 30, clearedBy: 'condition' })
     ).toEqual([a]);
+  });
+});
+
+describe('acknowledged alerts', () => {
+  it('replaces an acknowledged alert in place and leaves it open', () => {
+    const a = alert(1, 'warning', 10);
+    const b = alert(2, 'critical', 20);
+    const acked = { ...a, acknowledgedAt: 5 };
+    expect(applyAlertEvent([a, b], 'acknowledged', acked)).toEqual([acked, b]);
+  });
+
+  it('counts only unacknowledged alerts as loud', () => {
+    expect(
+      unacknowledged([
+        { ...alert(1, 'warning', 10), acknowledgedAt: 5 },
+        alert(2, 'critical', 20)
+      ]).map((a) => a.id)
+    ).toEqual([2]);
   });
 });
 

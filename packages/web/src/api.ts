@@ -28,7 +28,7 @@ export async function getJson<T>(path: string): Promise<T> {
 }
 
 export async function sendJson<T>(
-  method: 'POST' | 'PUT',
+  method: 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown
 ): Promise<T> {
