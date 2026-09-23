@@ -328,6 +328,19 @@ describe('<App> alerts', () => {
     expect(link().textContent).toContain('1');
     expect(link().getAttribute('aria-label')).toBe('Alerts, 1 open, critical');
   });
+
+  it('names the severity in the badge for a warning-only alert too', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    const link = () =>
+      [...root.querySelectorAll('nav[aria-label="Pages"] a')].find(
+        (a) => a.getAttribute('href') === '#/alerts'
+      )!;
+
+    await send({ type: 'snapshot', samples: [], alerts: [openAlert(1, 'warning', 'cpu_warm')] });
+    expect(link().textContent).toContain('1');
+    expect(link().getAttribute('aria-label')).toBe('Alerts, 1 open, warning');
+  });
 });
 
 describe('<App> with the Pi and the browser clocks disagreeing', () => {

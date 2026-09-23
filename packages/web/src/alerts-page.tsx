@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { describeRule, rangeCovering, worstAlert } from './alerts.js';
 import { formatDateTime, formatUptime, formatValue } from './format.js';
 import { routeHash } from './router.js';
@@ -55,16 +55,8 @@ type Recent = { status: 'loading' } | { status: 'error' } | { status: 'ready'; a
 export function AlertsPage({ config, open, now }: AlertsPageProps) {
   const [recent, setRecent] = useState<Recent>({ status: 'loading' });
   const openKey = open.map((alert) => alert.id).join(',');
-  // The fetch itself waits for the effect below (deferred to after paint),
-  // but the open set has already changed here, on this render: showing
-  // "loading" right away, rather than the stale Recent list, needs no wait.
-  const fetchedFor = useRef<string>();
-  if (fetchedFor.current !== openKey && recent.status !== 'loading') {
-    setRecent({ status: 'loading' });
-  }
 
   useEffect(() => {
-    fetchedFor.current = openKey;
     let cancelled = false;
     const to = now();
     fetch(`/api/alerts?state=all&from=${to - 30 * DAY}&to=${to}&limit=200`)

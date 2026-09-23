@@ -70,6 +70,22 @@ async function settle() {
     expect(root.textContent).not.toContain('Loading');
   });
 }
+
+/**
+ * Waits for `fetch` to have been called `n` times, flushing Preact's
+ * deferred effects (via `act`) on every poll. Unlike `settle()`, this
+ * doesn't look at the DOM, so it's the right wait for a refetch that
+ * deliberately keeps stale content on screen instead of blanking to
+ * "Loading".
+ */
+async function waitForFetchCalls(n: number) {
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(n);
+  });
+}
 const section = (name: string) =>
   [...root.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === name)!;
 
@@ -118,8 +134,42 @@ describe('<AlertsPage>', () => {
     render(<AlertsPage config={config} open={[alert({})]} now={() => NOW} />, root);
     await settle();
     render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    await waitForFetchCalls(2);
+  });
+
+  it('keeps the Recent list on screen (no flicker back to "Loading") while a refetch triggered by an open-set change is in flight', async () => {
+    const firstAlerts = [
+      alert({ id: 5, message: 'Stale entry', clearedAt: NOW - MIN, clearedBy: 'condition' })
+    ];
+    let resolveSecond!: (response: Response) => void;
+    const secondResponse = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1 ? Response.json(firstAlerts) : secondResponse;
+      })
+    );
+
+    render(<AlertsPage config={config} open={[alert({})]} now={() => NOW} />, root);
     await settle();
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    expect(section('Recent').textContent).toContain('Stale entry');
+
+    // Change the open set: this triggers a refetch (fetch call #2), which we
+    // deliberately leave unresolved to inspect the screen mid-flight.
+    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    await waitForFetchCalls(2);
+
+    expect(root.textContent).not.toContain('Loading');
+    expect(section('Recent').textContent).toContain('Stale entry');
+
+    await act(async () => {
+      resolveSecond(Response.json([]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
   });
 
   it('lists the effective rules with their source and where to edit them', async () => {

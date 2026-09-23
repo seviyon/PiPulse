@@ -265,9 +265,7 @@ export function App() {
           href={routeHash({ page: 'alerts' })}
           aria-current={route.page === 'alerts' ? 'page' : undefined}
           aria-label={
-            worstOpen
-              ? `Alerts, ${openAlerts.length} open${worstOpen.severity === 'critical' ? ', critical' : ''}`
-              : undefined
+            worstOpen ? `Alerts, ${openAlerts.length} open, ${worstOpen.severity}` : undefined
           }
         >
           Alerts
