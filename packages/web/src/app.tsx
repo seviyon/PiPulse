@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
+import { AlertsPage } from './alerts-page.js';
 import { applyAlertEvent, worstAlert } from './alerts.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
 import { HistoryPage } from './history-page.js';
 import { historyOnly } from './history.js';
 import { routeHash, useRoute } from './router.js';
-import { Tile } from './tile.js';
+import { StatusIcon, Tile } from './tile.js';
 import type { Alert, Config, DeviceInfo, Sample } from './types.js';
 
 /** Node's process.platform values, as people say them. */
@@ -227,6 +228,7 @@ export function App() {
   }
 
   const { device } = config;
+  const worstOpen = worstAlert(openAlerts);
 
   return (
     <main class="page">
@@ -259,11 +261,34 @@ export function App() {
         >
           History
         </a>
+        <a
+          href={routeHash({ page: 'alerts' })}
+          aria-current={route.page === 'alerts' ? 'page' : undefined}
+          aria-label={
+            worstOpen
+              ? `Alerts, ${openAlerts.length} open${worstOpen.severity === 'critical' ? ', critical' : ''}`
+              : undefined
+          }
+        >
+          Alerts
+          {worstOpen && (
+            <span class="badge" data-severity={worstOpen.severity}>
+              <StatusIcon level={worstOpen.severity} />
+              {openAlerts.length}
+            </span>
+          )}
+        </a>
       </nav>
       {route.page === 'history' ? (
         <HistoryPage
           config={config}
           range={route.range}
+          now={() => Date.now() + clockOffset.current}
+        />
+      ) : route.page === 'alerts' ? (
+        <AlertsPage
+          config={config}
+          open={openAlerts}
           now={() => Date.now() + clockOffset.current}
         />
       ) : (

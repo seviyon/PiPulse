@@ -243,7 +243,8 @@ describe('<App>', () => {
     const links = [...root.querySelectorAll('nav[aria-label="Pages"] a')];
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Now', '#/'],
-      ['History', '#/history?range=24h']
+      ['History', '#/history?range=24h'],
+      ['Alerts', '#/alerts']
     ]);
     expect(links[0]?.getAttribute('aria-current')).toBe('page');
   });
@@ -312,6 +313,20 @@ describe('<App> alerts', () => {
     await send({ type: 'snapshot', samples: [], alerts: [openAlert(1, 'critical', 'cpu_hot')] });
     await send({ type: 'snapshot', samples: [], alerts: [] });
     expect(tile('CPU temperature').querySelector('.alert-line')).toBeNull();
+  });
+
+  it('badges the Alerts link with the open count and severity in words', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    const link = () =>
+      [...root.querySelectorAll('nav[aria-label="Pages"] a')].find(
+        (a) => a.getAttribute('href') === '#/alerts'
+      )!;
+    expect(link().getAttribute('aria-label')).toBeNull();
+
+    await send({ type: 'snapshot', samples: [], alerts: [openAlert(1, 'critical', 'cpu_hot')] });
+    expect(link().textContent).toContain('1');
+    expect(link().getAttribute('aria-label')).toBe('Alerts, 1 open, critical');
   });
 });
 
