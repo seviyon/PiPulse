@@ -15,6 +15,7 @@ function renderWaiting(waitedMs: number) {
       series={[]}
       now={1_000_000 + waitedMs}
       waitingSince={1_000_000}
+      rules={[]}
       windowMs={900_000}
     />,
     root
@@ -46,6 +47,7 @@ describe('<Tile> for throttle flags', () => {
         series={series}
         now={now}
         waitingSince={now}
+        rules={[]}
         windowMs={900_000}
       />,
       root
@@ -67,6 +69,7 @@ describe('<Tile> meter', () => {
         series={[]}
         now={now}
         waitingSince={now}
+        rules={[]}
         windowMs={900_000}
         max={971.52}
       />,
@@ -91,6 +94,7 @@ describe('<Tile> meter', () => {
         series={[]}
         now={now}
         waitingSince={now}
+        rules={[]}
         windowMs={900_000}
         max={85}
       />,
@@ -98,5 +102,54 @@ describe('<Tile> meter', () => {
     );
     expect(root.querySelector('[role="meter"]')).not.toBeNull();
     expect(root.textContent).not.toContain('% of');
+  });
+});
+
+describe('<Tile> alerts', () => {
+  const temperature = {
+    id: 'cpu_temperature',
+    label: 'CPU temperature',
+    unit: '°C',
+    intervalMs: 10_000
+  };
+  const hot = {
+    id: 'cpu_hot',
+    metric: 'cpu_temperature',
+    atLeast: 80,
+    forMs: 120_000,
+    clearAfterMs: 120_000,
+    severity: 'critical' as const,
+    message: 'CPU running hot',
+    source: 'built-in' as const
+  };
+
+  it('colours from the rules and names the open alert with how long it has been open', () => {
+    const now = 1_790_000_000_000;
+    render(
+      <Tile
+        plugin={temperature}
+        rules={[hot]}
+        alert={{
+          id: 1,
+          ruleId: 'cpu_hot',
+          metric: 'cpu_temperature',
+          severity: 'critical',
+          message: 'CPU running hot',
+          value: 82,
+          raisedAt: now - 12 * 60_000,
+          clearedAt: null,
+          clearedBy: null
+        }}
+        latest={{ ts: now, metric: 'cpu_temperature', value: 82 }}
+        series={[]}
+        now={now}
+        waitingSince={now}
+        windowMs={900_000}
+      />,
+      root
+    );
+    expect(root.querySelector('section')?.dataset['status']).toBe('critical');
+    expect(root.textContent).toContain('CPU running hot');
+    expect(root.textContent).toMatch(/Alert since .+ \(12 min\)/);
   });
 });

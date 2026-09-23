@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
+import { applyAlertEvent, worstAlert } from './alerts.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
 import { HistoryPage } from './history-page.js';
 import { historyOnly } from './history.js';
 import { routeHash, useRoute } from './router.js';
 import { Tile } from './tile.js';
-import type { Config, DeviceInfo, Sample } from './types.js';
+import type { Alert, Config, DeviceInfo, Sample } from './types.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {
@@ -94,6 +95,7 @@ export function App() {
   /** Set while /api/config is failing: how long until the next attempt. */
   const [unreachable, setUnreachable] = useState<{ retryInMs: number }>();
   const [data, setData] = useState<LiveState>(emptyState);
+  const [openAlerts, setOpenAlerts] = useState<Alert[]>([]);
   const [connection, setConnection] = useState<{ status: ConnectionStatus; retryInMs?: number }>({
     status: 'connecting'
   });
@@ -179,6 +181,9 @@ export function App() {
       onMessage: (message) => {
         if (message.type === 'snapshot') {
           setData((state) => applySnapshot(state, message.samples));
+          setOpenAlerts(message.alerts ?? []);
+        } else if (message.type === 'alert') {
+          setOpenAlerts((open) => applyAlertEvent(open, message.event, message.alert));
         } else {
           const { type: _type, ...sample } = message;
           // A pushed sample is stamped just before it is sent, so its ts is
@@ -270,6 +275,8 @@ export function App() {
                 <Tile
                   key={plugin.id}
                   plugin={plugin}
+                  rules={config.rules ?? []}
+                  alert={worstAlert(openAlerts.filter((a) => a.metric === plugin.id))}
                   latest={data.latest[plugin.id]}
                   series={data.series[plugin.id] ?? []}
                   now={now}

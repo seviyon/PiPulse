@@ -1,3 +1,10 @@
+/**
+ * Tile status and meters. Status levels and their words come from the
+ * alert rules the server sends (see statusFor below), not fixed
+ * thresholds; meters still use fixed maxima, purely for display.
+ */
+import type { Rule } from './types.js';
+
 export type StatusLevel = 'ok' | 'warning' | 'critical';
 
 export interface Status {
@@ -5,38 +12,6 @@ export interface Status {
   /** Plain-words reason, present whenever level isn't ok. */
   label?: string;
 }
-
-interface Threshold {
-  atLeast: number;
-  level: Exclude<StatusLevel, 'ok'>;
-  label: string;
-}
-
-/**
- * Display-only thresholds, highest first. Real, configurable alert rules
- * arrive with the Phase 5 alerting engine; these just colour the dashboard.
- */
-const thresholds: Record<string, Threshold[]> = {
-  // The Pi firmware starts soft-throttling at 80 °C and hard-throttles at 85 °C.
-  cpu_temperature: [
-    { atLeast: 80, level: 'critical', label: 'Throttling likely' },
-    { atLeast: 70, level: 'warning', label: 'Running hot' }
-  ],
-  disk_used: [
-    { atLeast: 90, level: 'critical', label: 'Almost full' },
-    { atLeast: 80, level: 'warning', label: 'Filling up' }
-  ],
-  boot_used: [
-    { atLeast: 90, level: 'critical', label: 'Almost full' },
-    { atLeast: 80, level: 'warning', label: 'Filling up' }
-  ],
-  // Constant swapping on an SD card is slow and wears the card out.
-  swap_used: [
-    { atLeast: 95, level: 'critical', label: 'Swap nearly full' },
-    { atLeast: 80, level: 'warning', label: 'Swapping heavily' }
-  ],
-  cpu_load: [{ atLeast: 90, level: 'warning', label: 'Busy' }]
-};
 
 /** vcgencmd get_throttled bits 0–3; the same conditions since boot sit 16 bits higher. */
 const throttleConditions = [
@@ -54,16 +29,39 @@ function describeThrottle(bits: number): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-export function statusFor(metric: string, value: number): Status {
-  if (metric === 'throttled') {
-    const now = value & 0xf;
-    const sinceBoot = (value >> 16) & 0xf;
-    if (now) return { level: 'critical', label: describeThrottle(now) };
-    if (sinceBoot) return { level: 'warning', label: `${describeThrottle(sinceBoot)} since boot` };
-    return { level: 'ok' };
+const rank = { warning: 1, critical: 2 } as const;
+
+function holds(rule: Rule, value: number): boolean {
+  if (rule.atLeast !== undefined) return value >= rule.atLeast;
+  if (rule.atMost !== undefined) return value <= rule.atMost;
+  if (rule.bitsSet !== undefined) return (value & rule.bitsSet) !== 0;
+  return false;
+}
+
+/** Throttle bits in words: happening now, else since boot, else the rule's own message. */
+function throttleLabel(rule: Rule, value: number): string {
+  const bits = value & (rule.bitsSet ?? 0);
+  if (bits & 0xf) return describeThrottle(bits & 0xf);
+  if ((bits >> 16) & 0xf) return `${describeThrottle((bits >> 16) & 0xf)} since boot`;
+  return rule.message;
+}
+
+/**
+ * A tile's status from the alert rules for its metric, judged on the one
+ * reading shown (alerts wait for their `for`; tiles react at once). The
+ * most severe matching rule wins and names it in words.
+ */
+export function statusFor(rules: Rule[], metric: string, value: number): Status {
+  let worst: Rule | undefined;
+  for (const rule of rules) {
+    if (rule.metric !== metric || !holds(rule, value)) continue;
+    if (!worst || rank[rule.severity] > rank[worst.severity]) worst = rule;
   }
-  const hit = thresholds[metric]?.find((threshold) => value >= threshold.atLeast);
-  return hit ? { level: hit.level, label: hit.label } : { level: 'ok' };
+  if (!worst) return { level: 'ok' };
+  return {
+    level: worst.severity,
+    label: metric === 'throttled' ? throttleLabel(worst, value) : worst.message
+  };
 }
 
 /** The value a meter fills up to; undefined for metrics with no natural ceiling. */

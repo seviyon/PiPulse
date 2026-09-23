@@ -1,11 +1,13 @@
-import { formatAge, formatValue } from './format.js';
+import { formatAge, formatTime, formatUptime, formatValue } from './format.js';
 import { Sparkline } from './sparkline.js';
 import { showsShareOfMax, statusFor, type StatusLevel } from './status.js';
 import { isStale } from './store.js';
-import type { PluginInfo, Sample } from './types.js';
+import type { Alert, PluginInfo, Rule, Sample } from './types.js';
 
 interface TileProps {
   plugin: PluginInfo;
+  rules: Rule[];
+  alert?: Alert | undefined;
   latest: Sample | undefined;
   series: Sample[];
   now: number;
@@ -16,7 +18,7 @@ interface TileProps {
   max?: number | undefined;
 }
 
-function StatusIcon({ level }: { level: Exclude<StatusLevel, 'ok'> }) {
+export function StatusIcon({ level }: { level: Exclude<StatusLevel, 'ok'> }) {
   return level === 'critical' ? (
     <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
       <path d="M4.1 0.5h5.8l3.6 3.6v5.8l-3.6 3.6H4.1L0.5 9.9V4.1z" fill="var(--critical)" />
@@ -33,7 +35,17 @@ function StatusIcon({ level }: { level: Exclude<StatusLevel, 'ok'> }) {
 }
 
 /** One metric: its current reading, a meter when it has a ceiling, and a recent trend. */
-export function Tile({ plugin, latest, series, now, waitingSince, windowMs, max }: TileProps) {
+export function Tile({
+  plugin,
+  rules,
+  alert,
+  latest,
+  series,
+  now,
+  waitingSince,
+  windowMs,
+  max
+}: TileProps) {
   if (!latest) {
     // Same rule as a stale value: three missed polls.
     const missing = now - waitingSince > plugin.intervalMs * 3;
@@ -52,7 +64,7 @@ export function Tile({ plugin, latest, series, now, waitingSince, windowMs, max 
   }
 
   const { text, unit } = formatValue(latest.value, plugin.unit);
-  const status = statusFor(plugin.id, latest.value);
+  const status = statusFor(rules, plugin.id, latest.value);
   const stale = isStale(latest, plugin.intervalMs, now);
   // A bitmask has no magnitude to meter or trend.
   const isFlags = plugin.unit === 'flags';
@@ -79,6 +91,12 @@ export function Tile({ plugin, latest, series, now, waitingSince, windowMs, max 
           <span class="unit">{unit}</span>
         </p>
         {stale && <p class="note">No update since {formatAge(now - latest.ts)}</p>}
+        {alert && (
+          <p class="note alert-line" data-severity={alert.severity}>
+            <StatusIcon level={alert.severity} />
+            Alert since {formatTime(alert.raisedAt)} ({formatUptime(now - alert.raisedAt)})
+          </p>
+        )}
       </div>
       <div class="tile-foot">
         {max !== undefined && showsShareOfMax(plugin.id) && (

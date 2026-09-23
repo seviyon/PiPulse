@@ -40,6 +40,28 @@ const config: Config = {
     { id: 'cpu_temperature', label: 'CPU temperature', unit: '°C', intervalMs: 10000 },
     { id: 'network_rx', label: 'Network received', unit: 'B/s', intervalMs: 5000 },
     { id: 'load_1', label: 'Load (1 min)', unit: '', intervalMs: 30000 }
+  ],
+  rules: [
+    {
+      id: 'cpu_warm',
+      metric: 'cpu_temperature',
+      atLeast: 70,
+      forMs: 600_000,
+      clearAfterMs: 600_000,
+      severity: 'warning',
+      message: 'CPU running warm',
+      source: 'built-in'
+    },
+    {
+      id: 'cpu_hot',
+      metric: 'cpu_temperature',
+      atLeast: 80,
+      forMs: 120_000,
+      clearAfterMs: 120_000,
+      severity: 'critical',
+      message: 'CPU running hot',
+      source: 'built-in'
+    }
   ]
 };
 
@@ -172,7 +194,7 @@ describe('<App>', () => {
     await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
     await send({ type: 'sample', ts: NOW, metric: 'cpu_temperature', value: 82 });
 
-    expect(tile('CPU temperature').textContent).toContain('Throttling likely');
+    expect(tile('CPU temperature').textContent).toContain('CPU running hot');
   });
 
   it('says it is reconnecting when the live feed drops', async () => {
@@ -245,6 +267,51 @@ describe('<App>', () => {
     expect(root.querySelector('nav[aria-label="Pages"] a[aria-current="page"]')?.textContent).toBe(
       'History'
     );
+  });
+});
+
+describe('<App> alerts', () => {
+  const MINUTE = 60_000;
+
+  const openAlert = (id: number, severity: 'warning' | 'critical', ruleId: string) => ({
+    id,
+    ruleId,
+    metric: 'cpu_temperature',
+    severity,
+    message: ruleId,
+    value: 82,
+    raisedAt: NOW - 5 * MINUTE,
+    clearedAt: null,
+    clearedBy: null
+  });
+
+  it('shows the worst open alert on its tile and keeps the warning when the critical clears', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    const warm = openAlert(1, 'warning', 'cpu_warm');
+    const hot = openAlert(2, 'critical', 'cpu_hot');
+    await send({ type: 'snapshot', samples: [], alerts: [warm, hot] });
+    expect(tile('CPU temperature').textContent).toContain('Alert since');
+    expect(
+      tile('CPU temperature').querySelector('.alert-line')?.getAttribute('data-severity')
+    ).toBe('critical');
+
+    await send({
+      type: 'alert',
+      event: 'cleared',
+      alert: { ...hot, clearedAt: NOW, clearedBy: 'condition' }
+    });
+    expect(
+      tile('CPU temperature').querySelector('.alert-line')?.getAttribute('data-severity')
+    ).toBe('warning');
+  });
+
+  it('replaces the open alerts with each reconnect snapshot, dropping ones cleared while away', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    await send({ type: 'snapshot', samples: [], alerts: [openAlert(1, 'critical', 'cpu_hot')] });
+    await send({ type: 'snapshot', samples: [], alerts: [] });
+    expect(tile('CPU temperature').querySelector('.alert-line')).toBeNull();
   });
 });
 
