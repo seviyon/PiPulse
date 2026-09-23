@@ -378,3 +378,20 @@ describe('Phase 4 exit criterion', () => {
     expect(plan.join(' ')).not.toMatch(/\bmetrics\b(?!_rollup)/);
   });
 });
+
+describe('alert history pruning', () => {
+  it('deletes cleared alerts older than a year and keeps open ones however old', () => {
+    const insert = db.prepare(
+      "INSERT INTO alerts (rule_id, metric, severity, message, raised_at, cleared_at) VALUES (?, 'cpu_load', 'warning', 'm', ?, ?)"
+    );
+    insert.run('old_cleared', T0 - 400 * DAY, T0 - 399 * DAY);
+    insert.run('recent_cleared', T0 - 10 * DAY, T0 - 9 * DAY);
+    insert.run('old_open', T0 - 400 * DAY, null);
+
+    expect(runHousekeeping(db, T0).alertsPruned).toBe(1);
+    const left = db.prepare('SELECT rule_id AS id FROM alerts ORDER BY id').all() as {
+      id: string;
+    }[];
+    expect(left.map((row) => row.id)).toEqual(['old_open', 'recent_cleared']);
+  });
+});

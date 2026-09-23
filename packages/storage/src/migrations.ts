@@ -132,6 +132,27 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       from = to;
     }
     setProgress(end);
+  },
+  // 4: alerts raised and cleared by the alert engine (packages/alerts). At
+  // most one open alert per rule and metric: a "*" rule watches every
+  // metric, so two silent metrics are two alerts. Housekeeping prunes
+  // cleared alerts after a year.
+  (db) => {
+    db.exec(`
+      CREATE TABLE alerts (
+        id         INTEGER PRIMARY KEY,
+        rule_id    TEXT NOT NULL,
+        metric     TEXT NOT NULL,
+        severity   TEXT NOT NULL,
+        message    TEXT NOT NULL,
+        value      REAL,
+        raised_at  INTEGER NOT NULL,
+        cleared_at INTEGER,
+        cleared_by TEXT
+      );
+      CREATE UNIQUE INDEX idx_alerts_open ON alerts(rule_id, metric) WHERE cleared_at IS NULL;
+      CREATE INDEX idx_alerts_raised ON alerts(raised_at);
+    `);
   }
 ];
 

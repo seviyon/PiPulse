@@ -68,6 +68,7 @@ export {
   chooseResolution,
   DEFAULT_RETENTION,
   getSeries,
+  parseDuration,
   retentionFromEnv,
   runHousekeeping,
   startHousekeeping,

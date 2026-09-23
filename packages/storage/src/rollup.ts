@@ -157,6 +157,8 @@ export interface HousekeepingResult {
   rolledUp: Record<RollupResolution, number>;
   /** Rows deleted per resolution. */
   pruned: Record<Resolution, number>;
+  /** Cleared alerts deleted for being older than a year. */
+  alertsPruned: number;
 }
 
 /**
@@ -172,6 +174,7 @@ export function runHousekeeping(
 ): HousekeepingResult {
   const rolledUp: HousekeepingResult['rolledUp'] = { '1m': 0, '1h': 0, '1d': 0 };
   const pruned: HousekeepingResult['pruned'] = { raw: 0, '1m': 0, '1h': 0, '1d': 0 };
+  let alertsPruned!: number;
   // Everything before `complete[r]` is final at resolution r after this run.
   const complete: Record<Resolution, number> = { raw: now, '1m': now, '1h': now, '1d': now };
 
@@ -206,12 +209,20 @@ export function runHousekeeping(
         ).changes
       );
     }
+
+    // Alert history: a year of cleared alerts; open ones stay however old.
+    alertsPruned = Number(
+      db
+        .prepare('DELETE FROM alerts WHERE cleared_at IS NOT NULL AND cleared_at < ?')
+        .run(now - 365 * DAY).changes
+    );
+
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
-  return { rolledUp, pruned };
+  return { rolledUp, pruned, alertsPruned };
 }
 
 /** One chart point. For raw samples avg, min and max are all the sampled value. */
@@ -342,18 +353,33 @@ export function startHousekeeping(
   return { stop: () => clearInterval(timer) };
 }
 
-const durationUnits: Record<string, number> = { h: HOUR, d: DAY, w: 7 * DAY, y: 365 * DAY };
+const durationUnits: Record<string, number> = {
+  s: 1000,
+  min: MIN,
+  h: HOUR,
+  d: DAY,
+  w: 7 * DAY,
+  y: 365 * DAY
+};
 
-/** "36h", "14d", "2w", "1y" or "forever" → ms. Throws naming `variable` on anything else. */
-function parseDuration(variable: string, value: string): number {
+/**
+ * "30s", "5min", "36h", "14d", "2w", "1y" or "forever" → ms. Throws naming
+ * `name` on anything else. No bare "m": it would be ambiguous between
+ * minutes and months. Zero is rejected unless `allowZero` (a retention of
+ * nothing would delete every row; an alert may fire on a single reading).
+ */
+export function parseDuration(
+  name: string,
+  value: string,
+  { allowZero = false }: { allowZero?: boolean } = {}
+): number {
   const text = value.trim().toLowerCase();
   if (text === 'forever') return Infinity;
-  const match = /^(\d+(?:\.\d+)?)([hdwy])$/.exec(text);
+  const match = /^(\d+(?:\.\d+)?)(s|min|h|d|w|y)$/.exec(text);
   const amount = match ? Number(match[1]) : NaN;
-  if (!match || !(amount > 0)) {
-    // No "m": it would be ambiguous between minutes and months.
+  if (!match || !(amount > 0 || (allowZero && amount === 0))) {
     throw new Error(
-      `${variable} must be a duration like 36h, 14d, 2w, 1y or forever (got ${JSON.stringify(value)})`
+      `${name} must be a duration like 30s, 5min, 36h, 14d, 2w, 1y or forever (got ${JSON.stringify(value)})`
     );
   }
   return amount * durationUnits[match[2]!]!;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RETENTION, retentionFromEnv } from '../src/index.js';
+import { DEFAULT_RETENTION, parseDuration, retentionFromEnv } from '../src/index.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -33,8 +33,28 @@ describe('retentionFromEnv', () => {
     'rejects %j with a message naming the variable',
     (value) => {
       expect(() => retentionFromEnv({ PIPULSE_RETENTION_1D: value })).toThrow(
-        /PIPULSE_RETENTION_1D.*like 36h, 14d, 2w, 1y or forever/
+        /PIPULSE_RETENTION_1D.*like 30s, 5min, 36h, 14d, 2w, 1y or forever/
       );
     }
   );
+});
+
+describe('parseDuration', () => {
+  it.each([
+    ['30s', 30_000],
+    ['5min', 5 * 60_000],
+    ['1.5h', 1.5 * 3_600_000],
+    ['2w', 14 * 86_400_000]
+  ])('reads %j', (value, ms) => {
+    expect(parseDuration('x', value)).toBe(ms);
+  });
+
+  it('rejects zero unless allowed', () => {
+    expect(() => parseDuration('for', '0s')).toThrow(/^for must be a duration/);
+    expect(parseDuration('for', '0s', { allowZero: true })).toBe(0);
+  });
+
+  it('rejects a bare m, which could mean minutes or months', () => {
+    expect(() => parseDuration('for', '5m')).toThrow(/for must be a duration/);
+  });
 });

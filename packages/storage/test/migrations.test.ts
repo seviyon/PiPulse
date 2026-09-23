@@ -208,4 +208,18 @@ describe('schema migrations', () => {
     ]);
     db.close();
   });
+
+  describe('migration 4: alerts', () => {
+    it('allows one open alert per rule and metric, any number of cleared ones', () => {
+      const db = openDb(':memory:');
+      const insert = db.prepare(
+        "INSERT INTO alerts (rule_id, metric, severity, message, raised_at, cleared_at) VALUES (?, ?, 'warning', 'm', 1, ?)"
+      );
+      insert.run('not_collecting', 'cpu_load', null);
+      insert.run('not_collecting', 'disk_used', null);
+      insert.run('not_collecting', 'cpu_load', 5);
+      expect(() => insert.run('not_collecting', 'cpu_load', null)).toThrow(/UNIQUE/);
+      db.close();
+    });
+  });
 });
