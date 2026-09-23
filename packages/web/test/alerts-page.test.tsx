@@ -116,8 +116,7 @@ describe('<AlertsPage>', () => {
         message: 'Old rule',
         clearedAt: NOW - MIN,
         clearedBy: 'rule_removed'
-      }),
-      alert({ id: 4 })
+      })
     ];
     render(<AlertsPage config={config} open={[alert({ id: 4 })]} now={() => NOW} />, root);
     await settle();
@@ -127,7 +126,29 @@ describe('<AlertsPage>', () => {
     expect(section('Recent').querySelectorAll('li')).toHaveLength(2);
     const url = new URL(String(vi.mocked(fetch).mock.calls[0]![0]), 'http://io.lan');
     expect(url.pathname).toBe('/api/alerts');
+    expect(url.searchParams.get('state')).toBe('cleared');
     expect(url.searchParams.get('from')).toBe(String(NOW - 30 * 24 * 60 * MIN));
+    expect(recent).not.toContain('newest');
+  });
+
+  it('says the Recent list is cut short when the server returns a full page', async () => {
+    const url = () => new URL(String(vi.mocked(fetch).mock.calls[0]![0]), 'http://io.lan');
+    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    await settle();
+    const limit = Number(url().searchParams.get('limit'));
+    render(null, root);
+    vi.mocked(fetch).mockClear();
+    history = Array.from({ length: limit }, (_, i) =>
+      alert({
+        id: i + 1,
+        raisedAt: NOW - (i + 2) * MIN,
+        clearedAt: NOW - (i + 1) * MIN,
+        clearedBy: 'condition'
+      })
+    );
+    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    await settle();
+    expect(section('Recent').textContent).toContain(`Showing the newest ${limit}`);
   });
 
   it('refetches the history when the open alerts change', async () => {

@@ -38,6 +38,12 @@ describe('GET /api/alerts', () => {
 
     const active = await buildServer(db).inject({ method: 'GET', url: '/api/alerts?state=active' });
     expect(active.json().map((a: { id: number }) => a.id)).toEqual([open.id]);
+
+    const cleared = await buildServer(db).inject({
+      method: 'GET',
+      url: '/api/alerts?state=cleared'
+    });
+    expect(cleared.json().map((a: { id: number }) => a.id)).toEqual([recent.id]);
   });
 
   // Unknown fields aren't listed: Fastify's default validator strips them rather than rejecting.

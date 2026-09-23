@@ -6,6 +6,8 @@ import { StatusIcon } from './tile.js';
 import type { Alert, Config, PluginInfo } from './types.js';
 
 const DAY = 86_400_000;
+/** Most cleared alerts the Recent list shows; a full page says it's cut short. */
+const RECENT_LIMIT = 200;
 
 interface AlertsPageProps {
   config: Config;
@@ -59,15 +61,14 @@ export function AlertsPage({ config, open, now }: AlertsPageProps) {
   useEffect(() => {
     let cancelled = false;
     const to = now();
-    fetch(`/api/alerts?state=all&from=${to - 30 * DAY}&to=${to}&limit=200`)
+    fetch(`/api/alerts?state=cleared&from=${to - 30 * DAY}&to=${to}&limit=${RECENT_LIMIT}`)
       .then(async (response) => {
         if (!response.ok) throw new Error(`alerts answered ${response.status}`);
         return (await response.json()) as Alert[];
       })
       .then(
         (alerts) => {
-          if (!cancelled)
-            setRecent({ status: 'ready', alerts: alerts.filter((a) => a.clearedAt !== null) });
+          if (!cancelled) setRecent({ status: 'ready', alerts });
         },
         () => {
           if (!cancelled) setRecent({ status: 'error' });
@@ -105,11 +106,16 @@ export function AlertsPage({ config, open, now }: AlertsPageProps) {
           (recent.alerts.length === 0 ? (
             <p class="waiting">Nothing cleared in the last 30 days</p>
           ) : (
-            <ul class="alert-list">
-              {recent.alerts.map((alert) => (
-                <AlertRow key={alert.id} alert={alert} plugins={config.plugins} now={t} />
-              ))}
-            </ul>
+            <>
+              {recent.alerts.length >= RECENT_LIMIT && (
+                <p class="waiting">Showing the newest {RECENT_LIMIT} of the last 30 days</p>
+              )}
+              <ul class="alert-list">
+                {recent.alerts.map((alert) => (
+                  <AlertRow key={alert.id} alert={alert} plugins={config.plugins} now={t} />
+                ))}
+              </ul>
+            </>
           ))}
       </section>
       <section aria-labelledby="alerts-rules">

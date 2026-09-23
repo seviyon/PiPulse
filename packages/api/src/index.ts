@@ -145,7 +145,7 @@ const seriesQuerySchema = {
 const alertsQuerySchema = {
   type: 'object',
   properties: {
-    state: { type: 'string', enum: ['active', 'all'] },
+    state: { type: 'string', enum: ['active', 'cleared', 'all'] },
     from: { type: 'integer', minimum: 0 },
     to: { type: 'integer', minimum: 0 },
     limit: { type: 'integer', minimum: 1, maximum: 1000 }
@@ -227,7 +227,12 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   );
 
   app.get<{
-    Querystring: { state?: 'active' | 'all'; from?: number; to?: number; limit?: number };
+    Querystring: {
+      state?: 'active' | 'cleared' | 'all';
+      from?: number;
+      to?: number;
+      limit?: number;
+    };
   }>('/api/alerts', { schema: { querystring: alertsQuerySchema } }, async (request, reply) => {
     const to = request.query.to ?? Date.now();
     const from = request.query.from ?? to - 30 * 24 * 60 * 60 * 1000;

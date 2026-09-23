@@ -52,15 +52,19 @@ export function openAlerts(db: PiPulseDb): Alert[] {
     .all() as unknown as Alert[];
 }
 
-/** Newest first: every open alert plus those raised in [from, to] (for 'all'). */
+/**
+ * Newest first. 'active': every open alert; 'cleared': cleared ones raised in
+ * [from, to]; 'all': both.
+ */
 export function listAlerts(
   db: PiPulseDb,
-  query: { state: 'active' | 'all'; from: number; to: number; limit: number }
+  query: { state: 'active' | 'cleared' | 'all'; from: number; to: number; limit: number }
 ): Alert[] {
-  const where =
-    query.state === 'active'
-      ? 'cleared_at IS NULL'
-      : '(cleared_at IS NULL OR raised_at BETWEEN ? AND ?)';
+  const where = {
+    active: 'cleared_at IS NULL',
+    cleared: 'cleared_at IS NOT NULL AND raised_at BETWEEN ? AND ?',
+    all: '(cleared_at IS NULL OR raised_at BETWEEN ? AND ?)'
+  }[query.state];
   const params = query.state === 'active' ? [query.limit] : [query.from, query.to, query.limit];
   return db
     .prepare(
