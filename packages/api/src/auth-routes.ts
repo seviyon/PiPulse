@@ -1,0 +1,133 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import {
+  clearedSessionCookie,
+  createLoginLimiter,
+  createSessions,
+  readCookie,
+  SESSION_COOKIE,
+  sessionCookie,
+  verifyPassword,
+  type LoginLimiter,
+  type PasswordHash,
+  type Sessions
+} from './auth.js';
+import { isAllowedOrigin } from './origin.js';
+
+export interface AuthOptions {
+  /** Unset: read-only, every write answers 403. */
+  passwordHash?: PasswordHash;
+  /** Require a session for every /api read and the WebSocket too. */
+  protectReads?: boolean;
+  sessions?: Sessions;
+  limiter?: LoginLimiter;
+  /** How long a failed sign-in waits before answering (default 1 s). */
+  failureDelayMs?: number;
+}
+
+/**
+ * The path a request is really for. The router matches decoded paths and
+ * Node accepts absolute-form targets ("PUT http://x/api/settings"), so the
+ * raw URL can hide an /api route: use the matched route, else the decoded,
+ * normalised path.
+ */
+function requestPath(request: FastifyRequest): string {
+  const route = request.routeOptions.url;
+  if (route !== undefined) return route;
+  try {
+    return decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+  } catch {
+    return request.url;
+  }
+}
+
+/** Reads anyone may make even with read protection on. */
+const PUBLIC_READS = new Set(['/api/session']);
+
+const loginSchema = {
+  type: 'object',
+  required: ['password'],
+  properties: { password: { type: 'string', maxLength: 1024 } },
+  additionalProperties: false
+} as const;
+
+/**
+ * The one place that decides who may do what. Routes never check auth
+ * themselves: this hook runs first for every request.
+ */
+export function registerAuth(
+  app: FastifyInstance,
+  options: AuthOptions & { allowedOrigins: string[] }
+): { signedIn(request: FastifyRequest): boolean; protectReads: boolean } {
+  const sessions = options.sessions ?? createSessions();
+  const limiter = options.limiter ?? createLoginLimiter();
+  const failureDelayMs = options.failureDelayMs ?? 1000;
+  const protectReads = options.protectReads ?? false;
+  const passwordHash = options.passwordHash;
+  const sessionId = (request: FastifyRequest) => readCookie(request.headers.cookie, SESSION_COOKIE);
+  const signedIn = (request: FastifyRequest) => sessions.valid(sessionId(request));
+  const secure = (request: FastifyRequest) => request.protocol === 'https';
+  /** Addresses with a password check running: each check costs 32 MB and a core on a Pi 2. */
+  const checking = new Set<string>();
+
+  app.addHook('onRequest', async (request, reply) => {
+    const path = requestPath(request);
+    if (!path.startsWith('/api/')) return;
+    if (request.method === 'GET' || request.method === 'HEAD') {
+      // The WebSocket handler closes an unauthorised socket with 4401 itself.
+      if (!protectReads || PUBLIC_READS.has(path) || path === '/api/live') return;
+      if (!signedIn(request)) return reply.status(401).send({ error: 'sign in required' });
+      return;
+    }
+    if (!isAllowedOrigin(request.headers.origin, request.headers.host, options.allowedOrigins)) {
+      return reply.status(403).send({ error: 'origin not allowed' });
+    }
+    if (!passwordHash) {
+      return reply.status(403).send({ error: 'editing is disabled: no admin password configured' });
+    }
+    if (path === '/api/login' || path === '/api/logout') return;
+    if (!signedIn(request)) return reply.status(401).send({ error: 'sign in required' });
+  });
+
+  app.get('/api/session', async (request) => ({
+    editable: passwordHash !== undefined,
+    signedIn: signedIn(request),
+    protectReads
+  }));
+
+  app.post<{ Body: { password: string } }>(
+    '/api/login',
+    { schema: { body: loginSchema } },
+    async (request, reply) => {
+      if (limiter.blocked(request.ip) || checking.has(request.ip)) {
+        return reply
+          .status(429)
+          .send({ error: 'too many sign-in attempts; try again in 15 minutes' });
+      }
+      // Count the attempt before the slow check, so parallel guesses can't
+      // all get past the limit while scrypt runs; a success clears it.
+      limiter.fail(request.ip);
+      checking.add(request.ip);
+      try {
+        // The hook has already answered 403 when there is no password.
+        if (!(await verifyPassword(request.body.password, passwordHash!))) {
+          await delay(failureDelayMs);
+          return reply.status(401).send({ error: 'sign-in failed' });
+        }
+      } finally {
+        checking.delete(request.ip);
+      }
+      limiter.succeed(request.ip);
+      reply.header('set-cookie', sessionCookie(sessions.create(), secure(request)));
+      return { signedIn: true };
+    }
+  );
+
+  app.post('/api/logout', async (request, reply) => {
+    sessions.end(sessionId(request));
+    reply.header('set-cookie', clearedSessionCookie(secure(request)));
+    return { signedIn: false };
+  });
+
+  return { signedIn, protectReads };
+}

@@ -4,6 +4,7 @@ import { formatDateTime, formatUptime, formatValue } from './format.js';
 import { routeHash } from './router.js';
 import { StatusIcon } from './tile.js';
 import type { Alert, Config, PluginInfo } from './types.js';
+import { apiFetch } from './api.js';
 
 const DAY = 86_400_000;
 /** Most cleared alerts the Recent list shows; a full page says it's cut short. */
@@ -61,7 +62,7 @@ export function AlertsPage({ config, open, now }: AlertsPageProps) {
   useEffect(() => {
     let cancelled = false;
     const to = now();
-    fetch(`/api/alerts?state=cleared&from=${to - 30 * DAY}&to=${to}&limit=${RECENT_LIMIT}`)
+    apiFetch(`/api/alerts?state=cleared&from=${to - 30 * DAY}&to=${to}&limit=${RECENT_LIMIT}`)
       .then(async (response) => {
         if (!response.ok) throw new Error(`alerts answered ${response.status}`);
         return (await response.json()) as Alert[];

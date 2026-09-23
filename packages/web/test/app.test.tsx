@@ -244,7 +244,8 @@ describe('<App>', () => {
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Now', '#/'],
       ['History', '#/history?range=24h'],
-      ['Alerts', '#/alerts']
+      ['Alerts', '#/alerts'],
+      ['Settings', '#/settings']
     ]);
     expect(links[0]?.getAttribute('aria-current')).toBe('page');
   });
@@ -402,5 +403,41 @@ describe('<App> with the Pi and the browser clocks disagreeing', () => {
 
     expect(tile('CPU load').dataset['stale']).toBe('true');
     expect(tile('CPU load').textContent).toContain('No update since 1 min ago');
+  });
+});
+
+describe('read protection', () => {
+  it('shows only the sign-in form when /api/config needs a session, then the dashboard', async () => {
+    let signedIn = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url, 'http://io.lan:8889').pathname;
+        if (path === '/api/session') {
+          return Response.json({ editable: true, signedIn, protectReads: true });
+        }
+        if (path === '/api/login' && init?.method === 'POST') {
+          signedIn = true;
+          return Response.json({ signedIn: true });
+        }
+        if (!signedIn) return Response.json({ error: 'sign in required' }, { status: 401 });
+        if (path === '/api/config') return Response.json({ ...config, serverTime });
+        return Response.json([]);
+      })
+    );
+    render(<App />, root);
+    await eventually(() => expect(root.querySelector('input[type=password]')).not.toBeNull());
+    expect(root.querySelector('nav')).toBeNull();
+
+    const input = root.querySelector('input[type=password]') as HTMLInputElement;
+    await act(() => {
+      input.value = 'secret';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(() => {
+      root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    });
+    await eventually(() => expect(root.querySelector('h1')?.textContent).toBe('Io'));
+    expect(root.textContent).toContain('Sign out');
   });
 });

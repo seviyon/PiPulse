@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha, Phase 5a complete.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5b (settings) is next — see [Roadmap](#roadmap).
+> **Status: pre-alpha, Phase 5b-1 complete.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5b-2 (alert rules in the browser) is next — see [Roadmap](#roadmap).
 
 ## Why
 
@@ -100,10 +100,12 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | `PIPULSE_RETENTION_1H` | `1y` | How long hourly averages are kept |
 | `PIPULSE_RETENTION_1D` | `forever` | How long daily averages are kept |
 | `PIPULSE_ALERTS_FILE` | _(none)_ | JSON file of alert rules merged over the built-ins (see [Alerts](#alerts)) |
+| `PIPULSE_ADMIN_PASSWORD_HASH_FILE` | _(none)_ | File with the admin password hash (make one with `hash-password`); unset = read-only (see [Sign-in and settings](#sign-in-and-settings)) |
+| `PIPULSE_PROTECT_READS` | `false` | `true`: every page, API read and the live feed need sign-in |
 
-Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Changing a value takes effect within a minute of restarting: a longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess. The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
+Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Retention can also be changed on the Settings page, without a restart; a variable that is set wins and locks that field there. Levels must stay in order (raw ≤ 1-minute ≤ hourly ≤ daily); variables out of order stop the server at startup. A longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess within a minute. After a large deletion the database compacts itself (at most once a day, only when at least a quarter of an 8 MB+ file is free and the disk has room for about twice the file). The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears). There is no authentication yet — keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -169,9 +171,27 @@ The temperature defaults suit a Pi 5 with an active cooler (it holds a busy Pi 5
 
 Alerts show on the dashboard only for now. Editing rules in the browser, acknowledging alerts, and notifications (e.g. a webhook to Apprise) come with the Settings phase.
 
+## Sign-in and settings
+
+Without a password PiPulse is read-only: everything shows, nothing can be changed. To enable editing:
+
+```bash
+node packages/api/dist/hash-password.js > ~/pipulse-admin.hash   # asks twice, prints one line
+chmod 600 ~/pipulse-admin.hash
+PIPULSE_ADMIN_PASSWORD_HASH_FILE=~/pipulse-admin.hash node packages/api/dist/server.js
+```
+
+Only the scrypt hash is stored; to change the password, make a new file and restart. Sign in on the Settings page; the session lasts 7 days from last use, and a restart signs you out. Five wrong passwords from one address lock it out for 15 minutes.
+
+The Settings page shows each retention level, where its value comes from (default, saved, or locked by a `PIPULSE_RETENTION_*` variable), how much is stored, and the database and disk size. **Review changes** shows what a shorter retention will delete and an estimated database size; deleting anything needs an explicit tick before **Save**. Changes apply within a minute, no restart.
+
+Set `PIPULSE_PROTECT_READS=true` to require sign-in for everything, including the live feed.
+
+PiPulse speaks plain HTTP: the password crosses the network once at sign-in. Keep it on your LAN; putting it behind a TLS reverse proxy is planned (see `docs/PLAN.md`, "Future: behind a reverse proxy").
+
 ## Configuration
 
-Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention and alert rules become editable from a Settings page in Phase 5b; plugin selection and poll intervals are fixed in code until then.
+Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention is also editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules become editable there in Phase 5b-2. Plugin selection and poll intervals are fixed in code.
 
 ## Roadmap
 
@@ -183,7 +203,9 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 3 | Dashboard (status-page parity) | ✅ Done |
 | 4 | History & charts (statistics-page parity) | ✅ Done |
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
-| 5b | Settings (authentication, retention editor, rule editing) | ⏳ Next |
+| 5b-1 | Sign-in, settings, retention editor | ✅ Done |
+| 5b-2 | Alert rules in the browser, acknowledging alerts | ⏳ Next |
+| 5b-3 | Notifications (webhook) |  |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 

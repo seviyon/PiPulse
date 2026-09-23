@@ -153,6 +153,17 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       CREATE UNIQUE INDEX idx_alerts_open ON alerts(rule_id, metric) WHERE cleared_at IS NULL;
       CREATE INDEX idx_alerts_raised ON alerts(raised_at);
     `);
+  },
+  // 5: operator settings saved from the Settings page (5b-1: retention).
+  // Key/value with JSON values, so later settings need no migration.
+  (db) => {
+    db.exec(`
+      CREATE TABLE settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
   }
 ];
 

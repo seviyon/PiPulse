@@ -11,7 +11,8 @@ export const RANGES = [
 
 export type RangeId = (typeof RANGES)[number]['id'];
 
-export type Route = { page: 'now' } | { page: 'history'; range: RangeId } | { page: 'alerts' };
+export type Route =
+  { page: 'now' } | { page: 'history'; range: RangeId } | { page: 'alerts' } | { page: 'settings' };
 
 const DEFAULT_RANGE: RangeId = '24h';
 
@@ -22,11 +23,12 @@ function isRange(value: string | null): value is RangeId {
 /**
  * Hash routes, so any view can be bookmarked and the API server needs no
  * page routes: "#/" is the live dashboard, "#/history?range=7d" history,
- * "#/alerts" the alerts page.
+ * "#/alerts" the alerts page, "#/settings" settings.
  */
 export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
   if (path === '/alerts') return { page: 'alerts' };
+  if (path === '/settings') return { page: 'settings' };
   if (path !== '/history') return { page: 'now' };
   const range = new URLSearchParams(query).get('range');
   return { page: 'history', range: isRange(range) ? range : DEFAULT_RANGE };
@@ -34,6 +36,7 @@ export function parseRoute(hash: string): Route {
 
 export function routeHash(route: Route): string {
   if (route.page === 'history') return `#/history?range=${route.range}`;
+  if (route.page === 'settings') return '#/settings';
   return route.page === 'alerts' ? '#/alerts' : '#/';
 }
 

@@ -1,9 +1,4 @@
-import {
-  openDb,
-  retentionFromEnv,
-  startHousekeeping,
-  type RetentionPolicy
-} from '@pipulse/storage';
+import { openDb, policyOf, retentionSource, startHousekeeping } from '@pipulse/storage';
 import { builtinPlugins, startScheduler } from './index.js';
 
 /**
@@ -16,25 +11,20 @@ const dbPath = process.env['PIPULSE_DB_PATH'] ?? 'pipulse.sqlite';
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
-/**
- * How long each resolution is kept (PIPULSE_RETENTION_RAW/_1M/_1H/_1D).
- * Read before touching the database, so a typo stops startup instead of
- * pruning with a policy nobody asked for.
- */
-function readRetention(): RetentionPolicy {
-  try {
-    return retentionFromEnv(process.env);
-  } catch (error) {
-    console.error(`[collector] ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
-}
-const RETENTION = readRetention();
-
 const db = openDb(dbPath);
+// Same precedence as the server: environment › saved in the Settings page › default.
+const getRetention = retentionSource(db, process.env, (message) =>
+  console.warn(`[collector] ${message}`)
+);
+try {
+  getRetention();
+} catch (error) {
+  console.error(`[collector] ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every minute.
 const housekeeping = startHousekeeping(db, {
-  retention: RETENTION,
+  retention: () => policyOf(getRetention()),
   onError: (error) => {
     console.error('[collector] housekeeping failed:', error);
   }

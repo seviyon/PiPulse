@@ -7,12 +7,19 @@ import {
   getHistory,
   getLatest,
   getSeries,
+  policyOf,
   type PiPulseDb,
   type Resolution,
   type RetentionPolicy,
   type Sample
 } from '@pipulse/storage';
 import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
+import { registerAuth, type AuthOptions } from './auth-routes.js';
+import { isAllowedOrigin } from './origin.js';
+import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
+
+export type { AuthOptions } from './auth-routes.js';
+export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {
@@ -95,29 +102,14 @@ export interface ServerOptions {
   rules?: Rule[];
   /** Alert raises and clears, pushed to /api/live clients. */
   alertFeed?: Feed<AlertEvent>;
+  /** Sign-in and read protection; unset = read-only with public reads. */
+  auth?: AuthOptions;
+  /** Settings routes and live retention; omitted = no /api/settings. */
+  settings?: SettingsOptions;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
-
-/**
- * Accepts non-browser clients (no Origin header), same-host pages, and
- * explicitly allowed origins; rejects every other cross-site page.
- */
-function isAllowedOrigin(
-  origin: string | undefined,
-  host: string | undefined,
-  allowed: string[]
-): boolean {
-  if (origin === undefined) return true;
-  if (allowed.includes(origin)) return true;
-  try {
-    return host !== undefined && new URL(origin).host === host;
-  } catch {
-    // e.g. the literal "null" origin sent by sandboxed iframes and file:// pages
-    return false;
-  }
-}
 
 interface HistoryQuery {
   from?: number;
@@ -160,6 +152,8 @@ const alertsQuerySchema = {
  */
 export function buildServer(db: PiPulseDb, options: ServerOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
+  const allowedOrigins = options.allowedOrigins ?? [];
+  const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const plugins = options.plugins ?? [];
   const device = options.device ?? {
     hostname: hostname(),
@@ -218,9 +212,12 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       }
 
       const requested = request.query.resolution ?? 'auto';
+      const retention = options.settings
+        ? policyOf(options.settings.getRetention())
+        : options.retention;
       const resolution =
         requested === 'auto'
-          ? chooseResolution(db, request.params.id, from, to, now, options.retention)
+          ? chooseResolution(db, request.params.id, from, to, now, retention)
           : requested;
       return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
@@ -247,11 +244,12 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     });
   });
 
+  if (options.settings) registerSettingsRoutes(app, db, options.settings);
+
   const live = options.live;
   if (live) {
     const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     const maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
-    const allowedOrigins = options.allowedOrigins ?? [];
 
     void app.register(websocket);
     // The plugin's own preClose sends each client a graceful close, and the
@@ -273,7 +271,11 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             }
           }
         },
-        (socket) => {
+        (socket, request) => {
+          if (auth.protectReads && !auth.signedIn(request)) {
+            socket.close(4401, 'sign in required');
+            return;
+          }
           socket.send(
             JSON.stringify({ type: 'snapshot', samples: getLatest(db), alerts: openAlerts(db) })
           );

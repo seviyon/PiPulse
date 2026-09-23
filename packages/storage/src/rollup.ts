@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { maybeVacuum, type VacuumOptions } from './vacuum.js';
 
 export type Resolution = 'raw' | '1m' | '1h' | '1d';
 type RollupResolution = Exclude<Resolution, 'raw'>;
@@ -325,7 +326,10 @@ export function chooseResolution(
 export interface HousekeepingOptions {
   /** How often to run; defaults to every minute, so 1-minute rollups stay current. */
   intervalMs?: number;
-  retention?: RetentionPolicy;
+  /** A fixed policy, or a function read at the start of every run (saved settings). */
+  retention?: RetentionPolicy | (() => RetentionPolicy);
+  /** Compacts the file after large deletions; false turns it off. */
+  vacuum?: VacuumOptions | false;
   onResult?: (result: HousekeepingResult) => void;
   onError?: (error: unknown) => void;
 }
@@ -338,12 +342,23 @@ export function startHousekeeping(
   db: DatabaseSync,
   options: HousekeepingOptions = {}
 ): { stop(): void } {
+  const retention = options.retention;
+  let lastVacuumAttempt: number | undefined;
   const run = () => {
     try {
+      const policy = typeof retention === 'function' ? retention() : retention;
       // Not `onResult?.(runHousekeeping(…))`: an optional call skips evaluating
       // its arguments, so housekeeping would silently never run without onResult.
-      const result = runHousekeeping(db, Date.now(), options.retention);
+      const result = runHousekeeping(db, Date.now(), policy);
       options.onResult?.(result);
+      if (options.vacuum !== false) {
+        const now = Date.now();
+        const vacuum = maybeVacuum(db, now, lastVacuumAttempt, options.vacuum);
+        if (vacuum) {
+          lastVacuumAttempt = now;
+          options.vacuum?.onVacuum?.(vacuum);
+        }
+      }
     } catch (error) {
       options.onError?.(error);
     }

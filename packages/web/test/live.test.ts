@@ -6,7 +6,7 @@ import type { LiveMessage } from '../src/types.js';
 class FakeSocket {
   static instances: FakeSocket[] = [];
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code: number }) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   closed = false;
   constructor(readonly url: string) {
@@ -107,6 +107,22 @@ describe('connectLive', () => {
     vi.advanceTimersByTime(60_000);
 
     expect(latest().closed).toBe(true);
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it('stops reconnecting after the server closes with 4401, and says so', () => {
+    const onUnauthorized = vi.fn();
+    const onStatus = vi.fn();
+    connectLive({
+      url: 'ws://io.lan/api/live',
+      onMessage: () => {},
+      onStatus,
+      onUnauthorized,
+      WebSocketImpl: FakeSocket as unknown as typeof WebSocket
+    });
+    FakeSocket.instances.at(-1)!.onclose?.({ code: 4401 } as CloseEvent);
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(60_000);
     expect(FakeSocket.instances).toHaveLength(1);
   });
 });

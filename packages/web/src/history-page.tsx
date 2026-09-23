@@ -11,6 +11,7 @@ import {
 } from './history.js';
 import { RANGES, routeHash, type RangeId } from './router.js';
 import type { Config, PluginInfo, Resolution, Series } from './types.js';
+import { apiFetch } from './api.js';
 
 interface HistoryPageProps {
   config: Config;
@@ -43,7 +44,7 @@ async function fetchSeries(
   resolution: Resolution | 'auto' = 'auto'
 ): Promise<Series> {
   const query = `from=${from}&to=${to}${resolution === 'auto' ? '' : `&resolution=${resolution}`}`;
-  const response = await fetch(`/api/metrics/${metric}/series?${query}`);
+  const response = await apiFetch(`/api/metrics/${metric}/series?${query}`);
   if (!response.ok) throw new Error(`series for ${metric} answered ${response.status}`);
   return (await response.json()) as Series;
 }

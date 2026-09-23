@@ -78,3 +78,39 @@ export {
   type RetentionPolicy,
   type SeriesPoint
 } from './rollup.js';
+
+export { getSettings, saveSettings } from './settings.js';
+
+export {
+  DEFAULT_RETENTION_TEXT,
+  policyOf,
+  RESOLUTION_LABELS,
+  RESOLUTIONS,
+  resolveRetention,
+  RETENTION_VARIABLES,
+  retentionSource,
+  saveRetention,
+  validateRetention,
+  type LookBack,
+  type RetentionCheck,
+  type RetentionLevel,
+  type RetentionSettings
+} from './retention.js';
+
+export {
+  databaseFile,
+  diskFreeBytes,
+  fileUsage,
+  maybeVacuum,
+  type VacuumOptions,
+  type VacuumResult
+} from './vacuum.js';
+
+export {
+  estimateBytes,
+  previewDeletion,
+  storageUsage,
+  type LevelDeletion,
+  type LevelUsage,
+  type StorageUsage
+} from './usage.js';
