@@ -18,11 +18,43 @@ export const DEFAULT_RETENTION: RetentionPolicy = {
   '1d': Infinity
 };
 
-/** Each rollup level is built from the one before it. Daily buckets are UTC days. */
-const levels: { resolution: RollupResolution; bucketMs: number; source: Resolution }[] = [
-  { resolution: '1m', bucketMs: MIN, source: 'raw' },
-  { resolution: '1h', bucketMs: HOUR, source: '1m' },
-  { resolution: '1d', bucketMs: DAY, source: '1h' }
+/** Start of the local day (server timezone, `TZ`) containing `ts`. */
+function localDayStart(ts: number): number {
+  const date = new Date(ts);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+/** Start of the local day after the one starting at `dayStart`; 23 or 25 hours later across DST. */
+function nextLocalDay(dayStart: number): number {
+  const date = new Date(dayStart);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+}
+
+interface Level {
+  resolution: RollupResolution;
+  source: Resolution;
+  /** Start of the bucket containing `ts`. */
+  bucketStart(ts: number): number;
+  /** Start of the bucket after the one starting at `start`. */
+  nextBucket(start: number): number;
+}
+
+const fixed = (step: number) => ({
+  bucketStart: (ts: number) => floorTo(ts, step),
+  nextBucket: (start: number) => start + step
+});
+
+/**
+ * Each rollup level is built from a finer one. Minutes and hours are fixed
+ * UTC-aligned buckets. Days are the server's local calendar days, built
+ * from 1-minute rollups rather than hours so they stay correct in
+ * timezones whose offset isn't a whole hour; 1-minute retention (14 days
+ * by default) always outlasts a day.
+ */
+const levels: Level[] = [
+  { resolution: '1m', source: 'raw', ...fixed(MIN) },
+  { resolution: '1h', source: '1m', ...fixed(HOUR) },
+  { resolution: '1d', source: '1m', bucketStart: localDayStart, nextBucket: nextLocalDay }
 ];
 
 /** The bucket size assumed for raw data when choosing a resolution (the fastest poll interval). */
@@ -34,13 +66,10 @@ const MAX_POINTS = 1500;
 
 const floorTo = (ts: number, step: number) => Math.floor(ts / step) * step;
 
-function rollUp(
-  db: DatabaseSync,
-  level: (typeof levels)[number],
-  start: number,
-  end: number
-): number {
-  const { resolution, bucketMs: step, source } = level;
+function rollUp(db: DatabaseSync, level: Level, start: number, end: number): number {
+  if (level.resolution === '1d') return rollUpDays(db, start, end);
+  const step = level.nextBucket(0);
+  const { resolution, source } = level;
   const statement =
     source === 'raw'
       ? `INSERT OR REPLACE INTO metrics_rollup (ts, metric, resolution, avg, min, max, count)
@@ -56,12 +85,67 @@ function rollUp(
   return Number(db.prepare(statement).run(start, end).changes);
 }
 
-/** Where the next run of `level` should start: after its newest bucket, or at the oldest source data. */
-function nextStart(db: DatabaseSync, level: (typeof levels)[number]): number | undefined {
+/**
+ * Adds a partial aggregate into a daily row: count-weighted mean, wider
+ * min/max, summed count. A day is written in more than one piece when a
+ * run starts partway through it (after the schema 3 migration, or after the
+ * server's timezone changes), and the pieces never overlap, so merging is
+ * exact where replacing would drop the earlier piece.
+ */
+const MERGE_DAY = `ON CONFLICT (metric, resolution, ts) DO UPDATE SET
+  avg = (avg * count + excluded.avg * excluded.count) / (count + excluded.count),
+  min = MIN(min, excluded.min),
+  max = MAX(max, excluded.max),
+  count = count + excluded.count`;
+
+/**
+ * Local days have no fixed length, so they can't be grouped in SQL by
+ * dividing timestamps; [start, end) is cut at local midnights and each
+ * piece aggregated into the row of the local day it falls in. Usually that
+ * is zero or one day. `start` is where the last run stopped, which is a
+ * local midnight except after a timezone change; the piece before the next
+ * midnight is then merged into that day's row, so no minute is counted
+ * twice or skipped.
+ */
+function rollUpDays(db: DatabaseSync, start: number, end: number): number {
+  const statement = db.prepare(
+    `INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max, count)
+     SELECT ?, metric, '1d', SUM(avg * count) / SUM(count), MIN(min), MAX(max), SUM(count)
+     FROM metrics_rollup WHERE resolution = '1m' AND ts >= ? AND ts < ?
+     GROUP BY metric
+     ${MERGE_DAY}`
+  );
+  let written = 0;
+  for (let from = start; from < end;) {
+    const day = localDayStart(from);
+    const to = Math.min(nextLocalDay(day), end);
+    written += Number(statement.run(day, from, to).changes);
+    from = to;
+  }
+  db.prepare(
+    `INSERT INTO rollup_progress (resolution, until) VALUES ('1d', ?)
+     ON CONFLICT (resolution) DO UPDATE SET until = excluded.until`
+  ).run(end);
+  return written;
+}
+
+/**
+ * Where the next run of `level` should start: where daily rollups last
+ * stopped, after the level's newest bucket, or at the oldest source data.
+ * Days track where they stopped rather than deriving it from the newest
+ * row, since that row's end depends on the timezone it was written in.
+ */
+function nextStart(db: DatabaseSync, level: Level): number | undefined {
+  if (level.resolution === '1d') {
+    const progress = db
+      .prepare("SELECT until FROM rollup_progress WHERE resolution = '1d'")
+      .get() as { until: number } | undefined;
+    if (progress) return progress.until;
+  }
   const newest = db
     .prepare('SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = ?')
     .get(level.resolution) as { ts: number | null };
-  if (newest.ts !== null) return newest.ts + level.bucketMs;
+  if (newest.ts !== null) return level.nextBucket(newest.ts);
   const oldest = (
     level.source === 'raw'
       ? db.prepare('SELECT MIN(ts) AS ts FROM metrics').get()
@@ -69,7 +153,7 @@ function nextStart(db: DatabaseSync, level: (typeof levels)[number]): number | u
           .prepare('SELECT MIN(ts) AS ts FROM metrics_rollup WHERE resolution = ?')
           .get(level.source)
   ) as { ts: number | null };
-  return oldest.ts === null ? undefined : floorTo(oldest.ts, level.bucketMs);
+  return oldest.ts === null ? undefined : level.bucketStart(oldest.ts);
 }
 
 export interface HousekeepingResult {
@@ -80,7 +164,7 @@ export interface HousekeepingResult {
 }
 
 /**
- * Rolls complete buckets up (raw → 1m → 1h → 1d) and deletes data past its
+ * Rolls complete buckets up (raw → 1m → 1h, and 1m → local days) and deletes data past its
  * retention — but only data the next level already covers, so nothing is
  * lost if a rollup falls behind. Safe to run as often as you like; each
  * run only touches buckets that closed since the last one.
@@ -99,7 +183,7 @@ export function runHousekeeping(
   try {
     for (const level of levels) {
       // A bucket closes when its time has passed *and* its source level is final that far.
-      const end = floorTo(complete[level.source], level.bucketMs);
+      const end = level.bucketStart(complete[level.source]);
       complete[level.resolution] = end;
       const start = nextStart(db, level);
       if (start !== undefined && start < end) {
@@ -107,10 +191,11 @@ export function runHousekeeping(
       }
     }
 
+    // What each resolution feeds must already be rolled up before it is pruned.
     const coveredUntil: Record<Resolution, number> = {
       raw: complete['1m'],
-      '1m': complete['1h'],
-      '1h': complete['1d'],
+      '1m': Math.min(complete['1h'], complete['1d']),
+      '1h': Infinity,
       '1d': Infinity
     };
     for (const resolution of ['raw', '1m', '1h', '1d'] as const) {

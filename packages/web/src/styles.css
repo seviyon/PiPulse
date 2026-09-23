@@ -16,6 +16,9 @@
   --accent: #2a78d6;
   --accent-track: #dce8f8;
   --accent-wash: rgb(42 120 214 / 0.1);
+  /* Chart series: palette slots 1–2, validated for colour-vision deficiency on these surfaces. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
   --good: #0ca30c;
   --warning: #fab219;
   --critical: #d03b3b;
@@ -37,6 +40,8 @@
     --accent: #3987e5;
     --accent-track: #1f3350;
     --accent-wash: rgb(57 135 229 / 0.14);
+    --series-1: #3987e5;
+    --series-2: #d95926;
     --focus: #6aa6ee;
   }
 }
@@ -350,6 +355,145 @@ p {
   color: var(--ink-3);
 }
 
+/* ---- Page navigation ---- */
+
+.pages {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.pages a,
+.ranges a {
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pages a:hover,
+.ranges a:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.pages a[aria-current],
+.ranges a[aria-current] {
+  color: var(--surface);
+  background: var(--ink);
+}
+
+/* ---- History ---- */
+
+.history-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.ranges a {
+  font-size: 0.9375rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.zoom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  color: var(--ink-2);
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--ink-3);
+}
+
+.history-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 32rem), 1fr));
+  gap: 1rem;
+}
+
+/* The previous window's charts, while the new one loads. */
+.history-charts[aria-busy='true'] {
+  opacity: 0.55;
+}
+
+.history-chart {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 1.1rem 1.1rem 1rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.history-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+
+.history-chart h2 {
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.summary {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+
+.chart {
+  min-width: 0;
+  /* Drag to zoom is horizontal; let vertical swipes still scroll the page. */
+  touch-action: pan-y;
+}
+
+/* uPlot's legend is the hover readout: quiet ink, series keyed by a short line. */
+.chart .u-legend {
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  text-align: left;
+}
+
+.chart .u-legend .u-marker {
+  width: 0.9em;
+  height: 3px;
+  border: 0 !important;
+  border-radius: 2px;
+  margin-right: 0.35em;
+}
+
+.chart .u-select {
+  background: var(--accent-wash);
+}
+
 /* ---- Messages ---- */
 
 .problem {
@@ -367,6 +511,10 @@ p {
 
 .problem p {
   color: var(--ink-2);
+}
+
+.problem button {
+  margin-top: 0.9rem;
 }
 
 :focus-visible {

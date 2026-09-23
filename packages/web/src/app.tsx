@@ -3,6 +3,8 @@ import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
+import { HistoryPage } from './history-page.js';
+import { routeHash, useRoute } from './router.js';
 import { Tile } from './tile.js';
 import type { Config, DeviceInfo, Sample } from './types.js';
 
@@ -110,6 +112,7 @@ export function App() {
    */
   const uptimeAnchor = useRef<{ uptimeMs: number; at: number }>();
   const now = useNow(1000) + clockOffset.current;
+  const route = useRoute();
   /** Server time when the config arrived; tiles still empty well after it point at a missing sensor. */
   const waitingSince = useRef(0);
 
@@ -165,7 +168,10 @@ export function App() {
 
   useEffect(() => {
     if (!config) return;
+    // Loaded up front, not on the first 'live', so tiles fill even when the
+    // WebSocket can't connect (e.g. a proxy that doesn't pass upgrades).
     loadHistory(config.plugins);
+    let connectedBefore = false;
     return connectLive({
       url: liveUrl(),
       onMessage: (message) => {
@@ -182,8 +188,11 @@ export function App() {
       },
       onStatus: (status, retryInMs) => {
         setConnection({ status, ...(retryInMs === undefined ? {} : { retryInMs }) });
-        // Refill anything missed while disconnected.
-        if (status === 'live') loadHistory(config.plugins);
+        if (status !== 'live') return;
+        // Refill anything missed while disconnected; the first connect
+        // has nothing to refill beyond the load above.
+        if (connectedBefore) loadHistory(config.plugins);
+        connectedBefore = true;
       }
     });
   }, [config, loadHistory]);
@@ -227,22 +236,47 @@ export function App() {
         </div>
         <ConnectionLine status={connection.status} retryInMs={connection.retryInMs} beat={beat} />
       </header>
-      <div class="panel">
-        <div class="tiles">
-          {config.plugins.map((plugin) => (
-            <Tile
-              key={plugin.id}
-              plugin={plugin}
-              latest={data.latest[plugin.id]}
-              series={data.series[plugin.id] ?? []}
-              now={now}
-              waitingSince={waitingSince.current}
-              windowMs={WINDOW_MS}
-              max={meterMax(plugin.id, device)}
-            />
-          ))}
+      <nav class="pages" aria-label="Pages">
+        <a
+          href={routeHash({ page: 'now' })}
+          aria-current={route.page === 'now' ? 'page' : undefined}
+        >
+          Now
+        </a>
+        <a
+          href={routeHash({
+            page: 'history',
+            range: route.page === 'history' ? route.range : '24h'
+          })}
+          aria-current={route.page === 'history' ? 'page' : undefined}
+        >
+          History
+        </a>
+      </nav>
+      {route.page === 'history' ? (
+        <HistoryPage
+          config={config}
+          range={route.range}
+          now={() => Date.now() + clockOffset.current}
+        />
+      ) : (
+        <div class="panel">
+          <div class="tiles">
+            {config.plugins.map((plugin) => (
+              <Tile
+                key={plugin.id}
+                plugin={plugin}
+                latest={data.latest[plugin.id]}
+                series={data.series[plugin.id] ?? []}
+                now={now}
+                waitingSince={waitingSince.current}
+                windowMs={WINDOW_MS}
+                max={meterMax(plugin.id, device)}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }
