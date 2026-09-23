@@ -296,8 +296,14 @@ export function resolveRules(options: {
   const rules = new Map(builtinRules(options.cores).map((rule) => [rule.id, rule]));
   if (options.file) {
     for (const entry of parseFile(options.file)) {
-      if (entry.disabled) rules.delete(entry.id);
-      else rules.set(entry.id, entry.rule);
+      if (entry.disabled) {
+        if (!rules.has(entry.id)) {
+          throw new AlertRulesError(
+            `${options.file.name}: rule "${entry.id}" is disabled but no rule has that id`
+          );
+        }
+        rules.delete(entry.id);
+      } else rules.set(entry.id, entry.rule);
     }
   }
   const known = options.metrics.map((metric) => metric.id);

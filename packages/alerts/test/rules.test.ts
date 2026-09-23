@@ -172,6 +172,10 @@ describe('resolveRules', () => {
         { id: 'x', metric: 'cpu_load', atLeast: 2, severity: 'warning', message: 'm' }
       ],
       /"x" appears twice/
+    ],
+    [
+      [{ id: 'cpu_wam', disabled: true }],
+      /alerts\.json: rule "cpu_wam" is disabled but no rule has that id/
     ]
   ])('rejects an invalid file (%#)', (rules, problem) => {
     expect(() => resolveRules(withFile(rules))).toThrow(problem);
