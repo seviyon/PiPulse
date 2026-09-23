@@ -21,8 +21,8 @@ One operator can change PiPulse's data retention from the browser, safely, and n
 
 ## Context and assumptions
 
-- One operator, one Pi, reached over the LAN. ufw limits the port to 192.168.1.0/24. A `.lan` reverse proxy with TLS already fronts other homelab services and may front PiPulse later.
-- PiPulse speaks plain HTTP unless a proxy adds TLS, so the password crosses the LAN once at sign-in and the session cookie with every request. TLS via the proxy is recommended (Phase 6 install docs), not required.
+- One operator, one Pi, reached directly over the LAN (no reverse proxy). ufw limits the port to 192.168.1.0/24. A TLS reverse proxy may front PiPulse later; support for it (trusting `X-Forwarded-*`) is deferred until one exists, since trusting those headers without a proxy lets any client spoof them.
+- PiPulse speaks plain HTTP, so the password crosses the LAN once at sign-in and the session cookie with every request. Accepted for a single-user LAN; TLS through a proxy is a later option.
 - One login, no user accounts or roles.
 
 ## Scope
@@ -35,6 +35,7 @@ Out of scope for 5b-1:
 - Several users or roles.
 - Changing the password from the UI: replace the hash file and restart.
 - Sessions that survive a server restart.
+- Reverse-proxy support (`X-Forwarded-Proto` / `X-Forwarded-For`), until a proxy exists.
 
 ## Authentication
 
@@ -48,12 +49,11 @@ Out of scope for 5b-1:
 
 ### Sessions
 
-- `POST /api/login {password}` verifies with a constant-time comparison. On success it creates a session and sets `pipulse_session`: a random 256-bit id (base64url), `HttpOnly`, `SameSite=Strict`, `Path=/`, plus `Secure` when the request arrived over HTTPS.
-  - HTTPS is detected from the connection, or from `X-Forwarded-Proto` only when `PIPULSE_TRUST_PROXY=true`.
+- `POST /api/login {password}` verifies with a constant-time comparison. On success it creates a session and sets `pipulse_session`: a random 256-bit id (base64url), `HttpOnly`, `SameSite=Strict`, `Path=/`, plus `Secure` when the connection itself is HTTPS.
 - Sessions live in server memory: a map from id to last use. They expire after 7 days without use; each authenticated request refreshes the timestamp. A restart signs everyone out, and no signing key has to exist anywhere.
 - `POST /api/logout` ends the session and clears the cookie.
 - `GET /api/session` → `{ editable, signedIn, protectReads }`, always public, so the UI knows what to show.
-- **Rate limit:** 5 failed sign-ins per client IP (from `X-Forwarded-For` only when `PIPULSE_TRUST_PROXY=true`, else the connection) per 15 minutes, then `429` until the window passes. Every failure waits about 1 s before answering. The response to a failure never says why it failed and never echoes the password.
+- **Rate limit:** 5 failed sign-ins per client IP (the connection's address) per 15 minutes, then `429` until the window passes. Every failure waits about 1 s before answering. The response to a failure never says why it failed and never echoes the password.
 
 ### Enforcement
 
@@ -108,6 +108,16 @@ All routes go through the enforcement hook.
 - `POST /api/settings/preview { retention }` → validation errors (`400`, as for save), or per level `{ deletesRows, from, to }` for data the next housekeeping run would remove, plus `estimatedBytes` for the policy once full. Changes nothing.
 - `PUT /api/settings { retention, confirmDeletion? }` → same validation; if the change deletes any rows and `confirmDeletion` isn't `true`, `409` with the preview. On success, returns the new `GET` body.
 - **Size estimate:** rows per day per level from what is actually collected: raw = Σ over plugins of 86 400 s / interval; 1m = metrics × 1440; 1h = metrics × 24; 1d = metrics. Bytes per row = used pages × page size ÷ total rows in the current database. Levels kept forever are estimated for one year and labelled so. The UI rounds and labels the result as an estimate (`≈ 240 MB`).
+- **Scale, for reference** (Phase 4's seeded database, ~50 bytes per row, 12 metrics):
+
+  | Level | Default | Rows per day | Size at default  |
+  | ----- | ------- | ------------ | ---------------- |
+  | raw   | 2d      | ~190 000     | ~19 MB           |
+  | 1m    | 14d     | ~17 000      | ~12 MB           |
+  | 1h    | 1y      | ~290         | ~5 MB            |
+  | 1d    | forever | 12           | ~0.2 MB per year |
+
+  Raw retention dominates: 90 days of raw is ~850 MB, fine on a Pi 5's NVMe but not on the Pi 2's nearly full 16 GB SD card, which is why the estimate is shown before saving.
 
 ## Dashboard
 
@@ -164,4 +174,4 @@ On the Pi 2 (Node 22 via nvm, port 8889, a copy of a real database):
 - The password is stored only as an scrypt hash in a file the operator controls; a leaked hash still has to be brute-forced, slowly.
 - Sign-in is rate-limited per IP. Error bodies never reveal why sign-in failed.
 - Every settings query uses bound parameters.
-- Remaining risk: without TLS, someone sniffing the LAN can capture the password at sign-in or a session cookie. Mitigated by TLS through the `.lan` proxy (recommended in Phase 6 docs) and ufw's LAN-only rule.
+- Remaining risk: without TLS, someone sniffing the LAN can capture the password at sign-in or a session cookie. Accepted for a single-user LAN behind ufw's LAN-only rule; TLS through a proxy is a later option.
