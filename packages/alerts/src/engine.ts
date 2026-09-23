@@ -4,6 +4,7 @@ import type { MetricInfo, Rule } from './rules.js';
 import {
   clearAlert,
   latestReading,
+  latestRollup,
   openAlerts,
   raiseAlert,
   summarizeWindow,
@@ -82,7 +83,11 @@ export function startAlerts(
               since,
               intervalMs: metric.intervalMs,
               open: current !== undefined,
-              latest: latestReading(db, metric.id),
+              // Silence counts from the newest reading even once housekeeping
+              // has pruned it (a restart can push the due time past that).
+              latest:
+                latestReading(db, metric.id) ??
+                (rule.noReadingFor !== undefined ? latestRollup(db, metric.id) : null),
               window:
                 span > 0 && rule.noReadingFor === undefined
                   ? summarizeWindow(db, metric.id, t - span, t, rule.bitsSet ?? 0)

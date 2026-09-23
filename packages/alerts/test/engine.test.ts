@@ -103,6 +103,26 @@ describe('startAlerts', () => {
     ).toEqual(['cpu_temperature', 'disk_used']);
   });
 
+  it('still raises a long silence after its last raw reading was pruned', () => {
+    // The last reading is 25 h old: only its 1-minute rollup remains. The
+    // server just (re)started, so the silence is due 20 h from now; by then
+    // housekeeping has long pruned the raw row.
+    db.prepare(
+      `INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max) VALUES (?, 'disk_used', '1m', 50, 50, 50)`
+    ).run(T0 - 25 * 60 * MIN);
+    const long: Rule = {
+      ...silent,
+      id: 'disk_silent',
+      metric: 'disk_used',
+      noReadingFor: 20 * 60 * MIN
+    };
+    const engine = start([long]);
+    expect(openAlerts(db)).toEqual([]);
+    now = T0 + 20 * 60 * MIN + 1;
+    engine.check();
+    expect(openAlerts(db).map((a) => [a.ruleId, a.metric])).toEqual([['disk_silent', 'disk_used']]);
+  });
+
   it('does not flash a silence alert when the clock jumps forward (NTP after boot)', () => {
     readings('cpu_temperature', T0 - MIN, T0, 50);
     const engine = start([silent], undefined, 15_000);

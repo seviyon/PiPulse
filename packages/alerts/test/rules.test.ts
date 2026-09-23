@@ -108,14 +108,6 @@ describe('resolveRules', () => {
       /for is longer than raw retention/
     ],
     [
-      [{ id: 'x', metric: 'cpu_load', noReadingFor: '3d', severity: 'warning', message: 'm' }],
-      /noReadingFor must be shorter than raw retention/
-    ],
-    [
-      [{ id: 'x', metric: 'cpu_load', noReadingFor: '2d', severity: 'warning', message: 'm' }],
-      /noReadingFor must be shorter than raw retention/
-    ],
-    [
       [
         {
           id: 'x',

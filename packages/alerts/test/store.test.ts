@@ -3,6 +3,7 @@ import { insertSample, openDb, type PiPulseDb } from '@pipulse/storage';
 import {
   clearAlert,
   latestReading,
+  latestRollup,
   listAlerts,
   openAlerts,
   raiseAlert,
@@ -23,6 +24,25 @@ const base = {
   message: 'CPU running hot',
   value: 82
 };
+
+describe('latestRollup', () => {
+  it('returns the newest bucket at the finest level that has one', () => {
+    const add = (ts: number, resolution: string, avg: number) =>
+      db
+        .prepare(
+          'INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .run(ts, 'disk_used', resolution, avg, avg, avg);
+    expect(latestRollup(db, 'disk_used')).toBeNull();
+    add(0, '1d', 40);
+    add(3_600_000, '1h', 41);
+    expect(latestRollup(db, 'disk_used')).toEqual({ ts: 3_600_000, value: 41 });
+    add(3_600_000, '1m', 42);
+    add(3_660_000, '1m', 43);
+    expect(latestRollup(db, 'disk_used')).toEqual({ ts: 3_660_000, value: 43 });
+    expect(latestRollup(db, 'cpu_load')).toBeNull();
+  });
+});
 
 describe('summarizeWindow', () => {
   it('summarises one metric in the window, counting readings with the bits', () => {

@@ -44,6 +44,24 @@ export function latestReading(db: PiPulseDb, metric: string): Reading | null {
   return row ?? null;
 }
 
+/**
+ * The start of the metric's newest rollup bucket (its average as the value),
+ * for when housekeeping has pruned every raw reading. Finer levels are newer,
+ * so the first level that has a row wins. Being a bucket start, it can be up
+ * to one bucket earlier than the reading itself.
+ */
+export function latestRollup(db: PiPulseDb, metric: string): Reading | null {
+  const newest = (resolution: string) =>
+    `SELECT ts, avg AS value FROM metrics_rollup WHERE metric = ?1 AND resolution = '${resolution}' ORDER BY ts DESC LIMIT 1`;
+  const row = db
+    .prepare(
+      `SELECT ts, value FROM (${newest('1m')}) UNION ALL SELECT ts, value FROM (${newest('1h')})
+       UNION ALL SELECT ts, value FROM (${newest('1d')}) LIMIT 1`
+    )
+    .get(metric) as Reading | undefined;
+  return row ?? null;
+}
+
 export function openAlerts(db: PiPulseDb): Alert[] {
   return db
     .prepare(
