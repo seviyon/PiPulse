@@ -35,7 +35,7 @@ Out of scope for 5b-1:
 - Several users or roles.
 - Changing the password from the UI: replace the hash file and restart.
 - Sessions that survive a server restart.
-- Reverse-proxy support (`X-Forwarded-Proto` / `X-Forwarded-For`), until a proxy exists.
+- Reverse-proxy support (`X-Forwarded-Proto` / `X-Forwarded-For`), until a proxy exists: planned as `PIPULSE_TRUST_PROXY`, see "Future: behind a reverse proxy" in `docs/PLAN.md`.
 
 ## Authentication
 

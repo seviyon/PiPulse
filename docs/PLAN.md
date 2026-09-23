@@ -179,7 +179,7 @@ A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw da
 - **SNMP** — do you actually rely on it today from an NMS or the NAS? Nothing in your current homelab setup points to active SNMP monitoring, so the recommendation is to defer it unless you confirm a need.
 - **Alert channel for v1** — a webhook into **Apprise** (already running in your homelab) is the natural default; confirm that's the right first target versus email or a plain dashboard banner.
 - **Retention policy** — resolved in Phase 4: raw 2 days, 1-minute 14 days, hourly 1 year, daily forever (~35 MB on an SD card), overridable with `PIPULSE_RETENTION_RAW` / `_1M` / `_1H` / `_1D`.
-- **Authentication for Phase 5** — decide between an admin token (`PIPULSE_ADMIN_TOKEN`, entered once in the Settings page), HTTP Basic Auth, or delegating to the `.lan` reverse proxy. Reads can stay open on the LAN; every write endpoint (settings now, anything else later) must require it.
+- **Authentication for Phase 5** — resolved in the 5b-1 design (`docs/superpowers/specs/2026-09-23-settings-auth-design.md`): built-in sign-in against an scrypt hash read from `PIPULSE_ADMIN_PASSWORD_HASH_FILE`, in-memory `HttpOnly`/`SameSite=Strict` session cookie, every write authenticated, optional read protection (`PIPULSE_PROTECT_READS`), read-only when no password is configured. Reverse-proxy support is deferred (see [Future: behind a reverse proxy](#future-behind-a-reverse-proxy)).
 - **Docker host-visibility risk** (flagged above) needs a quick spike — confirm `/proc` + `/sys:ro` + `pid: host` actually surfaces accurate host metrics from inside the container before committing to it as a first-class deployment path.
 
 **Immediate next steps:**
@@ -245,6 +245,14 @@ The rollup table introduced earlier is the mechanism, made explicit here since u
   - **Destructive changes are confirmed:** shortening a retention first shows how much data the next run will delete (rows and time span per resolution) and requires an explicit confirmation; lengthening one says that already-deleted data does not come back.
   - **Sizing help:** show the database size and rows per resolution today, plus an estimate for the chosen policy, since the right answer differs a lot between an SD card and NVMe.
   - **Validation** reuses the environment-variable parser (`36h`, `14d`, `2w`, `1y`, `forever`), so the UI and the environment accept exactly the same values.
+
+## Future: behind a reverse proxy
+
+Today PiPulse is reached directly on its port over plain HTTP. When a TLS reverse proxy (e.g. a `.lan` Caddy/Traefik/nginx) is put in front of it, add `PIPULSE_TRUST_PROXY=true` (default `false`):
+
+- **What it changes:** PiPulse then believes `X-Forwarded-Proto` (marks the session cookie `Secure` when the proxy served HTTPS) and `X-Forwarded-For` (the sign-in rate limit counts attempts per real client instead of per proxy, which would otherwise lock everyone out together).
+- **Why it's off by default and not in 5b-1:** without a proxy any client can send those headers, so trusting them would let it dodge the rate limit or fake HTTPS. It must only be turned on when PiPulse is reachable _solely_ through the proxy (bound to `127.0.0.1`, or ufw allowing only the proxy's address).
+- **Where it fits:** Phase 6 (packaging) or whenever the proxy is set up; the install docs should cover the proxy config, the variable and restricting the port together. Optionally trust only a configured proxy address (`PIPULSE_TRUST_PROXY=192.168.1.10`) rather than any peer.
 
 ## Future: exporting to Prometheus / Grafana
 
