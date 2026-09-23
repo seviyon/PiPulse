@@ -29,6 +29,7 @@
     "node": ">=22.13.0"
   },
   "allowScripts": {
-    "esbuild": false
+    "esbuild": false,
+    "fsevents": false
   }
 }
