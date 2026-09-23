@@ -77,16 +77,24 @@ export function maybeVacuum(
   if (fileBytes <= minFileBytes || freeBytes < fileBytes * minFreeFraction) return undefined;
 
   const available = diskFree(db);
-  if (available === undefined || available < fileBytes * 1.1) {
+  // VACUUM builds a temporary copy (SQLite's temp directory, on a Pi the same
+  // card) and, in WAL mode, writes the rebuilt database through the log too:
+  // up to about twice the file at the peak.
+  if (available === undefined || available < fileBytes * 2.1) {
     return {
       ran: false,
       reason: `not enough free disk space for a ${Math.ceil(fileBytes / 1e6)} MB copy`
     };
   }
   const started = performance.now();
-  db.exec('VACUUM');
-  // In WAL mode VACUUM goes through the log; checkpoint so the file itself shrinks.
-  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  try {
+    db.exec('VACUUM');
+    // In WAL mode VACUUM goes through the log; checkpoint so the file itself shrinks.
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (error) {
+    // Reported as that day's attempt, so a failing VACUUM isn't retried every minute.
+    return { ran: false, reason: `failed: ${(error as Error).message}` };
+  }
   return {
     ran: true,
     beforeBytes: fileBytes,

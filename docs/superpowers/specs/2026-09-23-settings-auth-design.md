@@ -93,7 +93,7 @@ One Fastify `onRequest` hook decides every request; routes do not check auth the
 SQLite reuses freed pages but does not shrink the file, so after a retention cut `du` shows the old size until the database is compacted.
 
 - After a housekeeping run, if free pages (`PRAGMA freelist_count`) are at least 25 % of the file **and** the file is over 8 MB, PiPulse runs `VACUUM`.
-- First it checks free disk space (`fs.statfs` on the database's directory) is at least the file size plus 10 %; otherwise it logs one line and skips.
+- First it checks free disk space (`fs.statfs` on the database's directory) is at least 2.1 × the file size: VACUUM builds a temporary copy and, in WAL mode, writes the rebuilt database through the log, so the peak is about twice the file. Otherwise it logs one line and skips.
 - At most once a day, so repeated changes cannot rewrite the card repeatedly.
 - Logs `vacuum: 42.1 MB → 12.3 MB in 1.8 s`. A failure is logged and housekeeping carries on.
 - On the Pi 2's SD card this is a few seconds with writes paused; on NVMe it is well under a second.

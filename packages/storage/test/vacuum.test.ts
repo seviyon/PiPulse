@@ -46,6 +46,22 @@ describe('maybeVacuum', () => {
     expect(result).toEqual({ ran: false, reason: expect.stringMatching(/not enough free disk/) });
   });
 
+  it('reports a failed vacuum instead of throwing, so it counts as that day’s attempt', () => {
+    db.exec('BEGIN'); // VACUUM can't run inside a transaction
+    const result = maybeVacuum(db, DAY, undefined, { minFileBytes: 0, diskFree: plenty });
+    db.exec('ROLLBACK');
+    expect(result).toEqual({ ran: false, reason: expect.stringMatching(/^failed: /) });
+  });
+
+  it('needs room for both the temporary copy and the rewritten file', () => {
+    const { fileBytes } = fileUsage(db);
+    const result = maybeVacuum(db, DAY, undefined, {
+      minFileBytes: 0,
+      diskFree: () => fileBytes * 1.5
+    });
+    expect(result).toEqual({ ran: false, reason: expect.stringMatching(/not enough free disk/) });
+  });
+
   it('waits a day after the last attempt', () => {
     const options = { minFileBytes: 0, diskFree: plenty };
     expect(maybeVacuum(db, DAY, 1, options)).toBeUndefined();
