@@ -13,6 +13,10 @@ import {
   type Sample
 } from '@pipulse/storage';
 import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
+import { registerAuth, type AuthOptions } from './auth-routes.js';
+import { isAllowedOrigin } from './origin.js';
+
+export type { AuthOptions } from './auth-routes.js';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {
@@ -95,29 +99,12 @@ export interface ServerOptions {
   rules?: Rule[];
   /** Alert raises and clears, pushed to /api/live clients. */
   alertFeed?: Feed<AlertEvent>;
+  /** Sign-in and read protection; unset = read-only with public reads. */
+  auth?: AuthOptions;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
-
-/**
- * Accepts non-browser clients (no Origin header), same-host pages, and
- * explicitly allowed origins; rejects every other cross-site page.
- */
-function isAllowedOrigin(
-  origin: string | undefined,
-  host: string | undefined,
-  allowed: string[]
-): boolean {
-  if (origin === undefined) return true;
-  if (allowed.includes(origin)) return true;
-  try {
-    return host !== undefined && new URL(origin).host === host;
-  } catch {
-    // e.g. the literal "null" origin sent by sandboxed iframes and file:// pages
-    return false;
-  }
-}
 
 interface HistoryQuery {
   from?: number;
@@ -160,6 +147,8 @@ const alertsQuerySchema = {
  */
 export function buildServer(db: PiPulseDb, options: ServerOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
+  const allowedOrigins = options.allowedOrigins ?? [];
+  const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const plugins = options.plugins ?? [];
   const device = options.device ?? {
     hostname: hostname(),
@@ -251,7 +240,6 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   if (live) {
     const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     const maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
-    const allowedOrigins = options.allowedOrigins ?? [];
 
     void app.register(websocket);
     // The plugin's own preClose sends each client a graceful close, and the
@@ -273,7 +261,11 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             }
           }
         },
-        (socket) => {
+        (socket, request) => {
+          if (auth.protectReads && !auth.signedIn(request)) {
+            socket.close(4401, 'sign in required');
+            return;
+          }
           socket.send(
             JSON.stringify({ type: 'snapshot', samples: getLatest(db), alerts: openAlerts(db) })
           );
