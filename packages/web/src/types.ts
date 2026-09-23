@@ -32,3 +32,18 @@ export interface Config {
 }
 
 export type LiveMessage = { type: 'snapshot'; samples: Sample[] } | ({ type: 'sample' } & Sample);
+
+export type Resolution = 'raw' | '1m' | '1h' | '1d';
+
+/** One chart point from /api/metrics/:id/series; for raw samples avg = min = max. */
+export interface SeriesPoint {
+  ts: number;
+  avg: number;
+  min: number;
+  max: number;
+}
+
+export interface Series {
+  resolution: Resolution;
+  points: SeriesPoint[];
+}

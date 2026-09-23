@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('uplot', () => ({
+  default: class {
+    setData() {}
+    setSize() {}
+    destroy() {}
+  }
+}));
+
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { App } from '../src/app.js';
@@ -102,6 +111,7 @@ beforeEach(() => {
 afterEach(() => {
   render(null, root);
   root.remove();
+  location.hash = '';
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -185,6 +195,39 @@ describe('<App>', () => {
     // The first retry fires after 1 s of real time.
     await eventually(() => expect(root.querySelector('h1')?.textContent).toBe('Io'), 3000);
     expect(root.textContent).not.toContain("Can't reach");
+  });
+
+  it('links the live dashboard and the history, marking the current page', async () => {
+    render(<App />, root);
+    await eventually(() => expect(root.querySelector('nav[aria-label="Pages"]')).not.toBeNull());
+
+    const links = [...root.querySelectorAll('nav[aria-label="Pages"] a')];
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['Now', '#/'],
+      ['History', '#/history?range=24h']
+    ]);
+    expect(links[0]?.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('switches to the history page when the hash changes, keeping the device header', async () => {
+    render(<App />, root);
+    await eventually(() => expect(tile('CPU load')).toBeDefined());
+
+    await act(() => {
+      location.hash = '#/history?range=7d';
+      dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    await eventually(() =>
+      expect(
+        root.querySelector('nav[aria-label="Time range"] [aria-current="true"]')?.textContent
+      ).toBe('7 days')
+    );
+    expect(root.querySelector('h1')?.textContent).toBe('Io');
+    expect(root.querySelector('.tiles')).toBeNull();
+    expect(root.querySelector('nav[aria-label="Pages"] a[aria-current="page"]')?.textContent).toBe(
+      'History'
+    );
   });
 });
 
