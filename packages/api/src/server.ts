@@ -18,7 +18,13 @@ import {
   type Rule
 } from '@pipulse/alerts';
 import { readAuthConfig, type AuthConfig } from './auth.js';
-import { buildServer, createFeed, createLiveFeed, longestLookBack } from './index.js';
+import {
+  buildServer,
+  createFeed,
+  createLiveFeed,
+  longestLookBack,
+  rawRetentionProblem
+} from './index.js';
 
 const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
 
@@ -90,7 +96,8 @@ function readRules(): Rule[] {
     return resolveRules({
       cores: cpus().length,
       metrics: METRICS,
-      rawRetentionMs: RETENTION.raw.ms,
+      // Checked below instead, with a message that names where the value came from.
+      rawRetentionMs: Infinity,
       ...(path ? { file: readRulesFile(path) } : {})
     });
   } catch (error) {
@@ -99,6 +106,8 @@ function readRules(): Rule[] {
 }
 const RULES = readRules();
 const LOOK_BACK = longestLookBack(RULES);
+const RAW_PROBLEM = rawRetentionProblem(RETENTION.raw, LOOK_BACK);
+if (RAW_PROBLEM) fail(RAW_PROBLEM);
 
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();

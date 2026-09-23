@@ -19,7 +19,7 @@ import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
 export type { AuthOptions } from './auth-routes.js';
-export { longestLookBack, type SettingsOptions } from './settings-routes.js';
+export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {

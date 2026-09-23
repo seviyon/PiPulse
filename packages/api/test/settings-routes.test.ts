@@ -10,7 +10,7 @@ import {
 import { builtinRules } from '@pipulse/alerts';
 import { hashPassword, parsePasswordHash, type PasswordHash } from '../src/auth.js';
 import { buildServer } from '../src/index.js';
-import { longestLookBack } from '../src/settings-routes.js';
+import { longestLookBack, rawRetentionProblem } from '../src/settings-routes.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -70,6 +70,34 @@ describe('longestLookBack', () => {
       text: '15min'
     });
     expect(longestLookBack([])).toBeUndefined();
+  });
+});
+
+describe('rawRetentionProblem', () => {
+  const lookBack = { ms: 30 * 60_000, ruleId: 'cpu_spike', text: '30min' };
+  const level = (source: 'env' | 'saved' | 'default') => ({
+    text: '15min',
+    ms: 15 * 60_000,
+    source,
+    variable: 'PIPULSE_RETENTION_RAW'
+  });
+
+  it('is fine when raw retention covers the longest look-back', () => {
+    expect(rawRetentionProblem({ ...level('saved'), ms: HOUR }, lookBack)).toBeUndefined();
+    expect(rawRetentionProblem(level('saved'), undefined)).toBeUndefined();
+  });
+
+  it('blames a value saved on the Settings page and says how to start anyway', () => {
+    expect(rawRetentionProblem(level('saved'), lookBack)).toBe(
+      'raw retention saved on the Settings page (15min) is shorter than rule "cpu_spike" looks back (30min); ' +
+        'start with PIPULSE_RETENTION_RAW=30min (or longer) and change it on the Settings page, or shorten the rule'
+    );
+  });
+
+  it('blames the environment variable when it set the value', () => {
+    expect(rawRetentionProblem(level('env'), lookBack)).toBe(
+      'PIPULSE_RETENTION_RAW (15min) is shorter than rule "cpu_spike" looks back (30min); lengthen it or shorten the rule'
+    );
   });
 });
 

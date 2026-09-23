@@ -11,6 +11,7 @@ import {
   type LookBack,
   type PiPulseDb,
   type Resolution,
+  type RetentionLevel,
   type RetentionSettings
 } from '@pipulse/storage';
 import type { Rule } from '@pipulse/alerts';
@@ -48,6 +49,31 @@ export function longestLookBack(rules: Rule[]): LookBack | undefined {
     }
   }
   return longest;
+}
+
+/**
+ * Why the raw retention in force can't serve the alert rules (they read raw
+ * readings only), naming where the value came from, or undefined when it
+ * can. A value saved on the Settings page gets a way to start anyway, since
+ * the page itself is unreachable while startup fails.
+ */
+export function rawRetentionProblem(
+  raw: RetentionLevel,
+  lookBack: LookBack | undefined
+): string | undefined {
+  if (!lookBack || raw.ms >= lookBack.ms) return undefined;
+  const rule = `rule "${lookBack.ruleId}" looks back (${lookBack.text})`;
+  if (raw.source === 'env') {
+    return `${raw.variable} (${raw.text}) is shorter than ${rule}; lengthen it or shorten the rule`;
+  }
+  const where =
+    raw.source === 'saved'
+      ? 'raw retention saved on the Settings page'
+      : 'the default raw retention';
+  return (
+    `${where} (${raw.text}) is shorter than ${rule}; ` +
+    `start with ${raw.variable}=${lookBack.text} (or longer) and change it on the Settings page, or shorten the rule`
+  );
 }
 
 const retentionSchema = {
