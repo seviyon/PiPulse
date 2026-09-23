@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('systeminformation', () => ({
@@ -151,6 +152,7 @@ describe('readDeviceInfo', () => {
       kernel: '6.1.21-v7+'
     } as never);
     vi.mocked(si.mem).mockResolvedValue({ total: 971.52 * 2 ** 20 } as never);
+    vi.spyOn(os, 'cpus').mockReturnValue(new Array(4).fill({}) as never);
 
     const device = await readDeviceInfo();
 
@@ -161,7 +163,8 @@ describe('readDeviceInfo', () => {
       model: 'Raspberry Pi 3 Model B Rev 1.2',
       os: 'Raspbian GNU/Linux 11 (bullseye)',
       kernel: '6.1.21-v7+',
-      memoryTotalMb: 971.52
+      memoryTotalMb: 971.52,
+      cpus: 4
     });
   });
 });

@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { cpuVoltagePlugin, throttledPlugin } from './vcgencmd.js';
 import si, { type Systeminformation } from 'systeminformation';
 import { insertSample, type PiPulseDb, type Sample } from '@pipulse/storage';
@@ -77,6 +78,26 @@ export const cpuLoadPlugin: CollectorPlugin = {
   async collect() {
     const load = await si.currentLoad();
     return load.currentLoad;
+  }
+};
+
+/**
+ * The 1-minute load average: tasks running or waiting, for a CPU or for
+ * disk I/O. Unlike CPU load it rises when the SD card stalls, and above the
+ * core count it means work is queueing. The 5- and 15-minute averages are
+ * deliberately not collected: the kernel derives them from the same run
+ * queue over longer windows, and History's longer ranges already show the
+ * trend they would.
+ */
+export const loadPlugin: CollectorPlugin = {
+  id: 'load_1',
+  label: 'Load (1 min)',
+  unit: '',
+  intervalMs: 30000,
+  apiVersion: 1,
+  async collect() {
+    // Windows has no load average; Node reports [0, 0, 0] there.
+    return os.platform() === 'win32' ? null : (os.loadavg()[0] ?? null);
   }
 };
 
@@ -215,6 +236,8 @@ export interface DeviceInfo {
   os: string;
   kernel: string;
   memoryTotalMb: number;
+  /** Logical CPUs; a load average above this means work is queueing. */
+  cpus: number;
 }
 
 export async function readDeviceInfo(): Promise<DeviceInfo> {
@@ -227,12 +250,14 @@ export async function readDeviceInfo(): Promise<DeviceInfo> {
     model: system.model,
     os: [osInfo.distro, ...release].join(' '),
     kernel: osInfo.kernel,
-    memoryTotalMb: Math.round((mem.total / 2 ** 20) * 100) / 100
+    memoryTotalMb: Math.round((mem.total / 2 ** 20) * 100) / 100,
+    cpus: os.cpus().length
   };
 }
 
 export const builtinPlugins: CollectorPlugin[] = [
   cpuLoadPlugin,
+  loadPlugin,
   cpuTemperaturePlugin,
   cpuFrequencyPlugin,
   cpuVoltagePlugin,

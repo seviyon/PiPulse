@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('systeminformation', () => ({
@@ -9,13 +10,14 @@ vi.mock('systeminformation', () => ({
 }));
 
 const si = (await import('systeminformation')).default;
-const { networkRxPlugin, networkTxPlugin, diskUsedPlugin, cpuTemperaturePlugin } =
+const { networkRxPlugin, networkTxPlugin, diskUsedPlugin, cpuTemperaturePlugin, loadPlugin } =
   await import('../src/index.js');
 
 afterEach(() => {
   vi.mocked(si.networkStats).mockReset();
   vi.mocked(si.fsSize).mockReset();
   vi.mocked(si.cpuTemperature).mockReset();
+  vi.restoreAllMocks();
 });
 
 function mockNetworkStats(stats: { rx_sec: number | null; tx_sec: number | null }[]) {
@@ -105,5 +107,27 @@ describe('cpuTemperaturePlugin', () => {
     vi.mocked(si.cpuTemperature).mockResolvedValue({ main: -1 } as never);
 
     expect(await cpuTemperaturePlugin.collect()).toBeNull();
+  });
+});
+
+describe('loadPlugin', () => {
+  it('reports the 1-minute load average', async () => {
+    vi.spyOn(os, 'loadavg').mockReturnValue([0.42, 0.38, 0.35]);
+
+    expect(await loadPlugin.collect()).toBe(0.42);
+  });
+
+  it('returns null on Windows, where Node always reports 0', async () => {
+    vi.spyOn(os, 'platform').mockReturnValue('win32');
+    vi.spyOn(os, 'loadavg').mockReturnValue([0, 0, 0]);
+
+    expect(await loadPlugin.collect()).toBeNull();
+  });
+
+  it('is listed right after CPU load, so its chart sits beside it', async () => {
+    const { builtinPlugins } = await import('../src/index.js');
+    const ids = builtinPlugins.map((plugin) => plugin.id);
+
+    expect(ids[ids.indexOf('cpu_load') + 1]).toBe('load_1');
   });
 });
