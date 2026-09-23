@@ -324,6 +324,13 @@ export function resolveRules(options: {
         );
       }
     }
+    // Silence is measured from the newest raw reading; once housekeeping
+    // prunes it there is nothing to measure from and the rule never fires.
+    if (typeof rule.noReadingFor === 'number' && rule.noReadingFor >= options.rawRetentionMs) {
+      throw new AlertRulesError(
+        `${where}: noReadingFor must be shorter than raw retention (PIPULSE_RETENTION_RAW); alerts only read raw readings`
+      );
+    }
   }
   return [...rules.values()];
 }
