@@ -2,7 +2,16 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AlertRulesError, builtinRules, readRulesFile, resolveRules } from '../src/index.js';
+import {
+  AlertRulesError,
+  builtinRules,
+  durationText,
+  parseRuleEntry,
+  readRulesFile,
+  resolveRules,
+  ruleProblem,
+  ruleToEntry
+} from '../src/index.js';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -12,6 +21,7 @@ const metrics = [
   'cpu_temperature',
   'throttled',
   'swap_used',
+  'swap_io',
   'disk_used',
   'boot_used'
 ].map((id) => ({ id, intervalMs: 10_000 }));
@@ -200,5 +210,77 @@ describe('readRulesFile', () => {
     expect(() => readRulesFile('/nonexistent/alerts.json')).toThrow(
       /^PIPULSE_ALERTS_FILE \/nonexistent\/alerts\.json could not be read: ENOENT$/
     );
+  });
+});
+
+describe('parseRuleEntry', () => {
+  const full = {
+    id: 'my_rule',
+    metric: 'cpu_load',
+    atLeast: 50,
+    for: '1min',
+    severity: 'warning',
+    message: 'Busy'
+  };
+
+  it('names the field at fault, with the problem apart from where it is', () => {
+    const fieldOf = (raw: unknown) => {
+      try {
+        parseRuleEntry(raw, 'rule', 'saved');
+      } catch (error) {
+        const e = error as AlertRulesError;
+        return [e.field, e.detail];
+      }
+      return undefined;
+    };
+    expect(fieldOf({ ...full, bogus: 1 })).toEqual(['bogus', 'unknown field "bogus"']);
+    expect(fieldOf({ ...full, id: 'Bad Id' })).toEqual(['id', 'id must be lowercase snake_case']);
+    expect(fieldOf({ ...full, severity: 'loud' })[0]).toBe('severity');
+    expect(fieldOf({ ...full, message: ' ' })[0]).toBe('message');
+    expect(fieldOf({ ...full, for: '5m' })[0]).toBe('for');
+    expect(fieldOf({ ...full, atLeast: 'x' })[0]).toBe('atLeast');
+    expect(fieldOf({ ...full, atMost: 3 })[0]).toBe('condition');
+    expect(fieldOf({ ...full, metric: '*' })[0]).toBe('metric');
+  });
+
+  it('reads a bare disable, and in the saved layer a full rule that is switched off', () => {
+    expect(parseRuleEntry({ id: 'cpu_busy', disabled: true }, 'rule', 'saved')).toEqual({
+      id: 'cpu_busy',
+      disabled: true
+    });
+    const off = parseRuleEntry({ ...full, disabled: true }, 'rule', 'saved');
+    expect(off).toMatchObject({
+      id: 'my_rule',
+      disabled: true,
+      rule: { atLeast: 50, source: 'saved' }
+    });
+  });
+
+  it('keeps the file ignoring the other fields of a disabled entry', () => {
+    expect(parseRuleEntry({ ...full, disabled: true, for: 'nonsense' }, 'rule', 'file')).toEqual({
+      id: 'my_rule',
+      disabled: true
+    });
+  });
+});
+
+describe('ruleProblem', () => {
+  const rule = builtinRules(4).find((r) => r.id === 'cpu_warm')!;
+  it('flags an unknown metric and a look-back beyond raw retention', () => {
+    expect(ruleProblem(rule, ['cpu_load'], 2 * DAY)?.field).toBe('metric');
+    expect(ruleProblem(rule, ['cpu_temperature'], 5 * MIN)?.field).toBe('for');
+    expect(ruleProblem(rule, ['cpu_temperature'], 2 * DAY)).toBeUndefined();
+  });
+});
+
+describe('ruleToEntry', () => {
+  it('writes a rule back in the rules-file format, and parses back to the same rule', () => {
+    for (const rule of builtinRules(4)) {
+      const entry = ruleToEntry(rule);
+      expect(parseRuleEntry(entry, 'rule', 'file').rule).toEqual({ ...rule, source: 'file' });
+    }
+    expect(durationText(0)).toBe('0s');
+    expect(durationText(10 * MIN)).toBe('10min');
+    expect(durationText(2 * DAY)).toBe('2d');
   });
 });

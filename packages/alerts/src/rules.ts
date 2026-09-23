@@ -17,7 +17,8 @@ export interface Rule {
   clearAfterMs: number;
   severity: Severity;
   message: string;
-  source: 'built-in' | 'file';
+  /** built-in, from the rules file, or saved from the browser. */
+  source: 'built-in' | 'file' | 'saved';
 }
 
 export interface MetricInfo {
@@ -30,10 +31,24 @@ export interface RulesFile {
   text: string;
 }
 
-/** A problem with the rules; its message is one line meant for the operator. */
-export class AlertRulesError extends Error {}
+/**
+ * A problem with the rules; its message is one line meant for the operator.
+ * `field` names the rules-file field at fault and `detail` is the problem
+ * alone, so the editor can show it under that field.
+ */
+export class AlertRulesError extends Error {
+  constructor(
+    message: string,
+    readonly field?: string,
+    readonly detail?: string
+  ) {
+    super(message);
+  }
+}
 
 const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
 
 /**
  * The rules PiPulse ships with. Temperatures suit a Pi 5 with active
@@ -178,55 +193,65 @@ const FIELDS = new Set([
 ]);
 const CONDITIONS = ['atLeast', 'atMost', 'bitsSet', 'noReadingFor'] as const;
 
-type Entry = { id: string; disabled: true } | { id: string; disabled: false; rule: Rule };
+/** A parsed file or saved entry; `rule` is absent for a bare `{ id, disabled: true }`. */
+export interface Entry {
+  id: string;
+  disabled: boolean;
+  rule?: Rule;
+}
 
-function parseEntry(raw: unknown, where: string): Entry {
+export function parseRuleEntry(raw: unknown, where: string, source: 'file' | 'saved'): Entry {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new AlertRulesError(`${where} must be an object`);
+    throw new AlertRulesError(`${where} must be an object`, 'rule', 'must be an object');
   }
   const r = raw as Record<string, unknown>;
   const label = typeof r['id'] === 'string' ? ` ("${r['id']}")` : '';
-  const fail: (problem: string) => never = (problem) => {
-    throw new AlertRulesError(`${where}${label}: ${problem}`);
+  const fail: (problem: string, field: string) => never = (problem, field) => {
+    throw new AlertRulesError(`${where}${label}: ${problem}`, field, problem);
   };
-  for (const key of Object.keys(r)) if (!FIELDS.has(key)) fail(`unknown field "${key}"`);
+  for (const key of Object.keys(r)) if (!FIELDS.has(key)) fail(`unknown field "${key}"`, key);
 
   const id = r['id'];
   if (typeof id !== 'string' || !/^[a-z][a-z0-9_]*$/.test(id))
-    fail('id must be lowercase snake_case');
+    fail('id must be lowercase snake_case', 'id');
   const ruleId = id as string;
   if (r['disabled'] !== undefined && typeof r['disabled'] !== 'boolean')
-    fail('disabled must be true or false');
-  if (r['disabled'] === true) return { id: ruleId, disabled: true };
+    fail('disabled must be true or false', 'disabled');
+  const disabled = r['disabled'] === true;
+  const bare = Object.keys(r).every((key) => key === 'id' || key === 'disabled');
+  // The file has always ignored a disabled entry's other fields; the saved
+  // layer keeps them, so an added rule can be switched off and on again.
+  if (disabled && (bare || source === 'file')) return { id: ruleId, disabled: true };
 
   const duration = (field: string, allowZero: boolean): number | undefined => {
     const value = r[field];
     if (value === undefined) return undefined;
-    if (typeof value !== 'string') fail(`${field} must be a duration string like "5min"`);
+    if (typeof value !== 'string') fail(`${field} must be a duration string like "5min"`, field);
     let ms = 0;
     try {
       ms = parseDuration(field, value as string, { allowZero });
     } catch (error) {
-      fail((error as Error).message);
+      fail((error as Error).message, field);
     }
-    if (!Number.isFinite(ms)) fail(`${field} must not be forever`);
+    if (!Number.isFinite(ms)) fail(`${field} must not be forever`, field);
     return ms;
   };
 
   const present = CONDITIONS.filter((condition) => r[condition] !== undefined);
   if (present.length !== 1) {
-    fail(`needs exactly one of ${CONDITIONS.join(', ')} (found ${present.length})`);
+    fail(`needs exactly one of ${CONDITIONS.join(', ')} (found ${present.length})`, 'condition');
   }
   const condition = present[0]!;
   const metric = r['metric'];
-  if (typeof metric !== 'string' || metric === '') fail('metric must be a plugin id');
+  if (typeof metric !== 'string' || metric === '') fail('metric must be a plugin id', 'metric');
   if (metric === '*' && condition !== 'noReadingFor')
-    fail('metric "*" is only allowed with noReadingFor');
+    fail('metric "*" is only allowed with noReadingFor', 'metric');
   const severity = r['severity'];
   if (severity !== 'warning' && severity !== 'critical')
-    fail('severity must be warning or critical');
+    fail('severity must be warning or critical', 'severity');
   const message = r['message'];
-  if (typeof message !== 'string' || message.trim() === '') fail('message must be non-empty text');
+  if (typeof message !== 'string' || message.trim() === '')
+    fail('message must be non-empty text', 'message');
 
   const rule: Rule = {
     id: ruleId,
@@ -235,27 +260,30 @@ function parseEntry(raw: unknown, where: string): Entry {
     clearAfterMs: 0,
     severity: severity as Severity,
     message: message as string,
-    source: 'file'
+    source
   };
   if (condition === 'noReadingFor') {
     if (r['for'] !== undefined)
-      fail('for is not allowed with noReadingFor (the limit is the duration)');
+      fail('for is not allowed with noReadingFor (the limit is the duration)', 'for');
     if (r['clearAfter'] !== undefined)
-      fail('clearAfter is not allowed with noReadingFor (a new reading ends the silence)');
+      fail(
+        'clearAfter is not allowed with noReadingFor (a new reading ends the silence)',
+        'clearAfter'
+      );
     rule.noReadingFor = r['noReadingFor'] === 'auto' ? 'auto' : duration('noReadingFor', false)!;
   } else {
     const value = r[condition];
     if (condition === 'bitsSet') {
       if (!Number.isInteger(value) || (value as number) <= 0)
-        fail('bitsSet must be a positive integer mask');
+        fail('bitsSet must be a positive integer mask', 'bitsSet');
     } else if (typeof value !== 'number' || !Number.isFinite(value)) {
-      fail(`${condition} must be a number`);
+      fail(`${condition} must be a number`, condition);
     }
     rule[condition] = value as number;
     rule.forMs = duration('for', true) ?? 0;
     rule.clearAfterMs = duration('clearAfter', true) ?? rule.forMs;
   }
-  return { id: ruleId, disabled: false, rule };
+  return { id: ruleId, disabled, rule };
 }
 
 function parseFile({ name, text }: RulesFile): Entry[] {
@@ -273,12 +301,38 @@ function parseFile({ name, text }: RulesFile): Entry[] {
     throw new AlertRulesError(`${name} must be an object with a "rules" array`);
   const seen = new Set<string>();
   return list.map((raw, i) => {
-    const entry = parseEntry(raw, `${name} rules[${i}]`);
+    const entry = parseRuleEntry(raw, `${name} rules[${i}]`, 'file');
     if (seen.has(entry.id))
       throw new AlertRulesError(`${name}: rule id "${entry.id}" appears twice`);
     seen.add(entry.id);
     return entry;
   });
+}
+
+/** Why `rule` can't run on this host: an unknown metric, or a look-back beyond raw readings. */
+export function ruleProblem(
+  rule: Rule,
+  known: string[],
+  rawRetentionMs: number
+): { field: string; message: string } | undefined {
+  if (rule.metric !== '*' && !known.includes(rule.metric)) {
+    return {
+      field: 'metric',
+      message: `unknown metric "${rule.metric}" (known: ${known.join(', ')})`
+    };
+  }
+  for (const [field, ms] of [
+    ['for', rule.forMs],
+    ['clearAfter', rule.clearAfterMs]
+  ] as const) {
+    if (ms > rawRetentionMs) {
+      return {
+        field,
+        message: `${field} is longer than raw retention (PIPULSE_RETENTION_RAW); alerts only read raw readings`
+      };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -303,27 +357,45 @@ export function resolveRules(options: {
           );
         }
         rules.delete(entry.id);
-      } else rules.set(entry.id, entry.rule);
+      } else rules.set(entry.id, entry.rule!);
     }
   }
   const known = options.metrics.map((metric) => metric.id);
   for (const rule of rules.values()) {
-    const where = `alert rule "${rule.id}"`;
-    if (rule.metric !== '*' && !known.includes(rule.metric)) {
+    const problem = ruleProblem(rule, known, options.rawRetentionMs);
+    if (problem) {
       throw new AlertRulesError(
-        `${where}: unknown metric "${rule.metric}" (known: ${known.join(', ')})`
+        `alert rule "${rule.id}": ${problem.message}`,
+        problem.field,
+        problem.message
       );
-    }
-    for (const [field, ms] of [
-      ['for', rule.forMs],
-      ['clearAfter', rule.clearAfterMs]
-    ] as const) {
-      if (ms > options.rawRetentionMs) {
-        throw new AlertRulesError(
-          `${where}: ${field} is longer than raw retention (PIPULSE_RETENTION_RAW); alerts only read raw readings`
-        );
-      }
     }
   }
   return [...rules.values()];
+}
+
+/** "15min", "2h", "1d": the largest whole unit, as the rules file writes durations. */
+export function durationText(ms: number): string {
+  if (ms === 0) return '0s';
+  if (ms % DAY === 0) return `${ms / DAY}d`;
+  if (ms % HOUR === 0) return `${ms / HOUR}h`;
+  if (ms % MIN === 0) return `${ms / MIN}min`;
+  return `${Math.ceil(ms / 1000)}s`;
+}
+
+/** A resolved rule written back in the rules-file format, e.g. to fill the editor's form. */
+export function ruleToEntry(rule: Rule): Record<string, unknown> {
+  const entry: Record<string, unknown> = { id: rule.id, metric: rule.metric };
+  if (rule.atLeast !== undefined) entry['atLeast'] = rule.atLeast;
+  if (rule.atMost !== undefined) entry['atMost'] = rule.atMost;
+  if (rule.bitsSet !== undefined) entry['bitsSet'] = rule.bitsSet;
+  if (rule.noReadingFor !== undefined) {
+    entry['noReadingFor'] = rule.noReadingFor === 'auto' ? 'auto' : durationText(rule.noReadingFor);
+  } else {
+    entry['for'] = durationText(rule.forMs);
+    entry['clearAfter'] = durationText(rule.clearAfterMs);
+  }
+  entry['severity'] = rule.severity;
+  entry['message'] = rule.message;
+  return entry;
 }
