@@ -96,3 +96,12 @@ export {
   type RetentionLevel,
   type RetentionSettings
 } from './retention.js';
+
+export {
+  databaseFile,
+  diskFreeBytes,
+  fileUsage,
+  maybeVacuum,
+  type VacuumOptions,
+  type VacuumResult
+} from './vacuum.js';
