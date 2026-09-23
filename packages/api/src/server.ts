@@ -125,7 +125,7 @@ const app = buildServer(db, {
   rules: RULES,
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
-  settings: { getRetention, metrics: METRICS, ...(LOOK_BACK ? { rawAtLeast: LOOK_BACK } : {}) }
+  settings: { getRetention, metrics: METRICS, rawAtLeast: () => LOOK_BACK }
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.

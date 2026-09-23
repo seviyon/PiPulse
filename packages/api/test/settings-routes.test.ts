@@ -4,6 +4,7 @@ import {
   insertSample,
   openDb,
   retentionSource,
+  type LookBack,
   type PiPulseDb,
   type RetentionSettings
 } from '@pipulse/storage';
@@ -25,14 +26,16 @@ let db: PiPulseDb;
 let app: FastifyInstance;
 let cookie: string;
 let getRetention: () => RetentionSettings;
+let lookBack: LookBack | undefined;
 
 async function start(env: Record<string, string> = {}) {
+  lookBack = longestLookBack(builtinRules(4));
   getRetention = retentionSource(db, env, () => {});
   app = buildServer(db, {
     auth: { passwordHash, failureDelayMs: 0 },
     settings: {
       getRetention,
-      rawAtLeast: longestLookBack(builtinRules(4)),
+      rawAtLeast: () => lookBack,
       metrics: [{ intervalMs: 5000 }],
       diskFree: () => 10 ** 10,
       now: () => NOW
@@ -196,5 +199,13 @@ describe('PUT /api/settings', () => {
     const res = await put({ retention: { raw: 7 } });
     expect(res.statusCode).toBe(400);
     expect(res.json().errors.raw).toMatch(/must be a duration/);
+  });
+
+  it('checks raw retention against the rules in force now, not at startup', async () => {
+    await start();
+    lookBack = { ms: 3 * DAY, ruleId: 'test_long', text: '3d' };
+    const res = await put({ retention: { raw: '2d' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().errors.raw).toMatch(/test_long/);
   });
 });
