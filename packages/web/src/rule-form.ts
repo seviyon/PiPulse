@@ -85,6 +85,12 @@ export function bodyOf(
         }
       };
     }
+    if (draft.condition === 'bitsSet' && (!Number.isInteger(number) || number <= 0)) {
+      return {
+        ok: false,
+        errors: { value: 'Enter a mask like 0xf.' }
+      };
+    }
     body[draft.condition] = number;
     if (draft.for.trim()) body['for'] = draft.for.trim();
     if (draft.clearAfter.trim()) body['clearAfter'] = draft.clearAfter.trim();

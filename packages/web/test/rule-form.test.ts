@@ -60,6 +60,30 @@ describe('draftOf / bodyOf', () => {
       ok: false,
       errors: { value: 'Enter a mask like 0xf.' }
     });
+    // bitsSet must be positive integers
+    expect(bodyOf({ ...emptyDraft('cpu_load'), condition: 'bitsSet', value: '2.5' })).toEqual({
+      ok: false,
+      errors: { value: 'Enter a mask like 0xf.' }
+    });
+    expect(bodyOf({ ...emptyDraft('cpu_load'), condition: 'bitsSet', value: '-5' })).toEqual({
+      ok: false,
+      errors: { value: 'Enter a mask like 0xf.' }
+    });
+    expect(bodyOf({ ...emptyDraft('cpu_load'), condition: 'bitsSet', value: '0' })).toEqual({
+      ok: false,
+      errors: { value: 'Enter a mask like 0xf.' }
+    });
+    expect(bodyOf({ ...emptyDraft('cpu_load'), condition: 'bitsSet', value: '0x0' })).toEqual({
+      ok: false,
+      errors: { value: 'Enter a mask like 0xf.' }
+    });
+    // atLeast still accepts negative numbers and decimals
+    expect(
+      bodyOf({ ...emptyDraft('cpu_load'), condition: 'atLeast', value: '-2.5' })
+    ).toMatchObject({
+      ok: true,
+      body: { atLeast: -2.5 }
+    });
   });
 });
 
