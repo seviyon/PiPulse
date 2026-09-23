@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { chartGroups, resolutionLabel, summarize, toChartData } from '../src/history.js';
+import {
+  chartGroups,
+  historyOnly,
+  resolutionLabel,
+  summarize,
+  toChartData,
+  traffic
+} from '../src/history.js';
 import { parseRoute, routeHash } from '../src/router.js';
 import type { PluginInfo, SeriesPoint } from '../src/types.js';
 
@@ -10,11 +17,12 @@ const plugin = (id: string, label: string, unit = '%'): PluginInfo => ({
   intervalMs: 5000
 });
 
-const point = (ts: number, avg: number, min = avg, max = avg): SeriesPoint => ({
+const point = (ts: number, avg: number, min = avg, max = avg, count = 1): SeriesPoint => ({
   ts,
   avg,
   min,
-  max
+  max,
+  count
 });
 
 describe('chartGroups', () => {
@@ -127,6 +135,42 @@ describe('summarize', () => {
 
   it('returns undefined without data', () => {
     expect(summarize([])).toBeUndefined();
+  });
+});
+
+describe('traffic', () => {
+  const MIN = 60_000;
+  // 1-minute rollups of a 5 s rate: 12 samples, each standing for 5 s.
+  const minute = (ts: number, rate: number) => point(ts, rate, rate, rate, 12);
+
+  it('turns rates back into bytes: each sample’s rate times its poll interval', () => {
+    const rx = [minute(0, 1000), minute(MIN, 3000)];
+    const tx = [minute(0, 500)];
+
+    expect(traffic(rx, tx, 5000, { from: 0, to: 2 * MIN })).toEqual({
+      received: 240_000,
+      sent: 30_000,
+      complete: true
+    });
+  });
+
+  it('is incomplete when samples cover well under the window, e.g. collection stopped', () => {
+    const rx = [minute(0, 1000)];
+
+    expect(traffic(rx, [], 5000, { from: 0, to: 60 * MIN }).complete).toBe(false);
+  });
+
+  it('counts raw samples one poll interval each', () => {
+    const rx = [point(0, 100), point(5000, 300)];
+
+    expect(traffic(rx, [], 5000, { from: 0, to: 10_000 }).received).toBe(2000);
+  });
+});
+
+describe('historyOnly', () => {
+  it('keeps the load average off the live dashboard', () => {
+    expect(historyOnly.has('load_1')).toBe(true);
+    expect(historyOnly.has('cpu_load')).toBe(false);
   });
 });
 

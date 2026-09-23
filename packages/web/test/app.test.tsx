@@ -38,7 +38,8 @@ const config: Config = {
   plugins: [
     { id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 },
     { id: 'cpu_temperature', label: 'CPU temperature', unit: '°C', intervalMs: 10000 },
-    { id: 'network_rx', label: 'Network received', unit: 'B/s', intervalMs: 5000 }
+    { id: 'network_rx', label: 'Network received', unit: 'B/s', intervalMs: 5000 },
+    { id: 'load_1', label: 'Load (1 min)', unit: '', intervalMs: 30000 }
   ]
 };
 
@@ -117,7 +118,7 @@ afterEach(() => {
 });
 
 describe('<App>', () => {
-  it('shows the device and one tile per plugin, with values from history', async () => {
+  it('shows the device and one tile per live plugin (not history-only ones), with values from history', async () => {
     render(<App />, root);
     await eventually(() => expect(tile('CPU load').textContent).toContain('1.6%'));
 
@@ -276,6 +277,15 @@ describe('<App> with the Pi and the browser clocks disagreeing', () => {
 
     const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(urls).toContain(`/api/metrics/cpu_load/history?from=${serverTime - 15 * MINUTE}`);
+  });
+
+  it('skips sparkline history for history-only metrics, which have no tile', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes('/cpu_load/history'))).toBe(true);
+    expect(urls.some((url) => url.includes('/load_1/'))).toBe(false);
   });
 
   it('follows the clock of pushed samples', async () => {

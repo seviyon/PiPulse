@@ -6,10 +6,11 @@ import {
   resolutionLabel,
   summarize,
   toChartData,
+  traffic,
   type ChartGroup
 } from './history.js';
 import { RANGES, routeHash, type RangeId } from './router.js';
-import type { Config, Series } from './types.js';
+import type { Config, PluginInfo, Series } from './types.js';
 
 interface HistoryPageProps {
   config: Config;
@@ -21,7 +22,9 @@ interface HistoryPageProps {
 type Window = { from: number; to: number };
 
 type Load =
-  { status: 'loading' } | { status: 'error' } | { status: 'ready'; series: Record<string, Series> };
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; series: Record<string, Series>; window: Window };
 
 function withUnit(value: number, unit: string): string {
   const { text, unit: shown } = formatValue(value, unit);
@@ -40,15 +43,60 @@ async function fetchSeries(metric: string, { from, to }: Window): Promise<Series
   return (await response.json()) as Series;
 }
 
+/** The dashed core-count line and its plain-words note, for the load chart. */
+function loadReference(group: ChartGroup, cpus: number | undefined) {
+  if (group.id !== 'load_1' || !cpus) return undefined;
+  return {
+    line: { value: cpus, label: `${cpus} ${cpus === 1 ? 'core' : 'cores'}` },
+    note: `Above ${cpus} means work is waiting for a CPU or for the disk.`
+  };
+}
+
+/** "In this range: 5.9 GB received, 1.9 GB sent", from the network rate series. */
+function TrafficLines({
+  group,
+  series,
+  plugins,
+  window
+}: {
+  group: ChartGroup;
+  series: Record<string, Series>;
+  plugins: PluginInfo[];
+  window: Window;
+}) {
+  if (group.id !== 'network') return null;
+  const intervalMs = plugins.find((p) => p.id === 'network_rx')?.intervalMs;
+  const rx = series['network_rx']?.points ?? [];
+  if (!intervalMs || rx.length === 0) return null;
+  const total = traffic(rx, series['network_tx']?.points ?? [], intervalMs, window);
+  return (
+    <>
+      <p class="summary">
+        In this range: {withUnit(total.received, 'B')} received, {withUnit(total.sent, 'B')} sent
+      </p>
+      {!total.complete && (
+        <p class="note">
+          PiPulse wasn't collecting for all of this range, so these totals are a lower bound.
+        </p>
+      )}
+    </>
+  );
+}
+
 function GroupChart({
   group,
   series,
+  config,
+  window,
   onZoom
 }: {
   group: ChartGroup;
   series: Record<string, Series>;
+  config: Config;
+  window: Window;
   onZoom(from: number, to: number): void;
 }) {
+  const reference = loadReference(group, config.device.cpus);
   const perMetric = group.metrics.map((metric) => series[metric.id]?.points ?? []);
   const data = useMemo(() => toChartData(perMetric), [series]);
   const resolution = series[group.metrics[0]!.id]?.resolution ?? 'raw';
@@ -80,10 +128,13 @@ function GroupChart({
           unit={group.unit}
           band={band}
           title={`${group.label}, ${resolutionLabel(resolution).toLowerCase()}`}
+          {...(reference ? { reference: reference.line } : {})}
           onZoom={onZoom}
         />
       )}
       {summaries.map((text) => text && <p class="summary">{text}</p>)}
+      {reference && <p class="note">{reference.note}</p>}
+      <TrafficLines group={group} series={series} plugins={config.plugins} window={window} />
     </section>
   );
 }
@@ -123,7 +174,8 @@ export function HistoryPage({ config, range, now }: HistoryPageProps) {
         setPending(false);
         setLoad({
           status: 'ready',
-          series: Object.fromEntries(metrics.map((metric, i) => [metric, results[i]!]))
+          series: Object.fromEntries(metrics.map((metric, i) => [metric, results[i]!])),
+          window
         });
       },
       () => {
@@ -185,6 +237,8 @@ export function HistoryPage({ config, range, now }: HistoryPageProps) {
               key={group.id}
               group={group}
               series={load.series}
+              config={config}
+              window={load.window}
               onZoom={(from, to) => setZoomed({ range, window: { from, to } })}
             />
           ))}

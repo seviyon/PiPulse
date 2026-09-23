@@ -10,7 +10,8 @@ class FakePlot {
   constructor(
     readonly opts: {
       series: { label?: string }[];
-      hooks?: { setSelect?: ((u: unknown) => void)[] };
+      hooks?: { setSelect?: ((u: unknown) => void)[]; draw?: ((u: unknown) => void)[] };
+      scales?: { y?: { range?: (u: unknown, min: number, max: number) => [number, number] } };
     },
     data: unknown
   ) {
@@ -53,8 +54,8 @@ function seriesFor(metric: string): Series {
   return {
     resolution: '1m',
     points: [
-      { ts: NOW - 2 * 60_000, avg: base, min: base / 2, max: base * 2 },
-      { ts: NOW - 60_000, avg: base * 3, min: base, max: base * 4 }
+      { ts: NOW - 2 * 60_000, avg: base, min: base / 2, max: base * 2, count: 12 },
+      { ts: NOW - 60_000, avg: base * 3, min: base, max: base * 4, count: 12 }
     ]
   };
 }
@@ -138,6 +139,51 @@ describe('<HistoryPage>', () => {
     expect(chartSection('Network').textContent).toContain(
       'Received: low 500 B/s, average 2 kB/s, high 4 kB/s'
     );
+  });
+
+  it('totals the traffic in the range, and says when collection gaps make it a lower bound', async () => {
+    render(<HistoryPage config={config} range="24h" now={() => NOW} />, root);
+    await eventually(() =>
+      expect(chartSection('Network').textContent).toContain(
+        'In this range: 240 kB received, 240 kB sent'
+      )
+    );
+    // Two minutes of samples in a 24-hour range.
+    expect(chartSection('Network').textContent).toContain(
+      "PiPulse wasn't collecting for all of this range, so these totals are a lower bound."
+    );
+  });
+
+  it('marks the core count on the load chart and says what crossing it means', async () => {
+    const withLoad: Config = {
+      device: { ...config.device, cpus: 4 },
+      plugins: [
+        { id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 },
+        { id: 'load_1', label: 'Load (1 min)', unit: '', intervalMs: 30000 }
+      ]
+    };
+    render(<HistoryPage config={withLoad} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(root.textContent).toContain('Load (1 min)'));
+
+    expect(chartSection('Load (1 min)').textContent).toContain(
+      'Above 4 means work is waiting for a CPU or for the disk.'
+    );
+    const plot = FakePlot.instances.find((p) => p.opts.series[1]?.label === 'Load (1 min)')!;
+    // The core count stays in view even when the load is far below it.
+    expect(plot.opts.scales?.y?.range?.(undefined, 0.1, 0.5)[1]).toBeGreaterThan(4);
+    expect(plot.opts.hooks?.draw).toHaveLength(1);
+  });
+
+  it('leaves the load chart unmarked when the server does not report its cores', async () => {
+    const withLoad: Config = {
+      ...config,
+      plugins: [{ id: 'load_1', label: 'Load (1 min)', unit: '', intervalMs: 30000 }]
+    };
+    render(<HistoryPage config={withLoad} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(root.textContent).toContain('Load (1 min)'));
+
+    expect(chartSection('Load (1 min)').textContent).not.toContain('Above');
+    expect(FakePlot.instances[0]!.opts.hooks?.draw).toBeUndefined();
   });
 
   it('links every range, marking the current one', async () => {

@@ -28,6 +28,11 @@ export function formatValue(value: number, unit: string): FormattedValue {
       if ((value & 0xf) !== 0) return { text: 'Now', unit: '' };
       if (value !== 0) return { text: 'Since boot', unit: '' };
       return { text: 'None', unit: '' };
+    case 'B':
+      if (value >= 1e9) return { text: round(value / 1e9, 1), unit: 'GB' };
+      if (value >= 1e6) return { text: round(value / 1e6, 1), unit: 'MB' };
+      if (value >= 1000) return { text: round(value / 1000, 1), unit: 'kB' };
+      return { text: round(value, 0), unit };
     case 'B/s':
       if (value >= 1_000_000) return { text: round(value / 1_000_000, 1), unit: 'MB/s' };
       if (value >= 1000) return { text: round(value / 1000, 1), unit: 'kB/s' };

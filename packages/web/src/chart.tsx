@@ -14,6 +14,8 @@ interface ChartProps {
   /** Shade between the min and max columns (single-series rollups). */
   band: boolean;
   title: string;
+  /** A dashed horizontal line kept in view, e.g. the core count on the load chart. */
+  reference?: { value: number; label: string };
   /** Called with the dragged-over window, in unix ms. */
   onZoom(from: number, to: number): void;
 }
@@ -43,13 +45,38 @@ function useColorScheme(): string {
   return scheme;
 }
 
+/** Draws `reference` as a dashed line across the plot, labelled at its right end. */
+function drawReference(
+  u: uPlot,
+  reference: { value: number; label: string },
+  color: string,
+  font: string
+) {
+  const { ctx, bbox } = u;
+  const y = Math.round(u.valToPos(reference.value, 'y', true)) + 0.5;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = devicePixelRatio;
+  ctx.setLineDash([4 * devicePixelRatio, 4 * devicePixelRatio]);
+  ctx.beginPath();
+  ctx.moveTo(bbox.left, y);
+  ctx.lineTo(bbox.left + bbox.width, y);
+  ctx.stroke();
+  ctx.font = `${12 * devicePixelRatio}px ${font}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(reference.label, bbox.left + bbox.width, y - 2 * devicePixelRatio);
+  ctx.restore();
+}
+
 /**
  * A time-series chart: 2px average lines, an optional low–high band as a
  * faint wash, hairline grid, and uPlot's legend as the hover readout.
  * Dragging across it reports the window through `onZoom` instead of
  * zooming in place, so the page can refetch it at a finer resolution.
  */
-export function Chart({ data, labels, unit, band, title, onZoom }: ChartProps) {
+export function Chart({ data, labels, unit, band, title, reference, onZoom }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot>();
   const zoom = useRef(onZoom);
@@ -95,13 +122,28 @@ export function Chart({ data, labels, unit, band, title, onZoom }: ChartProps) {
         ...(band
           ? { bands: [{ series: [3, 2] as [number, number], fill: cssVar('--accent-wash') }] }
           : {}),
-        scales: { x: { time: true } },
+        scales: {
+          x: { time: true },
+          ...(reference
+            ? {
+                y: {
+                  range: (_u: uPlot, min: number, max: number): uPlot.Range.MinMax => [
+                    Math.min(0, min),
+                    Math.max(max, reference.value) * 1.1
+                  ]
+                }
+              }
+            : {})
+        },
         axes: [
           axis,
           { ...axis, size: 70, values: (_u, ticks) => ticks.map((tick) => formatTick(tick, unit)) }
         ],
         cursor: { drag: { x: true, y: false, setScale: false } },
         hooks: {
+          ...(reference
+            ? { draw: [(u: uPlot) => drawReference(u, reference, muted, cssVar('--font'))] }
+            : {}),
           setSelect: [
             (u) => {
               if (u.select.width <= 0) return;
@@ -128,7 +170,7 @@ export function Chart({ data, labels, unit, band, title, onZoom }: ChartProps) {
       plot.current = undefined;
     };
     // Rebuilt when the series shape or theme changes; data alone is swapped in below.
-  }, [labels.join('\n'), unit, band, scheme]);
+  }, [labels.join('\n'), unit, band, scheme, reference?.value, reference?.label]);
 
   useEffect(() => {
     plot.current?.setData(data as uPlot.AlignedData);
