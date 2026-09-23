@@ -240,18 +240,20 @@ describe('runHousekeeping pruning', () => {
 });
 
 describe('getSeries', () => {
-  it('returns raw samples as points whose avg, min and max are the value', () => {
+  it('returns raw samples as points whose avg, min and max are the value, counting one sample', () => {
     insertSample(db, { ts: T0, metric: 'cpu_load', value: 7 });
-    expect(getSeries(db, 'cpu_load', T0, T0, 'raw')).toEqual([{ ts: T0, avg: 7, min: 7, max: 7 }]);
+    expect(getSeries(db, 'cpu_load', T0, T0, 'raw')).toEqual([
+      { ts: T0, avg: 7, min: 7, max: 7, count: 1 }
+    ]);
   });
 
-  it('returns rollup buckets within the range', () => {
+  it('returns rollup buckets within the range, with how many samples each averages', () => {
     insertSample(db, { ts: T0, metric: 'cpu_load', value: 2 });
     insertSample(db, { ts: T0 + 30_000, metric: 'cpu_load', value: 4 });
     runHousekeeping(db, T0 + MIN);
 
     expect(getSeries(db, 'cpu_load', T0, T0 + MIN, '1m')).toEqual([
-      { ts: T0, avg: 3, min: 2, max: 4 }
+      { ts: T0, avg: 3, min: 2, max: 4, count: 2 }
     ]);
   });
 });

@@ -224,6 +224,8 @@ export interface SeriesPoint {
   avg: number;
   min: number;
   max: number;
+  /** Raw samples the point stands for: 1 for a raw sample, the bucket's count for a rollup. */
+  count: number;
 }
 
 /** A metric's points within an inclusive [from, to] window at one resolution, oldest first. */
@@ -238,12 +240,12 @@ export function getSeries(
     resolution === 'raw'
       ? db
           .prepare(
-            'SELECT ts, value AS avg, value AS min, value AS max FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? ORDER BY ts'
+            'SELECT ts, value AS avg, value AS min, value AS max, 1 AS count FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? ORDER BY ts'
           )
           .all(metric, from, to)
       : db
           .prepare(
-            'SELECT ts, avg, min, max FROM metrics_rollup WHERE metric = ? AND resolution = ? AND ts BETWEEN ? AND ? ORDER BY ts'
+            'SELECT ts, avg, min, max, count FROM metrics_rollup WHERE metric = ? AND resolution = ? AND ts BETWEEN ? AND ? ORDER BY ts'
           )
           .all(metric, resolution, from, to);
   return rows as unknown as SeriesPoint[];

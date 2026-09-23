@@ -33,9 +33,9 @@ describe('GET /api/metrics/:id/series', () => {
     expect(res.json()).toEqual({
       resolution: 'raw',
       points: [
-        { ts: now - 3 * MIN, avg: 2, min: 2, max: 2 },
-        { ts: now - 3 * MIN + 30_000, avg: 4, min: 4, max: 4 },
-        { ts: now - 2 * MIN, avg: 6, min: 6, max: 6 }
+        { ts: now - 3 * MIN, avg: 2, min: 2, max: 2, count: 1 },
+        { ts: now - 3 * MIN + 30_000, avg: 4, min: 4, max: 4, count: 1 },
+        { ts: now - 2 * MIN, avg: 6, min: 6, max: 6, count: 1 }
       ]
     });
   });
@@ -45,8 +45,8 @@ describe('GET /api/metrics/:id/series', () => {
     expect(res.json()).toEqual({
       resolution: '1m',
       points: [
-        { ts: now - 3 * MIN, avg: 3, min: 2, max: 4 },
-        { ts: now - 2 * MIN, avg: 6, min: 6, max: 6 }
+        { ts: now - 3 * MIN, avg: 3, min: 2, max: 4, count: 2 },
+        { ts: now - 2 * MIN, avg: 6, min: 6, max: 6, count: 1 }
       ]
     });
   });

@@ -20,6 +20,8 @@ export interface DeviceInfo {
   os?: string;
   kernel?: string;
   memoryTotalMb?: number;
+  /** Logical CPUs; absent from older servers. */
+  cpus?: number;
 }
 
 export interface Config {
@@ -41,6 +43,8 @@ export interface SeriesPoint {
   avg: number;
   min: number;
   max: number;
+  /** Raw samples the point stands for: 1 for a raw sample, the bucket's count for a rollup. */
+  count: number;
 }
 
 export interface Series {

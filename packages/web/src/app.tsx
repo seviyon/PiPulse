@@ -4,6 +4,7 @@ import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } 
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
 import { HistoryPage } from './history-page.js';
+import { historyOnly } from './history.js';
 import { routeHash, useRoute } from './router.js';
 import { Tile } from './tile.js';
 import type { Config, DeviceInfo, Sample } from './types.js';
@@ -153,7 +154,8 @@ export function App() {
 
   const loadHistory = useCallback((plugins: Config['plugins']) => {
     const from = Date.now() + clockOffset.current - WINDOW_MS;
-    for (const plugin of plugins) {
+    // History-only metrics have no tile, so no sparkline to fill.
+    for (const plugin of plugins.filter((p) => !historyOnly.has(p.id))) {
       getJson<Sample[]>(`/api/metrics/${plugin.id}/history?from=${from}`).then(
         (samples) => setData((state) => applyHistory(state, plugin.id, samples)),
         // A tile without history still fills in from the live feed.
@@ -262,18 +264,20 @@ export function App() {
       ) : (
         <div class="panel">
           <div class="tiles">
-            {config.plugins.map((plugin) => (
-              <Tile
-                key={plugin.id}
-                plugin={plugin}
-                latest={data.latest[plugin.id]}
-                series={data.series[plugin.id] ?? []}
-                now={now}
-                waitingSince={waitingSince.current}
-                windowMs={WINDOW_MS}
-                max={meterMax(plugin.id, device)}
-              />
-            ))}
+            {config.plugins
+              .filter((plugin) => !historyOnly.has(plugin.id))
+              .map((plugin) => (
+                <Tile
+                  key={plugin.id}
+                  plugin={plugin}
+                  latest={data.latest[plugin.id]}
+                  series={data.series[plugin.id] ?? []}
+                  now={now}
+                  waitingSince={waitingSince.current}
+                  windowMs={WINDOW_MS}
+                  max={meterMax(plugin.id, device)}
+                />
+              ))}
           </div>
         </div>
       )}

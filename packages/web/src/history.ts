@@ -7,6 +7,12 @@ export interface ChartGroup {
   metrics: { id: string; label: string }[];
 }
 
+/**
+ * Metrics charted on the History page but kept off the live dashboard: the
+ * load average is a trend signal (is work queueing?), not a reading to watch.
+ */
+export const historyOnly: ReadonlySet<string> = new Set(['load_1']);
+
 /** Metrics drawn together in one chart (same unit, read side by side). */
 const pairs = [
   {
@@ -129,4 +135,37 @@ export function resolutionLabel(resolution: Resolution): string {
     '1h': 'Hourly averages',
     '1d': 'Daily averages'
   }[resolution];
+}
+
+export interface Traffic {
+  /** Bytes, rebuilt from the stored rates. */
+  received: number;
+  sent: number;
+  /** False when the samples cover well under the window (collection stopped for part of it). */
+  complete: boolean;
+}
+
+/** Below this share of the window covered by samples, totals are flagged as a lower bound. */
+const COMPLETE_SHARE = 0.95;
+
+/**
+ * Bytes moved in a window, from the network rate series: every raw sample
+ * is a rate over one poll interval, and a point stands for `count` of them,
+ * so bytes = avg × count × interval. Time nothing was collected adds
+ * nothing, which makes the result a lower bound across gaps.
+ */
+export function traffic(
+  rx: SeriesPoint[],
+  tx: SeriesPoint[],
+  intervalMs: number,
+  window: { from: number; to: number }
+): Traffic {
+  const bytes = (points: SeriesPoint[]) =>
+    points.reduce((sum, p) => sum + p.avg * p.count * (intervalMs / 1000), 0);
+  const coveredMs = rx.reduce((sum, p) => sum + p.count * intervalMs, 0);
+  return {
+    received: bytes(rx),
+    sent: bytes(tx),
+    complete: coveredMs >= COMPLETE_SHARE * (window.to - window.from)
+  };
 }

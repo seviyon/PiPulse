@@ -16,7 +16,12 @@ describe('formatValue', () => {
     [0, 'flags', 'None', ''],
     [0x50005, 'flags', 'Now', ''],
     [0x50000, 'flags', 'Since boot', ''],
-    [3.14159, 'widgets', '3.14', 'widgets']
+    [3.14159, 'widgets', '3.14', 'widgets'],
+    [0.31, '', '0.31', ''],
+    [950, 'B', '950', 'B'],
+    [240_000, 'B', '240', 'kB'],
+    [1_900_000, 'B', '1.9', 'MB'],
+    [5_900_000_000, 'B', '5.9', 'GB']
   ])('formats %s %s as %s %s', (value, unit, text, shownUnit) => {
     expect(formatValue(value, unit)).toEqual({ text, unit: shownUnit });
   });

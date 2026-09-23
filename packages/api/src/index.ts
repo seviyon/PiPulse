@@ -30,6 +30,7 @@ export interface DeviceInfo {
   os?: string;
   kernel?: string;
   memoryTotalMb?: number;
+  cpus?: number;
 }
 
 /**
