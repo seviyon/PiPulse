@@ -244,7 +244,8 @@ describe('<App>', () => {
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Now', '#/'],
       ['History', '#/history?range=24h'],
-      ['Alerts', '#/alerts']
+      ['Alerts', '#/alerts'],
+      ['Settings', '#/settings']
     ]);
     expect(links[0]?.getAttribute('aria-current')).toBe('page');
   });

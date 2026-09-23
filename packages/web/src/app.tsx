@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
 import { AlertsPage } from './alerts-page.js';
+import { SettingsPage } from './settings-page.js';
 import {
   authEvents,
   getJson,
@@ -331,12 +332,26 @@ export function App() {
             </span>
           )}
         </a>
+        <a
+          href={routeHash({ page: 'settings' })}
+          aria-current={route.page === 'settings' ? 'page' : undefined}
+        >
+          Settings
+        </a>
       </nav>
       {route.page === 'history' ? (
         <HistoryPage
           config={config}
           range={route.range}
           now={() => Date.now() + clockOffset.current}
+        />
+      ) : route.page === 'settings' ? (
+        <SettingsPage
+          session={session}
+          onSessionChange={(next) => {
+            setSession(next);
+            if (next.protectReads && !next.signedIn) setNeedSignIn(true);
+          }}
         />
       ) : route.page === 'alerts' ? (
         <AlertsPage
