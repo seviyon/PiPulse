@@ -54,6 +54,21 @@ export function formatAge(ms: number): string {
   return `${Math.floor(minutes / 60)} h ago`;
 }
 
+/** "10:42" in the viewer's locale. */
+export function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** "Sep 21, 03:10" in the viewer's locale. */
+export function formatDateTime(ts: number): string {
+  return new Date(ts).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 /** "5 min", "3 h 12 min", "16 days 11 h". */
 export function formatUptime(ms: number): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000);

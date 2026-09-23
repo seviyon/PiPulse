@@ -204,4 +204,9 @@ describe('router', () => {
     });
     expect(routeHash({ page: 'now' })).toBe('#/');
   });
+
+  it('round-trips the alerts route', () => {
+    expect(parseRoute('#/alerts')).toEqual({ page: 'alerts' });
+    expect(routeHash({ page: 'alerts' })).toBe('#/alerts');
+  });
 });

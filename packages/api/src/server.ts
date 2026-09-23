@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { cpus } from 'node:os';
 import {
   openDb,
   retentionFromEnv,
@@ -8,7 +9,16 @@ import {
   type RetentionPolicy
 } from '@pipulse/storage';
 import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
-import { buildServer, createLiveFeed } from './index.js';
+import {
+  readRulesFile,
+  resolveRules,
+  startAlerts,
+  type AlertEvent,
+  type Rule
+} from '@pipulse/alerts';
+import { buildServer, createFeed, createLiveFeed } from './index.js';
+
+const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
 
 /**
  * PiPulse server: one process that runs the collector scheduler and serves
@@ -50,8 +60,29 @@ function readRetention(): RetentionPolicy {
 }
 const RETENTION = readRetention();
 
+/**
+ * Built-in alert rules merged with PIPULSE_ALERTS_FILE, if set. Read
+ * before touching the database, so a bad file stops startup with one line.
+ */
+function readRules(): Rule[] {
+  const path = process.env['PIPULSE_ALERTS_FILE'];
+  try {
+    return resolveRules({
+      cores: cpus().length,
+      metrics: METRICS,
+      rawRetentionMs: RETENTION.raw,
+      ...(path ? { file: readRulesFile(path) } : {})
+    });
+  } catch (error) {
+    console.error(`[pipulse] ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+const RULES = readRules();
+
 const db = openDb(DB_PATH);
 const live = createLiveFeed();
+const alertFeed = createFeed<AlertEvent>();
 const app = buildServer(db, {
   live,
   retention: RETENTION,
@@ -63,7 +94,9 @@ const app = buildServer(db, {
     label,
     unit,
     intervalMs
-  }))
+  })),
+  rules: RULES,
+  alertFeed
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every minute.
 const housekeeping = startHousekeeping(db, {
@@ -76,6 +109,18 @@ const scheduler = startScheduler(db, builtinPlugins, {
   onSample: live.publish,
   onError: (plugin, error) => {
     console.error(`[pipulse] ${plugin.id} failed:`, error);
+  }
+});
+// Checks every alert rule now and then every 15 s; raises and clears go to /api/live.
+const alerts = startAlerts(db, {
+  rules: RULES,
+  metrics: METRICS,
+  onChange: alertFeed.publish,
+  onError: (error, rule) => {
+    console.error(
+      rule ? `[pipulse] alert rule ${rule.id} failed:` : '[pipulse] alert check failed:',
+      error
+    );
   }
 });
 
@@ -101,6 +146,7 @@ async function shutdown(): Promise<void> {
   }
   shuttingDown = true;
   housekeeping.stop();
+  alerts.stop();
   const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
   db.close();
   if (!drained) {

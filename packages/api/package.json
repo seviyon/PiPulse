@@ -13,6 +13,7 @@
   "dependencies": {
     "@fastify/static": "^10.1.4",
     "@fastify/websocket": "^11.3.1",
+    "@pipulse/alerts": "*",
     "@pipulse/collector": "*",
     "@pipulse/storage": "*",
     "fastify": "^5.12.5"

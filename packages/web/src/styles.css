@@ -259,6 +259,13 @@ p {
   color: var(--ink-3);
 }
 
+.alert-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
 /* ---- Meter ---- */
 
 .meter {
@@ -531,4 +538,59 @@ button:hover {
   .spark .line {
     stroke: CanvasText;
   }
+}
+
+/* ---- Alerts ---- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font-weight: 700;
+}
+
+.alerts-page {
+  display: grid;
+  gap: 24px;
+}
+
+.alert-list,
+.rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.alert-list li,
+.rule-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+.alert-severity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.alert-message {
+  font-weight: 600;
+}
+
+.alert-when,
+.rule-source {
+  color: var(--ink-3);
+}
+
+.alert-list a {
+  margin-left: auto;
 }

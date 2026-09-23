@@ -5,7 +5,8 @@ import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
 import { openDb, insertSample, type PiPulseDb, type Sample } from '@pipulse/storage';
-import { buildServer, createLiveFeed } from '../src/index.js';
+import { raiseAlert, type AlertEvent } from '@pipulse/alerts';
+import { buildServer, createFeed, createLiveFeed } from '../src/index.js';
 
 let db: PiPulseDb;
 
@@ -94,7 +95,8 @@ describe('GET /api/config', () => {
       device: { hostname: 'pihole', platform: 'linux', arch: 'arm' },
       plugins: [{ id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 }],
       serverTime: expect.any(Number),
-      uptimeMs: expect.any(Number)
+      uptimeMs: expect.any(Number),
+      rules: []
     });
   });
 
@@ -150,7 +152,8 @@ describe('WebSocket /api/live', () => {
 
     expect(snapshot).toEqual({
       type: 'snapshot',
-      samples: [{ ts: 1000, metric: 'cpu_load', value: 10 }]
+      samples: [{ ts: 1000, metric: 'cpu_load', value: 10 }],
+      alerts: []
     });
     expect(await pushed).toEqual({ type: 'sample', ts: 2000, metric: 'cpu_load', value: 20 });
 
@@ -318,5 +321,38 @@ describe('WebSocket /api/live dead-client handling', () => {
     await app.close();
     expect(Date.now() - started).toBeLessThan(2000);
     raw.destroy();
+  });
+});
+
+describe('/api/live alerts', () => {
+  it('sends open alerts in the snapshot and each raise or clear as it happens', async () => {
+    const open = raiseAlert(db, {
+      ruleId: 'cpu_hot',
+      metric: 'cpu_temperature',
+      severity: 'critical',
+      message: 'CPU running hot',
+      value: 82,
+      raisedAt: 1000
+    });
+    const alertFeed = createFeed<AlertEvent>();
+    const app = buildServer(db, { live: createLiveFeed(), alertFeed });
+    const { socket, next } = await connect(app);
+
+    expect(await next()).toMatchObject({
+      type: 'snapshot',
+      alerts: [{ id: open.id, ruleId: 'cpu_hot' }]
+    });
+    alertFeed.publish({
+      type: 'cleared',
+      alert: { ...open, clearedAt: 2000, clearedBy: 'condition' }
+    });
+    expect(await next()).toEqual({
+      type: 'alert',
+      event: 'cleared',
+      alert: { ...open, clearedAt: 2000, clearedBy: 'condition' }
+    });
+
+    socket.close();
+    await app.close();
   });
 });

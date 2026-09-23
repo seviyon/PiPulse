@@ -11,7 +11,7 @@ export const RANGES = [
 
 export type RangeId = (typeof RANGES)[number]['id'];
 
-export type Route = { page: 'now' } | { page: 'history'; range: RangeId };
+export type Route = { page: 'now' } | { page: 'history'; range: RangeId } | { page: 'alerts' };
 
 const DEFAULT_RANGE: RangeId = '24h';
 
@@ -21,17 +21,20 @@ function isRange(value: string | null): value is RangeId {
 
 /**
  * Hash routes, so any view can be bookmarked and the API server needs no
- * page routes: "#/" is the live dashboard, "#/history?range=7d" history.
+ * page routes: "#/" is the live dashboard, "#/history?range=7d" history,
+ * "#/alerts" the alerts page.
  */
 export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
+  if (path === '/alerts') return { page: 'alerts' };
   if (path !== '/history') return { page: 'now' };
   const range = new URLSearchParams(query).get('range');
   return { page: 'history', range: isRange(range) ? range : DEFAULT_RANGE };
 }
 
 export function routeHash(route: Route): string {
-  return route.page === 'history' ? `#/history?range=${route.range}` : '#/';
+  if (route.page === 'history') return `#/history?range=${route.range}`;
+  return route.page === 'alerts' ? '#/alerts' : '#/';
 }
 
 /** The current route, updated on every hashchange (links, back/forward). */

@@ -12,6 +12,7 @@ import {
   type RetentionPolicy,
   type Sample
 } from '@pipulse/storage';
+import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {
@@ -33,33 +34,37 @@ export interface DeviceInfo {
   cpus?: number;
 }
 
-/**
- * A source of live samples for the /api/live WebSocket. Kept as a small
- * interface so the API never depends on the collector's scheduler directly.
- */
-export interface LiveFeed {
+/** An in-process publish/subscribe channel; the API never imports the producers directly. */
+export interface Feed<T> {
   /** Registers a listener; returns a function that removes it. */
-  subscribe(listener: (sample: Sample) => void): () => void;
+  subscribe(listener: (value: T) => void): () => void;
 }
 
-/** An in-process LiveFeed the scheduler publishes into. */
-export function createLiveFeed(): LiveFeed & { publish(sample: Sample): void } {
-  const listeners = new Set<(sample: Sample) => void>();
+/** Live samples for the /api/live WebSocket. */
+export type LiveFeed = Feed<Sample>;
+
+export function createFeed<T>(): Feed<T> & { publish(value: T): void } {
+  const listeners = new Set<(value: T) => void>();
   return {
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    publish(sample) {
+    publish(value) {
       for (const listener of listeners) {
         try {
-          listener(sample);
+          listener(value);
         } catch {
           // One broken subscriber (e.g. a socket mid-close) must not starve the others.
         }
       }
     }
   };
+}
+
+/** An in-process LiveFeed the scheduler publishes into. */
+export function createLiveFeed(): LiveFeed & { publish(sample: Sample): void } {
+  return createFeed<Sample>();
 }
 
 export interface ServerOptions {
@@ -86,6 +91,10 @@ export interface ServerOptions {
   webRoot?: string;
   /** Time since boot in ms; defaults to os.uptime(). Injectable for tests. */
   uptimeMs?: () => number;
+  /** The effective alert rules, served in /api/config for the dashboard. */
+  rules?: Rule[];
+  /** Alert raises and clears, pushed to /api/live clients. */
+  alertFeed?: Feed<AlertEvent>;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -133,6 +142,17 @@ const seriesQuerySchema = {
   additionalProperties: false
 } as const;
 
+const alertsQuerySchema = {
+  type: 'object',
+  properties: {
+    state: { type: 'string', enum: ['active', 'cleared', 'all'] },
+    from: { type: 'integer', minimum: 0 },
+    to: { type: 'integer', minimum: 0 },
+    limit: { type: 'integer', minimum: 1, maximum: 1000 }
+  },
+  additionalProperties: false
+} as const;
+
 /**
  * Builds (but does not start) the PiPulse Fastify server bound to `db`.
  * Kept separate from `server.ts`'s listen() call so tests can exercise
@@ -160,7 +180,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     device,
     plugins,
     serverTime: Date.now(),
-    uptimeMs: readUptimeMs()
+    uptimeMs: readUptimeMs(),
+    rules: options.rules ?? []
   }));
 
   app.get('/api/metrics/latest', async () => getLatest(db));
@@ -205,6 +226,27 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     }
   );
 
+  app.get<{
+    Querystring: {
+      state?: 'active' | 'cleared' | 'all';
+      from?: number;
+      to?: number;
+      limit?: number;
+    };
+  }>('/api/alerts', { schema: { querystring: alertsQuerySchema } }, async (request, reply) => {
+    const to = request.query.to ?? Date.now();
+    const from = request.query.from ?? to - 30 * 24 * 60 * 60 * 1000;
+    if (from > to) {
+      return reply.status(400).send({ error: 'from must not be after to' });
+    }
+    return listAlerts(db, {
+      state: request.query.state ?? 'all',
+      from,
+      to,
+      limit: request.query.limit ?? 100
+    });
+  });
+
   const live = options.live;
   if (live) {
     const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
@@ -232,16 +274,23 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
           }
         },
         (socket) => {
-          socket.send(JSON.stringify({ type: 'snapshot', samples: getLatest(db) }));
+          socket.send(
+            JSON.stringify({ type: 'snapshot', samples: getLatest(db), alerts: openAlerts(db) })
+          );
 
-          const unsubscribe = live.subscribe((sample) => {
-            // A client that stopped reading would otherwise queue samples forever.
+          const send = (message: object) => {
+            // A client that stopped reading would otherwise queue messages forever.
             if (socket.bufferedAmount > maxBufferedBytes) {
               socket.terminate();
               return;
             }
-            socket.send(JSON.stringify({ type: 'sample', ...sample }));
-          });
+            socket.send(JSON.stringify(message));
+          };
+          const unsubscribe = live.subscribe((sample) => send({ type: 'sample', ...sample }));
+          const unsubscribeAlerts =
+            options.alertFeed?.subscribe((event) =>
+              send({ type: 'alert', event: event.type, alert: event.alert })
+            ) ?? (() => {});
 
           let alive = true;
           socket.on('pong', () => {
@@ -259,6 +308,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
           socket.on('close', () => {
             clearInterval(heartbeat);
             unsubscribe();
+            unsubscribeAlerts();
           });
         }
       );
