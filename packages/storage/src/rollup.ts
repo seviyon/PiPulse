@@ -57,10 +57,6 @@ const levels: Level[] = [
   { resolution: '1d', source: '1m', bucketStart: localDayStart, nextBucket: nextLocalDay }
 ];
 
-/** The bucket size assumed for raw data when choosing a resolution (the fastest poll interval). */
-const RAW_STEP_MS = 5000;
-const bucketMs: Record<Resolution, number> = { raw: RAW_STEP_MS, '1m': MIN, '1h': HOUR, '1d': DAY };
-
 /** Charts stay responsive (and the Pi's reply small) under this many points. */
 const MAX_POINTS = 1500;
 
@@ -252,19 +248,65 @@ export function getSeries(
 }
 
 /**
- * The finest resolution that still covers `from` under the retention
- * policy and keeps the [from, to] window under MAX_POINTS points.
+ * Whether `metric` has more than MAX_POINTS rows at `resolution` in the
+ * window. The inner LIMIT stops the primary-key scan at MAX_POINTS + 1, so
+ * this costs at most that many index steps however large the table is.
+ */
+function tooManyPoints(
+  db: DatabaseSync,
+  metric: string,
+  from: number,
+  to: number,
+  resolution: Resolution
+): boolean {
+  const sql =
+    resolution === 'raw'
+      ? 'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? LIMIT ?)'
+      : `SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics_rollup WHERE metric = ? AND resolution = '${resolution}' AND ts BETWEEN ? AND ? LIMIT ?)`;
+  const { n } = db.prepare(sql).get(metric, from, to, MAX_POINTS + 1) as { n: number };
+  return n > MAX_POINTS;
+}
+
+/** The oldest timestamp `metric` has at any resolution, or undefined without data. */
+function oldestTs(db: DatabaseSync, metric: string): number | undefined {
+  const { ts } = db
+    .prepare(
+      `SELECT MIN(ts) AS ts FROM (
+         SELECT MIN(ts) AS ts FROM metrics WHERE metric = ?1
+         UNION ALL SELECT MIN(ts) FROM metrics_rollup WHERE metric = ?1 AND resolution = '1m'
+         UNION ALL SELECT MIN(ts) FROM metrics_rollup WHERE metric = ?1 AND resolution = '1h'
+         UNION ALL SELECT MIN(ts) FROM metrics_rollup WHERE metric = ?1 AND resolution = '1d'
+       )`
+    )
+    .get(metric) as { ts: number | null };
+  return ts ?? undefined;
+}
+
+/**
+ * The finest resolution that is complete across [from, to] and holds at
+ * most MAX_POINTS rows for `metric` there. Counting the rows actually
+ * there, rather than estimating from the span, matters on a young
+ * database: coarse levels fill in only as their buckets complete (the first
+ * hourly row after an hour), so a 7-day view shows the minutes collected so
+ * far instead of nothing. On a mature database the counts match the span.
  */
 export function chooseResolution(
+  db: DatabaseSync,
+  metric: string,
   from: number,
   to: number,
   now: number = Date.now(),
   retention: RetentionPolicy = DEFAULT_RETENTION
 ): Resolution {
-  const span = Math.max(0, to - from);
+  const oldest = oldestTs(db, metric);
   for (const resolution of ['raw', '1m', '1h'] as const) {
-    const retained = from >= now - retention[resolution];
-    if (retained && span / bucketMs[resolution] <= MAX_POINTS) return resolution;
+    // Pruning deletes rows older than the cutoff, so a level is whole in the
+    // window if the window starts after it, or if nothing this old was ever
+    // collected (a young database, where nothing has been pruned yet).
+    // Otherwise it would show only its tail.
+    const cutoff = now - retention[resolution];
+    const complete = from >= cutoff || (oldest !== undefined && oldest >= cutoff);
+    if (complete && !tooManyPoints(db, metric, from, to, resolution)) return resolution;
   }
   return '1d';
 }

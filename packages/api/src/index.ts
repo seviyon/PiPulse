@@ -198,7 +198,9 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
 
       const requested = request.query.resolution ?? 'auto';
       const resolution =
-        requested === 'auto' ? chooseResolution(from, to, now, options.retention) : requested;
+        requested === 'auto'
+          ? chooseResolution(db, request.params.id, from, to, now, options.retention)
+          : requested;
       return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
   );

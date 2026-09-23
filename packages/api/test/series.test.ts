@@ -40,15 +40,22 @@ describe('GET /api/metrics/:id/series', () => {
     });
   });
 
-  it('picks minute rollups for a day-long range', async () => {
+  it('serves every reading for a day-long range while they still fit (a young database)', async () => {
     const res = await series(`from=${now - DAY}&to=${now}`);
-    expect(res.json()).toEqual({
-      resolution: '1m',
-      points: [
-        { ts: now - 3 * MIN, avg: 3, min: 2, max: 4, count: 2 },
-        { ts: now - 2 * MIN, avg: 6, min: 6, max: 6, count: 1 }
-      ]
-    });
+    expect(res.json()).toMatchObject({ resolution: 'raw' });
+    expect(res.json().points).toHaveLength(3);
+  });
+
+  it('picks minute rollups once the raw readings in the range are too many to chart', async () => {
+    const start = now - 3 * 60 * MIN;
+    for (let ts = start; ts < now - 3 * MIN; ts += 5000) {
+      insertSample(db, { ts, metric: 'cpu_load', value: 1 });
+    }
+    runHousekeeping(db, now);
+
+    const res = await series(`from=${now - DAY}&to=${now}`);
+    expect(res.json()).toMatchObject({ resolution: '1m' });
+    expect(res.json().points.length).toBeLessThanOrEqual(180);
   });
 
   it('honours an explicit resolution', async () => {
@@ -58,8 +65,7 @@ describe('GET /api/metrics/:id/series', () => {
 
   it('defaults to the last 24 hours', async () => {
     const res = await series('');
-    expect(res.json()).toMatchObject({ resolution: '1m' });
-    expect(res.json().points).toHaveLength(2);
+    expect(res.json().points).toHaveLength(3);
   });
 
   it.each([
