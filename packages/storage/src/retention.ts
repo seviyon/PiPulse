@@ -78,8 +78,14 @@ function outOfOrder(levels: RetentionSettings): [Resolution, Resolution] | undef
   return undefined;
 }
 
+/** Names a level by its variable when the environment set it, so the operator knows what to fix. */
+function levelName(levels: RetentionSettings, resolution: Resolution): string {
+  const level = levels[resolution];
+  return level.source === 'env' ? level.variable : `${RESOLUTION_LABELS[resolution]} retention`;
+}
+
 function orderMessage(levels: RetentionSettings, [a, b]: [Resolution, Resolution]): string {
-  return `${RESOLUTION_LABELS[a]} retention (${levels[a].text}) must not be longer than ${RESOLUTION_LABELS[b]} retention (${levels[b].text})`;
+  return `${levelName(levels, a)} (${levels[a].text}) must not be longer than ${levelName(levels, b)} (${levels[b].text})`;
 }
 
 /**

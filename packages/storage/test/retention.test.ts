@@ -55,7 +55,7 @@ describe('resolveRetention', () => {
 
   it('throws when the environment alone is out of order or invalid', () => {
     expect(() => resolveRetention({ PIPULSE_RETENTION_RAW: '30d' }, {})).toThrow(
-      /raw retention \(30d\) must not be longer than 1-minute retention \(14d\)/
+      /^PIPULSE_RETENTION_RAW \(30d\) must not be longer than 1-minute retention \(14d\)$/
     );
     expect(() => resolveRetention({ PIPULSE_RETENTION_RAW: '5m' }, {})).toThrow(
       /PIPULSE_RETENTION_RAW must be a duration/

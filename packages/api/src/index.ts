@@ -7,6 +7,7 @@ import {
   getHistory,
   getLatest,
   getSeries,
+  policyOf,
   type PiPulseDb,
   type Resolution,
   type RetentionPolicy,
@@ -15,8 +16,10 @@ import {
 import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
 import { isAllowedOrigin } from './origin.js';
+import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
 export type { AuthOptions } from './auth-routes.js';
+export { longestLookBack, type SettingsOptions } from './settings-routes.js';
 
 /** What the API exposes about each collector plugin via /api/config. */
 export interface PluginInfo {
@@ -101,6 +104,8 @@ export interface ServerOptions {
   alertFeed?: Feed<AlertEvent>;
   /** Sign-in and read protection; unset = read-only with public reads. */
   auth?: AuthOptions;
+  /** Settings routes and live retention; omitted = no /api/settings. */
+  settings?: SettingsOptions;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -207,9 +212,12 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       }
 
       const requested = request.query.resolution ?? 'auto';
+      const retention = options.settings
+        ? policyOf(options.settings.getRetention())
+        : options.retention;
       const resolution =
         requested === 'auto'
-          ? chooseResolution(db, request.params.id, from, to, now, options.retention)
+          ? chooseResolution(db, request.params.id, from, to, now, retention)
           : requested;
       return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
@@ -235,6 +243,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       limit: request.query.limit ?? 100
     });
   });
+
+  if (options.settings) registerSettingsRoutes(app, db, options.settings);
 
   const live = options.live;
   if (live) {

@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { cpus } from 'node:os';
 import {
   openDb,
-  retentionFromEnv,
+  policyOf,
+  retentionSource,
   startHousekeeping,
-  type RetentionPolicy
+  type RetentionSettings
 } from '@pipulse/storage';
 import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
 import {
@@ -16,7 +17,8 @@ import {
   type AlertEvent,
   type Rule
 } from '@pipulse/alerts';
-import { buildServer, createFeed, createLiveFeed } from './index.js';
+import { readPasswordHashFile, type PasswordHash } from './auth.js';
+import { buildServer, createFeed, createLiveFeed, longestLookBack } from './index.js';
 
 const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
 
@@ -45,47 +47,72 @@ const WEB_DIR =
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
-/**
- * How long each resolution is kept (PIPULSE_RETENTION_RAW/_1M/_1H/_1D).
- * Read before touching the database, so a typo stops startup instead of
- * pruning with a policy nobody asked for.
- */
-function readRetention(): RetentionPolicy {
+function fail(error: unknown): never {
+  console.error(`[pipulse] ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+
+/** PIPULSE_ADMIN_PASSWORD_HASH_FILE; unset leaves PiPulse read-only. */
+function readPasswordHash(): PasswordHash | undefined {
+  const path = process.env['PIPULSE_ADMIN_PASSWORD_HASH_FILE'];
+  if (!path) return undefined;
   try {
-    return retentionFromEnv(process.env);
+    return readPasswordHashFile(path);
   } catch (error) {
-    console.error(`[pipulse] ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    fail(error);
+  }
+}
+const PASSWORD_HASH = readPasswordHash();
+
+/** PIPULSE_PROTECT_READS=true|false (default false). */
+function readProtectReads(): boolean {
+  const value = process.env['PIPULSE_PROTECT_READS'];
+  if (value === undefined || value === 'false') return false;
+  if (value === 'true') return true;
+  fail(`PIPULSE_PROTECT_READS must be true or false (got ${JSON.stringify(value)})`);
+}
+const PROTECT_READS = readProtectReads();
+
+const db = openDb(DB_PATH);
+
+/**
+ * Retention in force: PIPULSE_RETENTION_* over values saved from the
+ * Settings page over defaults, re-read on every housekeeping run. Resolved
+ * once here so a bad environment value stops startup.
+ */
+const getRetention = retentionSource(db, process.env, (message) =>
+  console.warn(`[pipulse] ${message}`)
+);
+function readRetention(): RetentionSettings {
+  try {
+    return getRetention();
+  } catch (error) {
+    fail(error);
   }
 }
 const RETENTION = readRetention();
 
-/**
- * Built-in alert rules merged with PIPULSE_ALERTS_FILE, if set. Read
- * before touching the database, so a bad file stops startup with one line.
- */
+/** Built-in alert rules merged with PIPULSE_ALERTS_FILE, if set; a bad file stops startup with one line. */
 function readRules(): Rule[] {
   const path = process.env['PIPULSE_ALERTS_FILE'];
   try {
     return resolveRules({
       cores: cpus().length,
       metrics: METRICS,
-      rawRetentionMs: RETENTION.raw,
+      rawRetentionMs: RETENTION.raw.ms,
       ...(path ? { file: readRulesFile(path) } : {})
     });
   } catch (error) {
-    console.error(`[pipulse] ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    fail(error);
   }
 }
 const RULES = readRules();
+const LOOK_BACK = longestLookBack(RULES);
 
-const db = openDb(DB_PATH);
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
 const app = buildServer(db, {
   live,
-  retention: RETENTION,
   device: await readDeviceInfo(),
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
@@ -96,11 +123,23 @@ const app = buildServer(db, {
     intervalMs
   })),
   rules: RULES,
-  alertFeed
+  alertFeed,
+  auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
+  settings: { getRetention, metrics: METRICS, ...(LOOK_BACK ? { rawAtLeast: LOOK_BACK } : {}) }
 });
-// Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every minute.
+// Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
+// minute, re-reading saved retention each run; compacts the file after big deletes.
 const housekeeping = startHousekeeping(db, {
-  retention: RETENTION,
+  retention: () => policyOf(getRetention()),
+  vacuum: {
+    onVacuum: (result) => {
+      console.log(
+        result.ran
+          ? `[pipulse] vacuum: ${(result.beforeBytes / 1e6).toFixed(1)} MB → ${(result.afterBytes / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(1)} s`
+          : `[pipulse] vacuum skipped: ${result.reason}`
+      );
+    }
+  },
   onError: (error) => {
     console.error('[pipulse] housekeeping failed:', error);
   }
@@ -128,7 +167,11 @@ app
   .listen({ port: PORT, host: HOST })
   .then(() => {
     const { port } = app.server.address() as AddressInfo;
-    console.log(`[pipulse] listening on http://${HOST}:${port}`);
+    console.log(
+      `[pipulse] listening on http://${HOST}:${port}` +
+        (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +
+        (PROTECT_READS ? ' (reads need sign-in)' : '')
+    );
   })
   .catch((error: unknown) => {
     console.error(error);
