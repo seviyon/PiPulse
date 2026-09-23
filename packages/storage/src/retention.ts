@@ -192,7 +192,12 @@ export function validateRetention(
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, levels };
 }
 
-/** Saves the levels the operator set (source 'saved'); defaults and environment values stay unsaved. */
+/**
+ * Makes the saved settings match `levels` exactly: levels the operator set
+ * are stored, and any other saved key (a default, or one the environment
+ * now sets or made ignorable) is removed, so nothing unpreviewed can come
+ * back into force later.
+ */
 export function saveRetention(
   db: DatabaseSync,
   levels: RetentionSettings,
@@ -200,9 +205,8 @@ export function saveRetention(
 ): void {
   const values: Record<string, unknown> = {};
   for (const resolution of RESOLUTIONS) {
-    if (levels[resolution].source === 'saved') {
-      values[settingKey(resolution)] = levels[resolution].text;
-    }
+    values[settingKey(resolution)] =
+      levels[resolution].source === 'saved' ? levels[resolution].text : undefined;
   }
   saveSettings(db, values, now);
 }

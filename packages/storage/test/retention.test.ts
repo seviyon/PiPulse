@@ -128,6 +128,17 @@ describe('saveRetention and retentionSource', () => {
     expect(getRetention().raw).toMatchObject({ ms: 7 * DAY, source: 'saved' });
   });
 
+  it('clears stale saved values the environment made ignorable, so a save takes effect', () => {
+    saveSettings(db, { 'retention.raw': '30d', 'retention.1m': '60d' });
+    const getRetention = retentionSource(db, { PIPULSE_RETENTION_1M: '14d' }, () => {});
+    expect(getRetention().raw.source).toBe('default'); // saved values ignored (out of order)
+    const check = validateRetention({ '1h': '2y' }, getRetention());
+    if (!check.ok) throw new Error('expected a valid proposal');
+    saveRetention(db, check.levels);
+    expect(getSettings(db)).toEqual({ 'retention.1h': '2y' });
+    expect(getRetention()['1h']).toMatchObject({ text: '2y', source: 'saved' });
+  });
+
   it('logs an ignored saved value once, not on every read', () => {
     saveSettings(db, { 'retention.raw': 'soon' });
     const log = vi.fn();
