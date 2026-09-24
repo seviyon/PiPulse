@@ -79,13 +79,14 @@ A rule is data, not code:
 | `boot_full`        | `boot_used`       | ≥ 90 %                                                    | 10min       | critical |
 | `load_queueing`    | `load_1`          | ≥ core count (detected at startup)                        | 15min       | warning  |
 | `cpu_busy`         | `cpu_load`        | ≥ 90 %                                                    | 15min       | warning  |
-| `swap_heavy`       | `swap_used`       | ≥ 80 %                                                    | 10min       | warning  |
+| `swap_heavy`       | `swap_io`         | ≥ 250 pages/s                                             | 10min       | warning  |
 | `swap_full`        | `swap_used`       | ≥ 95 %                                                    | 10min       | critical |
 | `not_collecting`   | `*`               | `noReadingFor: "auto"` (5 × poll interval, at least 2min) | —           | warning  |
 
 - The temperature defaults suit a Pi 5 with active cooling (the fan holds a busy Pi 5 around 55–65 °C, so 70 °C for 10 minutes means cooling isn't coping; throttling starts around 80–85 °C). They also suit the passively cooled Pi 2. The rules-file documentation includes an example for tuning them.
 - `throttled_before` clears only when a reading no longer has the since-boot bits, i.e. after a reboot.
 - There is no memory rule: `memory_used` is in MB and high use alone is normal on Linux; sustained swapping is the pressure signal and is covered.
+- `swap_heavy` was changed in Phase 5b-2 to watch `swap_io` (pages moving to and from swap, from `/proc/vmstat`) instead of swap fullness, so it no longer stays open permanently on a small, mostly-idle swap file — see `docs/superpowers/specs/2026-09-24-alert-rules-editor-design.md`.
 - A rule for a metric that isn't collected on this host (e.g. `throttled` without `vcgencmd`) is kept but never raises, and `not_collecting` ignores a metric until it has a stored reading.
 
 ## Engine

@@ -139,7 +139,7 @@ The Docker image needs host visibility to report accurate host metrics — the c
 
 PiPulse checks its alert rules every 15 seconds and shows open alerts on the dashboard: a badge on the Alerts link, a line on the affected tile, and the Alerts page (open, the last 30 days, and the rules in force). Tiles take their colours from the same rules, reacting to the current reading; alerts wait until a condition has lasted.
 
-Built-in rules: CPU temperature ≥ 70 °C for 10 min (warning) or ≥ 80 °C for 2 min (critical); throttling or under-voltage now for 1 min (critical) or since boot (warning, clears after a reboot); `/` or `/boot` ≥ 70 % (warning) or ≥ 90 % (critical) for 10 min; load above the core count, CPU ≥ 90 %, or swap ≥ 80 % (warning) / ≥ 95 % (critical), each sustained; and any metric with no reading for 5 polls (at least 2 min).
+Built-in rules: CPU temperature ≥ 70 °C for 10 min (warning) or ≥ 80 °C for 2 min (critical); throttling or under-voltage now for 1 min (critical) or since boot (warning, clears after a reboot); `/` or `/boot` ≥ 70 % (warning) or ≥ 90 % (critical) for 10 min; load above the core count, CPU ≥ 90 %, swap traffic ≥ 250 pages/s (warning, "Swapping heavily" — pages moving to and from swap, not how full it is) or swap ≥ 95 % full (critical), each sustained; and any metric with no reading for 5 polls (at least 2 min).
 
 To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries are merged by `id`: a new id adds a rule, an existing one replaces it, `"disabled": true` removes it (disabling an id that doesn't exist is an error, so a typo can't silently leave a rule on). Each rule has exactly one condition — `atLeast`, `atMost`, `bitsSet` or `noReadingFor` — plus optional `for` and `clearAfter` durations (`30s`, `5min`, `2h`; no bare `m`). `for` and `clearAfter` can't be longer than `PIPULSE_RETENTION_RAW`, since those windows are read from raw readings; `noReadingFor` has no such limit. An invalid file stops PiPulse at startup with a message naming the problem.
 
@@ -204,7 +204,7 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 4 | History & charts (statistics-page parity) | ✅ Done |
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
-| 5b-2 | Alert rules in the browser, acknowledging alerts | ⏳ Next |
+| 5b-2 | Alert rules in the browser, acknowledging alerts | 🚧 In progress |
 | 5b-3 | Notifications (webhook) |  |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
