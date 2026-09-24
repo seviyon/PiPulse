@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 5b-2 (alert rules in the browser) is implemented on branch `phase-5b-2-rules`, awaiting its exit criterion on the Pi.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 5b-2 (alert rules in the browser) is complete; 5b-3 (notifications) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -204,8 +204,8 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 4 | History & charts (statistics-page parity) | ✅ Done |
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
-| 5b-2 | Alert rules in the browser, acknowledging alerts | 🚧 In progress |
-| 5b-3 | Notifications (webhook) |  |
+| 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
+| 5b-3 | Notifications (webhook) | ⏳ Next |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 
