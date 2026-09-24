@@ -232,7 +232,19 @@ describe('<RulesSection>', () => {
     await show();
     expect(button('Edit')).toBeDefined();
     expect(button('Disable')).toBeDefined();
-    expect(root.querySelectorAll('button').length).toBeGreaterThan(0);
+    await act(() => button('Disable').click());
+    await settle();
+    const [url, init] = vi.mocked(fetch).mock.calls.find(([, i]) => i?.method === 'PUT')!;
+    expect(url).toBe('/api/alerts/rules/ghost_metric');
+    expect(JSON.parse(String(init!.body))).toEqual({
+      id: 'ghost_metric',
+      metric: 'gone',
+      atLeast: 50,
+      for: '1min',
+      severity: 'warning',
+      message: 'Busy',
+      disabled: true
+    });
     await act(() => button('Edit').click());
     expect(root.querySelector<HTMLInputElement>('#rule-value')!.value).toBe('50');
   });

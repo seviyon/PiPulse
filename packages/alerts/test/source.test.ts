@@ -269,4 +269,13 @@ describe('createRuleSource', () => {
       errors: { severity: 'severity must be warning or critical' }
     });
   });
+
+  it("create reports the parser's id error instead of RULE_ID_TAKEN when the id is missing", () => {
+    saveSettings(db, { [SAVED_RULES_KEY]: ['nonsense'] });
+    const s = source();
+    expect(s.create({ ...busy, id: undefined })).toEqual({
+      ok: false,
+      errors: { id: 'id must be lowercase snake_case' }
+    });
+  });
 });

@@ -240,7 +240,10 @@ export function createRuleSource(
     create(raw, now = Date.now()) {
       const list = readSaved(db);
       const id = idOf(raw);
-      if (below.has(id) || list.some((item) => idOf(item) === id)) {
+      // idOf answers '?' for anything without a string id (raw itself, or a
+      // corrupt non-record row already in the saved list) — that's not a
+      // real conflict, so let the parser report the id problem instead.
+      if (id !== '?' && (below.has(id) || list.some((item) => idOf(item) === id))) {
         return { ok: false, errors: { id: RULE_ID_TAKEN } };
       }
       return write(raw, now, list);

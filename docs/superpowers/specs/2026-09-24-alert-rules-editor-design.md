@@ -127,7 +127,7 @@ Vitest, in CI like every phase:
 - **Engine:** a source that changes between checks closes alerts as `rule_removed` and `rule_changed` and re-raises from stored readings with the new severity; alerts without `rule_hash` untouched; a throwing source reported and the next check still runs.
 - **Storage:** migration 6; acknowledging is idempotent and refused on a cleared alert.
 - **`swap_io`:** rate from two `/proc/vmstat` reads, `null` on the first poll and after a counter reset; the plugin contract suite.
-- **API:** rules `GET`/`PUT`/`DELETE` shapes and per-field `400`s; the raw-retention refusal; `401` without a session and `403` without a password; the `rules` and `acknowledged` WebSocket messages; `/api/config` reflecting a saved change; retention `PUT` refusing to go below a browser-added rule's look-back.
+- **API:** rules `GET`/`POST`/`PUT`/`DELETE` shapes and per-field `400`s; `POST`'s `409` for a taken id; the raw-retention refusal; `401` without a session and `403` without a password; the `rules` and `acknowledged` WebSocket messages; `/api/config` reflecting a saved change; retention `PUT` refusing to go below a browser-added rule's look-back.
 - **Web (happy-dom):** rule rows and badges; the form adding, editing and showing field errors with focus; Disable, Enable, Revert and Delete; the read-only view; the Acknowledge button and tag; the badge ignoring acknowledged alerts; tiles recolouring on a `rules` message.
 
 ## Exit criterion
