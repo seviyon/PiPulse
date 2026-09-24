@@ -361,8 +361,17 @@ export function App() {
       ) : route.page === 'alerts' ? (
         <AlertsPage
           config={config}
+          rules={rules}
           open={openAlerts}
           now={() => Date.now() + clockOffset.current}
+          session={session}
+          onSessionChange={(next) => {
+            setSession(next);
+            if (next.protectReads && !next.signedIn) setNeedSignIn(true);
+          }}
+          onAcknowledged={(alert) =>
+            setOpenAlerts((open) => applyAlertEvent(open, 'acknowledged', alert))
+          }
         />
       ) : (
         <div class="panel">
