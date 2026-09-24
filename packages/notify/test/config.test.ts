@@ -53,6 +53,7 @@ describe('parseNotifyConfig', () => {
       /notify\.json webhooks\[0\] \("a"\): unknown field "bogus"/
     );
     fails([{ id: 'Bad', url: 'http://x' }], /id must be lowercase snake_case/);
+    expect(() => parse([{ id: 'Bad', url: 'http://x' }])).toThrow(NotifyConfigError);
     fails(
       [
         { id: 'a', url: 'http://x' },
@@ -102,6 +103,7 @@ describe('readNotifyFile and urlHost', () => {
     expect(() => readNotifyFile(join(dir, 'missing.json'))).toThrow(
       /PIPULSE_NOTIFY_FILE .* could not be read: ENOENT/
     );
+    expect(() => readNotifyFile(join(dir, 'missing.json'))).toThrow(NotifyConfigError);
   });
 
   it('shows the host only', () => {
