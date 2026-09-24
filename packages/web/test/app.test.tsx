@@ -210,6 +210,19 @@ describe('<App>', () => {
     expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
   });
 
+  it('takes the rules in force from a reconnect snapshot, and keeps them when a snapshot has none', async () => {
+    render(<App />, root);
+    await eventually(() => expect(tile('CPU temperature').textContent).toContain('48.7°C'));
+
+    const hotRule = config.rules!.find((r) => r.id === 'cpu_hot')!;
+    await send({ type: 'snapshot', samples: [], alerts: [], rules: [{ ...hotRule, atLeast: 10 }] });
+    expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
+
+    // An older server's snapshot carries no rules: keep what we have.
+    await send({ type: 'snapshot', samples: [], alerts: [] });
+    expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
+  });
+
   it('says it is reconnecting when the live feed drops', async () => {
     render(<App />, root);
     await eventually(() => expect(FakeSocket.instances).toHaveLength(1));

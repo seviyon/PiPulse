@@ -153,6 +153,66 @@ describe('<RulesSection>', () => {
     });
   });
 
+  it('keeps a disabled rule disabled when it is edited', async () => {
+    entries = [entry({ disabled: true, saved: true })];
+    await show();
+    await act(() => button('Edit').click());
+    await input('rule-value', '75');
+    await act(() => button('Save rule').click());
+    await settle();
+    const [url, init] = vi.mocked(fetch).mock.calls.find(([, i]) => i?.method === 'PUT')!;
+    expect(url).toBe('/api/alerts/rules/cpu_hot');
+    expect(JSON.parse(String(init!.body))).toMatchObject({ atLeast: 75, disabled: true });
+  });
+
+  it('sends an enabled rule without disabled when it is edited', async () => {
+    await show();
+    await act(() => button('Edit').click());
+    await act(() => button('Save rule').click());
+    await settle();
+    const [, init] = vi.mocked(fetch).mock.calls.find(([, i]) => i?.method === 'PUT')!;
+    expect(JSON.parse(String(init!.body))).not.toHaveProperty('disabled');
+  });
+
+  it("shows a refused Revert's reason above the list", async () => {
+    entries = [entry({ kind: 'edited', saved: true, overrides: hot })];
+    await show();
+    answer = (_url, init) =>
+      init?.method === 'DELETE'
+        ? Response.json(
+            {
+              errors: {
+                for: 'longer than raw retention (1h); raise it on the Settings page first'
+              }
+            },
+            { status: 400 }
+          )
+        : Response.json({ rules: entries });
+    await act(() => button('Revert').click());
+    await settle();
+    const alert = root.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(
+      'longer than raw retention (1h); raise it on the Settings page first'
+    );
+    expect(alert?.closest('form')).toBeNull();
+    expect(root.querySelector('.rule-form')).toBeNull();
+  });
+
+  it('closes the form when the rule being edited disappears', async () => {
+    await show();
+    await act(() => button('Edit').click());
+    expect(root.querySelector('.rule-form')).not.toBeNull();
+    // Another tab deleted it: the next reload no longer lists it.
+    entries = [entry({ id: 'cpu_warm' })];
+    render(
+      <RulesSection plugins={plugins} rules={[]} session={signedIn} onSignedOut={() => {}} />,
+      root
+    );
+    await settle();
+    await vi.waitFor(() => expect(root.querySelector('.rule-form')).toBeNull());
+    expect(button('Add rule')).toBeDefined();
+  });
+
   it('offers "Every metric" only for a no-reading rule', async () => {
     await show();
     await act(() => button('Add rule').click());

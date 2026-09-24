@@ -82,7 +82,7 @@ export interface Config {
 }
 
 export type LiveMessage =
-  | { type: 'snapshot'; samples: Sample[]; alerts?: Alert[] }
+  | { type: 'snapshot'; samples: Sample[]; alerts?: Alert[]; rules?: Rule[] }
   | ({ type: 'sample' } & Sample)
   | { type: 'alert'; event: 'raised' | 'cleared' | 'acknowledged'; alert: Alert }
   | { type: 'rules'; rules: Rule[] };

@@ -25,8 +25,11 @@ const KIND_LABELS: Record<RuleKind, string> = {
 
 type Loaded =
   { status: 'loading' } | { status: 'error' } | { status: 'ready'; entries: RuleEntry[] };
-/** The form: `id` set while editing that rule, unset while adding one. */
-type Editing = { id?: string; draft: RuleDraft };
+/**
+ * The form: `id` set while editing that rule, unset while adding one;
+ * `disabled` when the rule being edited is off, so saving keeps it off.
+ */
+type Editing = { id?: string; disabled?: boolean; draft: RuleDraft };
 
 const path = (id: string) => `/api/alerts/rules/${encodeURIComponent(id)}`;
 
@@ -71,6 +74,16 @@ export function RulesSection({
     form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [errors]);
 
+  // The rule being edited was removed (e.g. from another tab): close its form.
+  const editingId = editing?.id;
+  useEffect(() => {
+    if (loaded.status !== 'ready' || editingId === undefined) return;
+    if (!loaded.entries.some((entry) => entry.id === editingId)) {
+      setEditing(undefined);
+      setErrors({});
+    }
+  }, [loaded, editingId]);
+
   /** Sends a form save; server field errors render under the open form. */
   const saveForm = async (id: string, body: Record<string, unknown>) => {
     setBusy(true);
@@ -106,7 +119,16 @@ export function RulesSection({
       setRowError(undefined);
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) onSignedOut();
-      else setRowError(`Couldn't update this rule: ${(error as Error).message}.`);
+      else {
+        // A refusal with reasons (e.g. Revert would restore a rule longer
+        // than raw retention) says why; anything else names the status.
+        const server =
+          error instanceof HttpError && error.status === 400
+            ? (error.body as { errors?: Record<string, string> } | undefined)?.errors
+            : undefined;
+        const reason = server ? Object.values(server).join('; ') : (error as Error).message;
+        setRowError(`Couldn't update this rule: ${reason}.`);
+      }
     } finally {
       setBusy(false);
     }
@@ -120,7 +142,8 @@ export function RulesSection({
       setErrors(result.errors);
       return;
     }
-    if (await saveForm(draft.id.trim(), result.body)) setEditing(undefined);
+    const body = editing.disabled ? { ...result.body, disabled: true } : result.body;
+    if (await saveForm(draft.id.trim(), body)) setEditing(undefined);
   };
 
   if (loaded.status === 'loading') return <p class="waiting">Loading</p>;
@@ -352,7 +375,11 @@ export function RulesSection({
                       disabled={busy}
                       onClick={() => {
                         setErrors({});
-                        setEditing({ id: entry.id, draft: draftOf(entry.written!) });
+                        setEditing({
+                          id: entry.id,
+                          draft: draftOf(entry.written!),
+                          ...(entry.disabled ? { disabled: true } : {})
+                        });
                       }}
                     >
                       Edit

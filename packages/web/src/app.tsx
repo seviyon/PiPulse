@@ -217,6 +217,8 @@ export function App() {
         if (message.type === 'snapshot') {
           setData((state) => applySnapshot(state, message.samples));
           setOpenAlerts(message.alerts ?? []);
+          // Rules changed while disconnected arrive here; older servers send none.
+          if (message.rules) setLiveRules(message.rules);
         } else if (message.type === 'alert') {
           setOpenAlerts((open) => applyAlertEvent(open, message.event, message.alert));
         } else if (message.type === 'rules') {
