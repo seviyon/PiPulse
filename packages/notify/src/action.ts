@@ -31,11 +31,8 @@ async function drain(response: Response): Promise<void> {
 
 function reasonOf(error: unknown, signal: AbortSignal): string {
   if (signal.aborted || (error instanceof Error && error.name === 'TimeoutError')) return 'timeout';
-  const cause = (error as { cause?: { code?: string; message?: string } }).cause;
-  // Undici also refuses to dial the Fetch spec's "bad port" list (e.g. 1) before ever
-  // reaching the network; from a webhook's point of view that's as unreachable as a
-  // real ECONNREFUSED, so it gets the same short reason.
-  if (cause?.code === 'ECONNREFUSED' || cause?.message === 'bad port') return 'connection refused';
+  const cause = (error as { cause?: { code?: string } }).cause;
+  if (cause?.code === 'ECONNREFUSED') return 'connection refused';
   return `network error (${cause?.code ?? 'unknown'})`;
 }
 
@@ -49,21 +46,29 @@ export function createWebhookAction(
     async deliver(payload, signal) {
       let response: Response;
       try {
+        // Built inside the try: an invalid header value (e.g. a newline) makes the
+        // Headers constructor itself throw, with that raw value in its own message.
+        const headers = new Headers(webhook.headers);
+        headers.set('content-type', 'application/json');
         response = await fetchImpl(webhook.url, {
           method: webhook.method,
-          headers: { ...webhook.headers, 'content-type': 'application/json' },
+          headers,
           body: payload,
           redirect: 'manual',
           signal
         });
       } catch (error) {
-        throw new Error(reasonOf(error, signal), { cause: error });
+        // Not `{ cause: error }`: the raw undici error can carry the URL (credentials,
+        // path, query) or a header value verbatim, and util.inspect prints it whole.
+        // eslint-disable-next-line preserve-caught-error -- raw undici errors can carry the URL and header values
+        throw new Error(reasonOf(error, signal));
       }
       try {
         await drain(response);
       } catch {
         // The status is what matters; a broken body after it doesn't change it.
       }
+      // A 2xx status counts as delivered even if the body then stalls or breaks (deliberate).
       if (response.status >= 300 && response.status < 400)
         throw new Error(`redirect (HTTP ${response.status})`);
       if (response.status < 200 || response.status >= 300)
