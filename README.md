@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha, Phase 5b-1 complete.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. Phase 5b-2 (alert rules in the browser) is next — see [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 5b-2 (alert rules in the browser) is complete; 5b-3 (notifications) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -139,7 +139,7 @@ The Docker image needs host visibility to report accurate host metrics — the c
 
 PiPulse checks its alert rules every 15 seconds and shows open alerts on the dashboard: a badge on the Alerts link, a line on the affected tile, and the Alerts page (open, the last 30 days, and the rules in force). Tiles take their colours from the same rules, reacting to the current reading; alerts wait until a condition has lasted.
 
-Built-in rules: CPU temperature ≥ 70 °C for 10 min (warning) or ≥ 80 °C for 2 min (critical); throttling or under-voltage now for 1 min (critical) or since boot (warning, clears after a reboot); `/` or `/boot` ≥ 70 % (warning) or ≥ 90 % (critical) for 10 min; load above the core count, CPU ≥ 90 %, or swap ≥ 80 % (warning) / ≥ 95 % (critical), each sustained; and any metric with no reading for 5 polls (at least 2 min).
+Built-in rules: CPU temperature ≥ 70 °C for 10 min (warning) or ≥ 80 °C for 2 min (critical); throttling or under-voltage now for 1 min (critical) or since boot (warning, clears after a reboot); `/` or `/boot` ≥ 70 % (warning) or ≥ 90 % (critical) for 10 min; load above the core count, CPU ≥ 90 %, swap traffic ≥ 250 pages/s (warning, "Swapping heavily" — pages moving to and from swap, not how full it is) or swap ≥ 95 % full (critical), each sustained; and any metric with no reading for 5 polls (at least 2 min).
 
 To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries are merged by `id`: a new id adds a rule, an existing one replaces it, `"disabled": true` removes it (disabling an id that doesn't exist is an error, so a typo can't silently leave a rule on). Each rule has exactly one condition — `atLeast`, `atMost`, `bitsSet` or `noReadingFor` — plus optional `for` and `clearAfter` durations (`30s`, `5min`, `2h`; no bare `m`). `for` and `clearAfter` can't be longer than `PIPULSE_RETENTION_RAW`, since those windows are read from raw readings; `noReadingFor` has no such limit. An invalid file stops PiPulse at startup with a message naming the problem.
 
@@ -169,7 +169,7 @@ To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries 
 
 The temperature defaults suit a Pi 5 with an active cooler (it holds a busy Pi 5 around 55–65 °C) as well as a passively cooled Pi. For a hot enclosure, raise `cpu_warm`; for a fan you want to know about early, lower it.
 
-Alerts show on the dashboard only for now. Editing rules in the browser, acknowledging alerts, and notifications (e.g. a webhook to Apprise) come with the Settings phase.
+Signed in, rules can be added, edited, disabled and reverted, and open alerts acknowledged, on the Alerts page; saved rules sit above `PIPULSE_ALERTS_FILE` and the built-ins and apply within 15 seconds, no restart needed. Notifications (e.g. a webhook to Apprise) are still to come.
 
 ## Sign-in and settings
 
@@ -191,7 +191,7 @@ PiPulse speaks plain HTTP: the password crosses the network once at sign-in. Kee
 
 ## Configuration
 
-Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention is also editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules become editable there in Phase 5b-2. Plugin selection and poll intervals are fixed in code.
+Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention is editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules are editable on the Alerts page (see [Alerts](#alerts)), signed in. Plugin selection and poll intervals are fixed in code.
 
 ## Roadmap
 
@@ -204,8 +204,8 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 4 | History & charts (statistics-page parity) | ✅ Done |
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
-| 5b-2 | Alert rules in the browser, acknowledging alerts | ⏳ Next |
-| 5b-3 | Notifications (webhook) |  |
+| 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
+| 5b-3 | Notifications (webhook) | ⏳ Next |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 

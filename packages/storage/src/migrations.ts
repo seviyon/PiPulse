@@ -164,6 +164,16 @@ const migrations: ((db: DatabaseSync) => void)[] = [
         updated_at INTEGER NOT NULL
       );
     `);
+  },
+  // 6: 5b-2. acknowledged_at marks an open alert as seen until it clears;
+  // rule_hash fingerprints the rule that raised it, so an alert whose rule
+  // was edited in the browser is closed as 'rule_changed' and re-raised
+  // under the new rule. Both NULL on alerts raised before this migration.
+  (db) => {
+    db.exec(`
+      ALTER TABLE alerts ADD COLUMN acknowledged_at INTEGER;
+      ALTER TABLE alerts ADD COLUMN rule_hash TEXT;
+    `);
   }
 ];
 

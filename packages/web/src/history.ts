@@ -9,9 +9,10 @@ export interface ChartGroup {
 
 /**
  * Metrics charted on the History page but kept off the live dashboard: the
- * load average is a trend signal (is work queueing?), not a reading to watch.
+ * load average is a trend signal (is work queueing?), and swap traffic
+ * explains a swap-use chart rather than being a reading to watch.
  */
-export const historyOnly: ReadonlySet<string> = new Set(['load_1']);
+export const historyOnly: ReadonlySet<string> = new Set(['load_1', 'swap_io']);
 
 /** Metrics drawn together in one chart (same unit, read side by side). */
 const pairs = [

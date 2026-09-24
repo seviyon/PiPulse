@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PiPulseDb } from '@pipulse/storage';
 import { EMPTY_WINDOW, evaluate, windowMs } from './evaluate.js';
 import type { MetricInfo, Rule } from './rules.js';
@@ -21,18 +22,43 @@ export const CHECK_INTERVAL_MS = 15_000;
 const key = (ruleId: string, metric: string) => `${ruleId}\u0000${metric}`;
 
 /**
+ * A fingerprint of everything that decides when a rule raises and what its
+ * alert says. An open alert whose rule no longer matches it was raised under
+ * an older version of the rule (edited in the browser) and is closed.
+ */
+export function ruleHash(rule: Rule): string {
+  const fields = [
+    rule.id,
+    rule.metric,
+    rule.atLeast ?? null,
+    rule.atMost ?? null,
+    rule.bitsSet ?? null,
+    rule.noReadingFor ?? null,
+    rule.forMs,
+    rule.clearAfterMs,
+    rule.severity,
+    rule.message
+  ];
+  return createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0, 16);
+}
+
+/**
  * Checks every rule against every metric it watches now and then every
  * `intervalMs`. Alert rows are the only state, so a restart resumes where
- * the last run stopped. At start, alerts whose rule (or rule and metric)
- * no longer exists are closed as "rule_removed". A failing rule is
- * reported and the rest still run; a throwing listener never stops checks.
- * If reading the open alerts fails (a transient SQLite error, disk error, etc.),
- * the error is reported via `onError` with no rule, and the next check still runs.
+ * the last run stopped. Rules may be a function, read on every check, so
+ * rules saved from the browser apply without a restart. Each check closes
+ * alerts whose rule or metric is no longer watched ("rule_removed") and
+ * alerts raised under an older version of their rule ("rule_changed"), then
+ * evaluates the current rules. A failing rule is reported and the rest still
+ * run; a throwing listener never stops checks. If reading the rules or the
+ * open alerts fails (a transient SQLite error, an unreadable settings file,
+ * etc.), the error is reported via `onError` with no rule, and the next
+ * check still runs.
  */
 export function startAlerts(
   db: PiPulseDb,
   options: {
-    rules: Rule[];
+    rules: Rule[] | (() => Rule[]);
     metrics: MetricInfo[];
     intervalMs?: number;
     now?: () => number;
@@ -53,15 +79,6 @@ export function startAlerts(
     }
   };
 
-  const watched = new Set(
-    options.rules.flatMap((rule) => targets(rule).map((m) => key(rule.id, m.id)))
-  );
-  for (const alert of openAlerts(db)) {
-    if (!watched.has(key(alert.ruleId, alert.metric))) {
-      emit({ type: 'cleared', alert: clearAlert(db, alert.id, now(), 'rule_removed') });
-    }
-  }
-
   let since = now();
   let lastCheck: number | undefined;
 
@@ -72,8 +89,20 @@ export function startAlerts(
       // and a long pause looks the same. Count silence afresh from here.
       if (lastCheck !== undefined && (t < lastCheck || t - lastCheck > 3 * intervalMs)) since = t;
       lastCheck = t;
-      const open = new Map(openAlerts(db).map((alert) => [key(alert.ruleId, alert.metric), alert]));
-      for (const rule of options.rules) {
+      const rules = typeof options.rules === 'function' ? options.rules() : options.rules;
+      const byRuleId = new Map(rules.map((rule) => [rule.id, rule]));
+      const open = new Map<string, Alert>();
+      for (const alert of openAlerts(db)) {
+        const rule = byRuleId.get(alert.ruleId);
+        if (!rule || !targets(rule).some((metric) => metric.id === alert.metric)) {
+          emit({ type: 'cleared', alert: clearAlert(db, alert.id, t, 'rule_removed') });
+        } else if (alert.ruleHash !== null && alert.ruleHash !== ruleHash(rule)) {
+          emit({ type: 'cleared', alert: clearAlert(db, alert.id, t, 'rule_changed') });
+        } else {
+          open.set(key(alert.ruleId, alert.metric), alert);
+        }
+      }
+      for (const rule of rules) {
         for (const metric of targets(rule)) {
           try {
             const current = open.get(key(rule.id, metric.id));
@@ -102,7 +131,8 @@ export function startAlerts(
                   severity: rule.severity,
                   message: rule.message,
                   value: decision.value,
-                  raisedAt: t
+                  raisedAt: t,
+                  ruleHash: ruleHash(rule)
                 })
               });
             } else if (decision.action === 'clear' && current !== undefined) {

@@ -197,6 +197,32 @@ describe('<App>', () => {
     expect(tile('CPU temperature').textContent).toContain('CPU running hot');
   });
 
+  it('recolours tiles on a rules message without reconnecting', async () => {
+    render(<App />, root);
+    await eventually(() => expect(tile('CPU temperature').textContent).toContain('48.7°C'));
+
+    const socketsBefore = FakeSocket.instances.length;
+    const hotRule = config.rules!.find((r) => r.id === 'cpu_hot')!;
+    await send({ type: 'rules', rules: [{ ...hotRule, atLeast: 10 }] });
+
+    expect(FakeSocket.instances.length).toBe(socketsBefore);
+    // The reading (48.7) is above the new rule's threshold (10).
+    expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
+  });
+
+  it('takes the rules in force from a reconnect snapshot, and keeps them when a snapshot has none', async () => {
+    render(<App />, root);
+    await eventually(() => expect(tile('CPU temperature').textContent).toContain('48.7°C'));
+
+    const hotRule = config.rules!.find((r) => r.id === 'cpu_hot')!;
+    await send({ type: 'snapshot', samples: [], alerts: [], rules: [{ ...hotRule, atLeast: 10 }] });
+    expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
+
+    // An older server's snapshot carries no rules: keep what we have.
+    await send({ type: 'snapshot', samples: [], alerts: [] });
+    expect(tile('CPU temperature').getAttribute('data-status')).toBe('critical');
+  });
+
   it('says it is reconnecting when the live feed drops', async () => {
     render(<App />, root);
     await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
@@ -341,6 +367,30 @@ describe('<App> alerts', () => {
     await send({ type: 'snapshot', samples: [], alerts: [openAlert(1, 'warning', 'cpu_warm')] });
     expect(link().textContent).toContain('1');
     expect(link().getAttribute('aria-label')).toBe('Alerts, 1 open, warning');
+  });
+
+  it('leaves acknowledged alerts out of the nav badge', async () => {
+    render(<App />, root);
+    await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
+    const badge = () => root.querySelector('.badge');
+
+    await send({
+      type: 'snapshot',
+      samples: [],
+      alerts: [
+        { ...openAlert(1, 'critical', 'cpu_hot'), acknowledgedAt: 5 },
+        openAlert(2, 'warning', 'cpu_warm')
+      ]
+    });
+    expect(badge()?.textContent).toContain('1');
+    expect(badge()?.getAttribute('data-severity')).toBe('warning');
+
+    await send({
+      type: 'alert',
+      event: 'acknowledged',
+      alert: { ...openAlert(2, 'warning', 'cpu_warm'), acknowledgedAt: 6 }
+    });
+    expect(root.querySelector('.badge')).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { cpuVoltagePlugin, throttledPlugin } from './vcgencmd.js';
+import { swapIoPlugin } from './swap-io.js';
 import si, { type Systeminformation } from 'systeminformation';
 import { insertSample, type PiPulseDb, type Sample } from '@pipulse/storage';
 
@@ -226,6 +227,7 @@ export const cpuFrequencyPlugin: CollectorPlugin = {
 };
 
 export { cpuVoltagePlugin, throttledPlugin };
+export { createSwapIoPlugin, swapIoPlugin, swapPages } from './swap-io.js';
 
 /** Static facts about the machine, for the dashboard header (served via /api/config). */
 export interface DeviceInfo {
@@ -264,6 +266,7 @@ export const builtinPlugins: CollectorPlugin[] = [
   throttledPlugin,
   memoryUsedPlugin,
   swapUsedPlugin,
+  swapIoPlugin,
   diskUsedPlugin,
   bootUsedPlugin,
   networkRxPlugin,

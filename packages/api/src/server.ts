@@ -11,11 +11,11 @@ import {
 } from '@pipulse/storage';
 import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
 import {
+  createRuleSource,
   readRulesFile,
-  resolveRules,
   startAlerts,
   type AlertEvent,
-  type Rule
+  type RuleSource
 } from '@pipulse/alerts';
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import {
@@ -89,28 +89,46 @@ function readRetention(): RetentionSettings {
 }
 const RETENTION = readRetention();
 
-/** Built-in alert rules merged with PIPULSE_ALERTS_FILE, if set; a bad file stops startup with one line. */
-function readRules(): Rule[] {
+/**
+ * Alert rules: built-ins, PIPULSE_ALERTS_FILE over them, and rules saved
+ * from the browser over both, re-read on every check. A bad file stops
+ * startup with one line; a bad saved rule is logged and skipped.
+ */
+function readRuleSource(): RuleSource {
   const path = process.env['PIPULSE_ALERTS_FILE'];
   try {
-    return resolveRules({
+    return createRuleSource(db, {
       cores: cpus().length,
       metrics: METRICS,
-      // Checked below instead, with a message that names where the value came from.
-      rawRetentionMs: Infinity,
+      rawRetention: () => {
+        const raw = getRetention().raw;
+        return { ms: raw.ms, text: raw.text };
+      },
+      onProblem: (message) => console.warn(`[pipulse] ${message}`),
       ...(path ? { file: readRulesFile(path) } : {})
     });
   } catch (error) {
     fail(error);
   }
 }
-const RULES = readRules();
-const LOOK_BACK = longestLookBack(RULES);
-const RAW_PROBLEM = rawRetentionProblem(RETENTION.raw, LOOK_BACK);
+const RULES = readRuleSource();
+// Only rules in force must fit the raw retention in force. The file and
+// built-in rules in force are checked here; saved rules that don't fit are
+// skipped instead (see createRuleSource), and a rule disabled from the
+// browser never runs, so it isn't checked at all.
+const BASE_LOOK_BACK = longestLookBack(
+  RULES.read().rules.filter((rule) => rule.source !== 'saved')
+);
+const RAW_PROBLEM = rawRetentionProblem(RETENTION.raw, BASE_LOOK_BACK);
 if (RAW_PROBLEM) fail(RAW_PROBLEM);
+const rulesInForce = () => RULES.read().rules;
 
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
+// buildServer runs before the alert engine starts (below), but its recheck
+// hook needs to reach the engine once it exists; held in a property assigned
+// later instead of a reassigned `let`.
+const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
   device: await readDeviceInfo(),
@@ -122,10 +140,10 @@ const app = buildServer(db, {
     unit,
     intervalMs
   })),
-  rules: RULES,
+  alertRules: { source: RULES, recheck: () => engine.alerts?.check() },
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
-  settings: { getRetention, metrics: METRICS, ...(LOOK_BACK ? { rawAtLeast: LOOK_BACK } : {}) }
+  settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) }
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
@@ -151,8 +169,8 @@ const scheduler = startScheduler(db, builtinPlugins, {
   }
 });
 // Checks every alert rule now and then every 15 s; raises and clears go to /api/live.
-const alerts = startAlerts(db, {
-  rules: RULES,
+engine.alerts = startAlerts(db, {
+  rules: rulesInForce,
   metrics: METRICS,
   onChange: alertFeed.publish,
   onError: (error, rule) => {
@@ -189,7 +207,7 @@ async function shutdown(): Promise<void> {
   }
   shuttingDown = true;
   housekeeping.stop();
-  alerts.stop();
+  engine.alerts?.stop();
   const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
   db.close();
   if (!drained) {

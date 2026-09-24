@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { insertSample, openDb, type PiPulseDb } from '@pipulse/storage';
 import {
+  acknowledgeAlert,
   clearAlert,
   latestReading,
   latestRollup,
@@ -111,7 +112,9 @@ describe('alert rows', () => {
       ...base,
       raisedAt: 1000,
       clearedAt: null,
-      clearedBy: null
+      clearedBy: null,
+      acknowledgedAt: null,
+      ruleHash: null
     });
     expect(openAlerts(db).map((a) => a.ruleId)).toEqual(['disk_full', 'cpu_hot']);
 
@@ -143,5 +146,37 @@ describe('alert rows', () => {
     expect(
       listAlerts(db, { state: 'all', from: 50_000, to: 60_000, limit: 10 }).map((a) => a.id)
     ).toEqual([old.id]);
+  });
+});
+
+describe('acknowledgeAlert', () => {
+  it('marks an open alert once and keeps the first time', () => {
+    const alert = raiseAlert(db, { ...base, raisedAt: 1000 });
+    expect(alert.acknowledgedAt).toBeNull();
+    expect(acknowledgeAlert(db, alert.id, 2000)).toMatchObject({
+      id: alert.id,
+      acknowledgedAt: 2000
+    });
+    expect(acknowledgeAlert(db, alert.id, 3000)).toMatchObject({ acknowledgedAt: 2000 });
+    expect(openAlerts(db)[0]).toMatchObject({ acknowledgedAt: 2000 });
+  });
+
+  it('refuses a cleared alert and reports an unknown one', () => {
+    const alert = raiseAlert(db, { ...base, raisedAt: 1000 });
+    clearAlert(db, alert.id, 1500, 'condition');
+    expect(acknowledgeAlert(db, alert.id, 2000)).toBe('cleared');
+    expect(acknowledgeAlert(db, 999, 2000)).toBe('not_found');
+  });
+});
+
+describe('raiseAlert', () => {
+  it('stores the fingerprint of the rule that raised it, null when not given', () => {
+    expect(raiseAlert(db, { ...base, raisedAt: 1000, ruleHash: 'abc' }).ruleHash).toBe('abc');
+    expect(raiseAlert(db, { ...base, metric: 'other', raisedAt: 1000 }).ruleHash).toBeNull();
+  });
+
+  it('can be closed as rule_changed', () => {
+    const alert = raiseAlert(db, { ...base, raisedAt: 1000 });
+    expect(clearAlert(db, alert.id, 2000, 'rule_changed').clearedBy).toBe('rule_changed');
   });
 });

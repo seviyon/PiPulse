@@ -14,11 +14,13 @@ import {
   type Sample
 } from '@pipulse/storage';
 import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
+import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './alert-routes.js';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
 export type { AuthOptions } from './auth-routes.js';
+export type { AlertRulesOptions } from './alert-routes.js';
 export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
 
 /** What the API exposes about each collector plugin via /api/config. */
@@ -106,6 +108,8 @@ export interface ServerOptions {
   auth?: AuthOptions;
   /** Settings routes and live retention; omitted = no /api/settings. */
   settings?: SettingsOptions;
+  /** Rule editing and the live rule set; when set, /api/config serves its rules in force. */
+  alertRules?: AlertRulesOptions;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -154,6 +158,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   const app = Fastify({ logger: false });
   const allowedOrigins = options.allowedOrigins ?? [];
   const auth = registerAuth(app, { ...options.auth, allowedOrigins });
+  const notices = createFeed<Notice>();
   const plugins = options.plugins ?? [];
   const device = options.device ?? {
     hostname: hostname(),
@@ -175,7 +180,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     plugins,
     serverTime: Date.now(),
     uptimeMs: readUptimeMs(),
-    rules: options.rules ?? []
+    rules: options.alertRules ? options.alertRules.source.read().rules : (options.rules ?? [])
   }));
 
   app.get('/api/metrics/latest', async () => getLatest(db));
@@ -244,6 +249,11 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     });
   });
 
+  registerAlertRoutes(app, db, {
+    ...(options.alertRules ? { rules: options.alertRules } : {}),
+    publish: notices.publish
+  });
+
   if (options.settings) registerSettingsRoutes(app, db, options.settings);
 
   const live = options.live;
@@ -276,8 +286,15 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             socket.close(4401, 'sign in required');
             return;
           }
+          // The rules in force ride along, so a client that reconnects after
+          // missing a `rules` notice isn't left colouring tiles by stale rules.
           socket.send(
-            JSON.stringify({ type: 'snapshot', samples: getLatest(db), alerts: openAlerts(db) })
+            JSON.stringify({
+              type: 'snapshot',
+              samples: getLatest(db),
+              alerts: openAlerts(db),
+              ...(options.alertRules ? { rules: options.alertRules.source.read().rules } : {})
+            })
           );
 
           const send = (message: object) => {
@@ -293,6 +310,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             options.alertFeed?.subscribe((event) =>
               send({ type: 'alert', event: event.type, alert: event.alert })
             ) ?? (() => {});
+          const unsubscribeNotices = notices.subscribe(send);
 
           let alive = true;
           socket.on('pong', () => {
@@ -311,6 +329,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             clearInterval(heartbeat);
             unsubscribe();
             unsubscribeAlerts();
+            unsubscribeNotices();
           });
         }
       );

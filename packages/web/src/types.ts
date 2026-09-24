@@ -38,7 +38,22 @@ export interface Rule {
   clearAfterMs: number;
   severity: Severity;
   message: string;
-  source: 'built-in' | 'file';
+  source: 'built-in' | 'file' | 'saved';
+}
+
+export type RuleKind = 'built-in' | 'file' | 'edited' | 'added';
+
+/** One row of the rules editor, from GET /api/alerts/rules (mirrors @pipulse/alerts). */
+export interface RuleEntry {
+  id: string;
+  kind: RuleKind;
+  disabled: boolean;
+  rule: Rule | null;
+  /** The rule in the rules-file format ("10min", 0xf as a number). */
+  written: Record<string, unknown> | null;
+  overrides: Rule | null;
+  problem: string | null;
+  saved: boolean;
 }
 
 export interface Alert {
@@ -50,7 +65,9 @@ export interface Alert {
   value: number | null;
   raisedAt: number;
   clearedAt: number | null;
-  clearedBy: 'condition' | 'rule_removed' | null;
+  clearedBy: 'condition' | 'rule_removed' | 'rule_changed' | null;
+  /** When acknowledged; absent from older servers. */
+  acknowledgedAt?: number | null;
 }
 
 export interface Config {
@@ -65,9 +82,10 @@ export interface Config {
 }
 
 export type LiveMessage =
-  | { type: 'snapshot'; samples: Sample[]; alerts?: Alert[] }
+  | { type: 'snapshot'; samples: Sample[]; alerts?: Alert[]; rules?: Rule[] }
   | ({ type: 'sample' } & Sample)
-  | { type: 'alert'; event: 'raised' | 'cleared'; alert: Alert };
+  | { type: 'alert'; event: 'raised' | 'cleared' | 'acknowledged'; alert: Alert }
+  | { type: 'rules'; rules: Rule[] };
 
 export type Resolution = 'raw' | '1m' | '1h' | '1d';
 

@@ -152,4 +152,36 @@ describe('<Tile> alerts', () => {
     expect(root.textContent).toContain('CPU running hot');
     expect(root.textContent).toMatch(/Alert since .+ \(12 min\)/);
   });
+
+  it('mutes an acknowledged alert but still names it, never by colour alone', () => {
+    const now = 1_790_000_000_000;
+    const MIN = 60_000;
+    render(
+      <Tile
+        plugin={temperature}
+        rules={[hot]}
+        alert={{
+          id: 1,
+          ruleId: 'cpu_hot',
+          metric: 'cpu_temperature',
+          severity: 'critical',
+          message: 'CPU running hot',
+          value: 82,
+          raisedAt: now - 12 * 60_000,
+          clearedAt: null,
+          clearedBy: null,
+          acknowledgedAt: now - MIN
+        }}
+        latest={{ ts: now, metric: 'cpu_temperature', value: 82 }}
+        series={[]}
+        now={now}
+        waitingSince={now}
+        windowMs={900_000}
+      />,
+      root
+    );
+    const line = root.querySelector('.alert-line')!;
+    expect(line.getAttribute('data-acknowledged')).toBe('true');
+    expect(line.textContent).toContain('acknowledged');
+  });
 });

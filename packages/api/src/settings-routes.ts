@@ -14,29 +14,21 @@ import {
   type RetentionLevel,
   type RetentionSettings
 } from '@pipulse/storage';
-import type { Rule } from '@pipulse/alerts';
-
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
+import { durationText, type Rule } from '@pipulse/alerts';
 
 export interface SettingsOptions {
   getRetention: () => RetentionSettings;
-  /** Raw retention may not be shorter than the longest alert look-back. */
-  rawAtLeast?: LookBack;
+  /**
+   * Raw retention may not be shorter than the longest look-back of the
+   * alert rules in force, read on every check (rules can change in the
+   * browser).
+   */
+  rawAtLeast?: () => LookBack | undefined;
   /** What is collected, for the size estimate. */
   metrics: { intervalMs: number }[];
   /** Free bytes on the database's disk; defaults to statfs on its directory. */
   diskFree?: () => number | undefined;
   now?: () => number;
-}
-
-/** "15min", "2h", "1d": the largest whole unit, as the rules file writes durations. */
-function durationText(ms: number): string {
-  if (ms % DAY === 0) return `${ms / DAY}d`;
-  if (ms % HOUR === 0) return `${ms / HOUR}h`;
-  if (ms % MIN === 0) return `${ms / MIN}min`;
-  return `${Math.ceil(ms / 1000)}s`;
 }
 
 /** The rule whose `for` or `clearAfter` reaches furthest back into raw readings. */
@@ -133,7 +125,7 @@ export function registerSettingsRoutes(
 
   /** Validation and preview shared by preview and save. */
   const check = (proposal: Proposal) => {
-    const result = validateRetention(proposal, options.getRetention(), options.rawAtLeast);
+    const result = validateRetention(proposal, options.getRetention(), options.rawAtLeast?.());
     if (!result.ok) return { ok: false as const, errors: result.errors };
     const policy = policyOf(result.levels);
     return {

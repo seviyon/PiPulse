@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { insertSample, openDb, type PiPulseDb } from '@pipulse/storage';
-import { openAlerts, raiseAlert, startAlerts, type AlertEvent, type Rule } from '../src/index.js';
+import {
+  acknowledgeAlert,
+  openAlerts,
+  raiseAlert,
+  startAlerts,
+  type AlertEvent,
+  type Rule
+} from '../src/index.js';
 
 const MIN = 60_000;
 const T0 = 1_790_000_000_000;
@@ -221,5 +228,88 @@ describe('startAlerts', () => {
       alert: { clearedBy: 'condition', clearedAt: now }
     });
     expect(errors).toHaveLength(1); // no new errors on recovery
+  });
+});
+
+describe('startAlerts with a rule source', () => {
+  function startWith(rules: () => Rule[], onError?: (error: unknown) => void) {
+    const engine = startAlerts(db, {
+      rules,
+      metrics,
+      intervalMs: 1e9,
+      now: () => now,
+      onChange: (event) => events.push(event),
+      ...(onError ? { onError } : {})
+    });
+    engines.push(engine);
+    return engine;
+  }
+
+  it('closes a changed rule as rule_changed and re-raises under the new rule at once', () => {
+    readings('cpu_temperature', T0 - 3 * MIN, T0, 85);
+    let rules: Rule[] = [hot];
+    const engine = startWith(() => rules);
+    const first = openAlerts(db)[0]!;
+    acknowledgeAlert(db, first.id, T0);
+
+    rules = [{ ...hot, severity: 'warning', message: 'Warm now' }];
+    engine.check();
+
+    expect(events.map((e) => [e.type, e.alert.clearedBy, e.alert.severity])).toEqual([
+      ['raised', null, 'critical'],
+      ['cleared', 'rule_changed', 'critical'],
+      ['raised', null, 'warning']
+    ]);
+    expect(openAlerts(db)).toMatchObject([{ message: 'Warm now', acknowledgedAt: null }]);
+  });
+
+  it('closes every alert of a removed * rule as rule_removed on the next check', () => {
+    readings('cpu_temperature', T0 - 30 * MIN, T0 - 20 * MIN, 50);
+    readings('disk_used', T0 - 30 * MIN, T0 - 20 * MIN, 50, 60_000);
+    let rules: Rule[] = [silent];
+    const engine = startWith(() => rules);
+    now = T0 + 10 * MIN;
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(2);
+
+    rules = [];
+    engine.check();
+    expect(openAlerts(db)).toEqual([]);
+    expect(events.filter((e) => e.type === 'cleared').map((e) => e.alert.clearedBy)).toEqual([
+      'rule_removed',
+      'rule_removed'
+    ]);
+  });
+
+  it('leaves alerts raised before rule fingerprints alone', () => {
+    readings('cpu_temperature', T0 - 3 * MIN, T0, 85);
+    const old = raiseAlert(db, {
+      ruleId: 'cpu_hot',
+      metric: 'cpu_temperature',
+      severity: 'critical',
+      message: 'CPU running hot',
+      value: 85,
+      raisedAt: T0 - MIN
+    });
+    startWith(() => [hot]);
+    expect(openAlerts(db).map((a) => a.id)).toEqual([old.id]);
+    expect(events).toEqual([]);
+  });
+
+  it('reports a rule source that throws and still runs the next check', () => {
+    readings('cpu_temperature', T0 - 3 * MIN, T0, 85);
+    let broken = true;
+    const errors: unknown[] = [];
+    const engine = startWith(
+      () => {
+        if (broken) throw new Error('settings unreadable');
+        return [hot];
+      },
+      (error) => errors.push(error)
+    );
+    expect(errors).toHaveLength(1);
+    broken = false;
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(1);
   });
 });

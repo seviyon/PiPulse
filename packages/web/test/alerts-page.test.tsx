@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { AlertsPage } from '../src/alerts-page.js';
+import { NO_SESSION } from '../src/api.js';
 import type { Alert, Config } from '../src/types.js';
 
 const NOW = 1_790_200_000_000;
@@ -51,7 +52,11 @@ beforeEach(() => {
   history = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => Response.json(history))
+    vi.fn(async (url: string) =>
+      String(url).startsWith('/api/alerts/rules')
+        ? Response.json({ rules: [] })
+        : Response.json(history)
+    )
   );
   root = document.createElement('div');
   document.body.append(root);
@@ -71,27 +76,44 @@ async function settle() {
   });
 }
 
+/** The fetch calls to the alert-history endpoint, excluding the rules editor's own fetch. */
+const historyCalls = () =>
+  vi.mocked(fetch).mock.calls.filter(([url]) => !String(url).startsWith('/api/alerts/rules'));
+
 /**
- * Waits for `fetch` to have been called `n` times, flushing Preact's
- * deferred effects (via `act`) on every poll. Unlike `settle()`, this
- * doesn't look at the DOM, so it's the right wait for a refetch that
- * deliberately keeps stale content on screen instead of blanking to
- * "Loading".
+ * Waits for the alert-history `fetch` to have been called `n` times,
+ * flushing Preact's deferred effects (via `act`) on every poll. Unlike
+ * `settle()`, this doesn't look at the DOM, so it's the right wait for a
+ * refetch that deliberately keeps stale content on screen instead of
+ * blanking to "Loading".
  */
 async function waitForFetchCalls(n: number) {
   await vi.waitFor(async () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(n);
+    expect(historyCalls().length).toBe(n);
   });
 }
 const section = (name: string) =>
   [...root.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === name)!;
 
+const page = (over: Partial<Parameters<typeof AlertsPage>[0]> = {}) => (
+  <AlertsPage
+    config={config}
+    rules={config.rules ?? []}
+    open={[]}
+    now={() => NOW}
+    session={NO_SESSION}
+    onSessionChange={() => {}}
+    onAcknowledged={() => {}}
+    {...over}
+  />
+);
+
 describe('<AlertsPage>', () => {
   it('lists open alerts with severity in words, value, since and duration, and a History link', async () => {
-    render(<AlertsPage config={config} open={[alert({})]} now={() => NOW} />, root);
+    render(page({ open: [alert({})] }), root);
     await settle();
     const open = section('Open').textContent ?? '';
     expect(open).toContain('Critical');
@@ -102,7 +124,7 @@ describe('<AlertsPage>', () => {
   });
 
   it('says so when nothing is open', async () => {
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    render(page(), root);
     await settle();
     expect(section('Open').textContent).toContain('No open alerts');
   });
@@ -118,13 +140,13 @@ describe('<AlertsPage>', () => {
         clearedBy: 'rule_removed'
       })
     ];
-    render(<AlertsPage config={config} open={[alert({ id: 4 })]} now={() => NOW} />, root);
+    render(page({ open: [alert({ id: 4 })] }), root);
     await settle();
     const recent = section('Recent').textContent ?? '';
     expect(recent).toContain('(10 min)');
     expect(recent).toContain('rule removed');
     expect(section('Recent').querySelectorAll('li')).toHaveLength(2);
-    const url = new URL(String(vi.mocked(fetch).mock.calls[0]![0]), 'http://io.lan');
+    const url = new URL(String(historyCalls()[0]![0]), 'http://io.lan');
     expect(url.pathname).toBe('/api/alerts');
     expect(url.searchParams.get('state')).toBe('cleared');
     expect(url.searchParams.get('from')).toBe(String(NOW - 30 * 24 * 60 * MIN));
@@ -132,8 +154,8 @@ describe('<AlertsPage>', () => {
   });
 
   it('says the Recent list is cut short when the server returns a full page', async () => {
-    const url = () => new URL(String(vi.mocked(fetch).mock.calls[0]![0]), 'http://io.lan');
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    const url = () => new URL(String(historyCalls()[0]![0]), 'http://io.lan');
+    render(page(), root);
     await settle();
     const limit = Number(url().searchParams.get('limit'));
     render(null, root);
@@ -146,15 +168,15 @@ describe('<AlertsPage>', () => {
         clearedBy: 'condition'
       })
     );
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    render(page(), root);
     await settle();
     expect(section('Recent').textContent).toContain(`Showing the newest ${limit}`);
   });
 
   it('refetches the history when the open alerts change', async () => {
-    render(<AlertsPage config={config} open={[alert({})]} now={() => NOW} />, root);
+    render(page({ open: [alert({})] }), root);
     await settle();
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    render(page(), root);
     await waitForFetchCalls(2);
   });
 
@@ -169,19 +191,20 @@ describe('<AlertsPage>', () => {
     let calls = 0;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
+      vi.fn(async (url: string) => {
+        if (String(url).startsWith('/api/alerts/rules')) return Response.json({ rules: [] });
         calls += 1;
         return calls === 1 ? Response.json(firstAlerts) : secondResponse;
       })
     );
 
-    render(<AlertsPage config={config} open={[alert({})]} now={() => NOW} />, root);
+    render(page({ open: [alert({})] }), root);
     await settle();
     expect(section('Recent').textContent).toContain('Stale entry');
 
     // Change the open set: this triggers a refetch (fetch call #2), which we
     // deliberately leave unresolved to inspect the screen mid-flight.
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    render(page(), root);
     await waitForFetchCalls(2);
 
     expect(root.textContent).not.toContain('Loading');
@@ -193,23 +216,79 @@ describe('<AlertsPage>', () => {
     });
   });
 
-  it('lists the effective rules with their source and where to edit them', async () => {
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
-    await settle();
-    const rules = section('Rules').textContent ?? '';
-    expect(rules).toContain('CPU temperature ≥ 80 °C for 2 min');
-    expect(rules).toContain('built-in');
-    expect(rules).toContain('file');
-    expect(rules).toContain('PIPULSE_ALERTS_FILE');
-  });
-
   it('explains a failed history load', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('boom', { status: 500 }))
     );
-    render(<AlertsPage config={config} open={[]} now={() => NOW} />, root);
+    render(page(), root);
     await settle();
     expect(section('Recent').textContent).toContain("Couldn't load");
+  });
+
+  it('acknowledges an open alert when signed in, and tags acknowledged ones', async () => {
+    const onAcknowledged = vi.fn();
+    const acked = alert({ id: 1, acknowledgedAt: NOW });
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      init?.method === 'POST'
+        ? Response.json(acked)
+        : String(url).startsWith('/api/alerts/rules')
+          ? Response.json({ rules: [] })
+          : Response.json(history)
+    );
+    render(
+      page({
+        open: [alert({ id: 1 }), alert({ id: 2, acknowledgedAt: NOW - MIN })],
+        session: { editable: true, signedIn: true, protectReads: false },
+        onAcknowledged
+      }),
+      root
+    );
+    await settle();
+    const buttons = [...section('Open').querySelectorAll('button')].filter(
+      (b) => b.textContent === 'Acknowledge'
+    );
+    expect(buttons).toHaveLength(1);
+    expect(section('Open').textContent).toContain('Acknowledged');
+    await act(() => buttons[0]!.click());
+    await vi.waitFor(() => expect(onAcknowledged).toHaveBeenCalledWith(acked));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/alerts/1/acknowledge')).toBe(
+      true
+    );
+  });
+
+  it('shows a failed acknowledge in the Open section', async () => {
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      init?.method === 'POST'
+        ? new Response('{}', { status: 500 })
+        : String(url).startsWith('/api/alerts/rules')
+          ? Response.json({ rules: [] })
+          : Response.json(history)
+    );
+    render(
+      page({
+        open: [alert({ id: 1 })],
+        session: { editable: true, signedIn: true, protectReads: false }
+      }),
+      root
+    );
+    await settle();
+    const acknowledgeButton = [...section('Open').querySelectorAll('button')].find(
+      (b) => b.textContent === 'Acknowledge'
+    )!;
+    await act(() => acknowledgeButton.click());
+    await vi.waitFor(() =>
+      expect(section('Open').querySelector('[role="alert"]')?.textContent).toContain(
+        "Couldn't acknowledge"
+      )
+    );
+    expect(section('Open').textContent).toContain('answered 500');
+  });
+
+  it('marks alerts closed because their rule changed', async () => {
+    history = [alert({ id: 5, clearedAt: NOW - MIN, clearedBy: 'rule_changed' })];
+    render(page(), root);
+    await settle();
+    expect(section('Recent').textContent).toContain('rule changed');
   });
 });

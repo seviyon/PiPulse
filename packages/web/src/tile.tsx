@@ -92,9 +92,14 @@ export function Tile({
         </p>
         {stale && <p class="note">No update since {formatAge(now - latest.ts)}</p>}
         {alert && (
-          <p class="note alert-line" data-severity={alert.severity}>
+          <p
+            class="note alert-line"
+            data-severity={alert.severity}
+            data-acknowledged={alert.acknowledgedAt ? 'true' : undefined}
+          >
             <StatusIcon level={alert.severity} />
             Alert since {formatTime(alert.raisedAt)} ({formatUptime(now - alert.raisedAt)})
+            {alert.acknowledgedAt ? ' · acknowledged' : ''}
           </p>
         )}
       </div>
