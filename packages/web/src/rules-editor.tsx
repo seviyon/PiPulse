@@ -32,6 +32,11 @@ type Loaded =
 type Editing = { id?: string; disabled?: boolean; draft: RuleDraft };
 
 const path = (id: string) => `/api/alerts/rules/${encodeURIComponent(id)}`;
+const ADD_PATH = '/api/alerts/rules';
+
+/** A saved entry with nothing but id/disabled: nothing for the form to prefill or toggle. */
+const bareWritten = (written: Record<string, unknown> | null): boolean =>
+  written == null || Object.keys(written).every((key) => key === 'id' || key === 'disabled');
 
 /**
  * The rules in force and how they came to be, with Edit, Disable/Enable,
@@ -84,17 +89,26 @@ export function RulesSection({
     }
   }, [loaded, editingId]);
 
-  /** Sends a form save; server field errors render under the open form. */
-  const saveForm = async (id: string, body: Record<string, unknown>) => {
+  /**
+   * Sends a form save: PUT to edit an existing rule, POST to add a new one
+   * (so Add can't silently overwrite an id already in use). Server field
+   * errors render under the open form; a taken id comes back as 409, treated
+   * the same as 400.
+   */
+  const saveForm = async (id: string, body: Record<string, unknown>, method: 'PUT' | 'POST') => {
     setBusy(true);
     try {
-      const result = await sendJson<{ rules: RuleEntry[] }>('PUT', path(id), body);
+      const result = await sendJson<{ rules: RuleEntry[] }>(
+        method,
+        method === 'POST' ? ADD_PATH : path(id),
+        body
+      );
       setLoaded({ status: 'ready', entries: result.rules });
       setErrors({});
       return true;
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) onSignedOut();
-      else if (error instanceof HttpError && error.status === 400) {
+      else if (error instanceof HttpError && (error.status === 400 || error.status === 409)) {
         const server = (error.body as { errors?: Record<string, string> } | undefined)?.errors;
         setErrors(server ? formErrors(server) : { form: 'The PiPulse server refused this rule.' });
       } else {
@@ -143,7 +157,16 @@ export function RulesSection({
       return;
     }
     const body = editing.disabled ? { ...result.body, disabled: true } : result.body;
-    if (await saveForm(draft.id.trim(), body)) setEditing(undefined);
+    if (editing.id) {
+      if (await saveForm(editing.id, body, 'PUT')) setEditing(undefined);
+      return;
+    }
+    const id = draft.id.trim();
+    if (loaded.status === 'ready' && loaded.entries.some((e) => e.id === id)) {
+      setErrors({ id: 'A rule with this id already exists; edit it instead.' });
+      return;
+    }
+    if (await saveForm(id, body, 'POST')) setEditing(undefined);
   };
 
   if (loaded.status === 'loading') return <p class="waiting">Loading</p>;
@@ -368,7 +391,7 @@ export function RulesSection({
               )}
               {canEdit && (
                 <span class="rule-actions">
-                  {entry.written && entry.rule && (
+                  {!bareWritten(entry.written) && (
                     <button
                       type="button"
                       class="link-button"
@@ -385,7 +408,7 @@ export function RulesSection({
                       Edit
                     </button>
                   )}
-                  {entry.rule && (
+                  {(!bareWritten(entry.written) || entry.rule) && (
                     <button
                       type="button"
                       class="link-button"

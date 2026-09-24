@@ -137,7 +137,7 @@ describe('<RulesSection>', () => {
     await input('rule-value', '50');
     await input('rule-message', 'Busy');
     answer = (_url, init) =>
-      init?.method === 'PUT'
+      init?.method === 'POST'
         ? Response.json({ errors: { for: 'longer than raw retention (2d)' } }, { status: 400 })
         : Response.json({ rules: entries });
     await act(() => button('Save rule').click());
@@ -145,12 +145,115 @@ describe('<RulesSection>', () => {
     const error = root.querySelector('#rule-for-error');
     expect(error?.textContent).toContain('longer than raw retention');
     expect(document.activeElement?.id).toBe('rule-for');
-    const [, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+    const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+    expect(url).toBe('/api/alerts/rules');
+    expect(init!.method).toBe('POST');
     expect(JSON.parse(String(init!.body))).toMatchObject({
       id: 'test_busy',
       metric: 'cpu_load',
       atLeast: 50
     });
+  });
+
+  it('sends Add as POST and Edit as PUT', async () => {
+    await show();
+    await act(() => button('Add rule').click());
+    await input('rule-id', 'new_rule');
+    await input('rule-metric', 'cpu_load');
+    await input('rule-value', '50');
+    await input('rule-message', 'Busy');
+    await act(() => button('Save rule').click());
+    await settle();
+    expect(calls().at(-1)).toEqual(['POST', '/api/alerts/rules']);
+
+    render(null, root);
+    await show();
+    await act(() => button('Edit').click());
+    await act(() => button('Save rule').click());
+    await settle();
+    expect(calls().at(-1)).toEqual(['PUT', '/api/alerts/rules/cpu_hot']);
+  });
+
+  it('refuses to add an id already in the list, without sending a request', async () => {
+    entries = [entry({}), entry({ id: 'test_busy', kind: 'added', saved: true })];
+    await show();
+    await act(() => button('Add rule').click());
+    await input('rule-id', 'test_busy');
+    await input('rule-metric', 'cpu_load');
+    await input('rule-value', '50');
+    await input('rule-message', 'Busy');
+    const before = vi.mocked(fetch).mock.calls.length;
+    await act(() => button('Save rule').click());
+    const error = root.querySelector('#rule-id-error');
+    expect(error?.textContent).toContain('already exists');
+    expect(document.activeElement?.id).toBe('rule-id');
+    expect(vi.mocked(fetch).mock.calls.length).toBe(before);
+  });
+
+  it('maps a 409 from the server onto the Id field', async () => {
+    await show();
+    await act(() => button('Add rule').click());
+    await input('rule-id', 'test_busy');
+    await input('rule-metric', 'cpu_load');
+    await input('rule-value', '50');
+    await input('rule-message', 'Busy');
+    answer = (_url, init) =>
+      init?.method === 'POST'
+        ? Response.json(
+            { errors: { id: 'a rule with this id already exists; edit it instead' } },
+            { status: 409 }
+          )
+        : Response.json({ rules: entries });
+    await act(() => button('Save rule').click());
+    await settle();
+    const error = root.querySelector('#rule-id-error');
+    expect(error?.textContent).toContain('already exists');
+    expect(document.activeElement?.id).toBe('rule-id');
+  });
+
+  it('shows Edit and Disable for an added rule that is not in force, prefilled from written', async () => {
+    entries = [
+      entry({
+        id: 'ghost_metric',
+        kind: 'added',
+        rule: null,
+        problem: 'unknown metric "gone"',
+        saved: true,
+        written: {
+          id: 'ghost_metric',
+          metric: 'gone',
+          atLeast: 50,
+          for: '1min',
+          severity: 'warning',
+          message: 'Busy'
+        }
+      })
+    ];
+    await show();
+    expect(button('Edit')).toBeDefined();
+    expect(button('Disable')).toBeDefined();
+    expect(root.querySelectorAll('button').length).toBeGreaterThan(0);
+    await act(() => button('Edit').click());
+    expect(root.querySelector<HTMLInputElement>('#rule-value')!.value).toBe('50');
+  });
+
+  it('offers only Delete for an orphaned bare disable', async () => {
+    entries = [
+      entry({
+        id: 'gone_rule',
+        kind: 'added',
+        rule: null,
+        problem: 'no built-in or file rule "gone_rule" to disable',
+        saved: true,
+        written: { id: 'gone_rule', disabled: true }
+      })
+    ];
+    await show();
+    const buttons = [...root.querySelectorAll('button')].map((b) => b.textContent);
+    expect(buttons).toContain('Delete');
+    expect(buttons).not.toContain('Edit');
+    expect(buttons).not.toContain('Disable');
+    expect(buttons).not.toContain('Enable');
   });
 
   it('keeps a disabled rule disabled when it is edited', async () => {
