@@ -61,6 +61,8 @@ const put = (id: string, payload: object, headers: Record<string, string> = { co
   app.inject({ method: 'PUT', url: `/api/alerts/rules/${id}`, headers, payload });
 const del = (id: string) =>
   app.inject({ method: 'DELETE', url: `/api/alerts/rules/${id}`, headers: { cookie } });
+const post = (payload: object, headers: Record<string, string> = { cookie }) =>
+  app.inject({ method: 'POST', url: '/api/alerts/rules', headers, payload });
 const configRules = async () =>
   ((await app.inject({ method: 'GET', url: '/api/config' })).json().rules as { id: string }[]).map(
     (r) => r.id
@@ -159,6 +161,45 @@ describe('rule routes', () => {
     const res = await put('test_busy', busy);
     expect(res.statusCode).toBe(200);
     expect(await configRules()).toContain('test_busy');
+  });
+
+  it('adds a new rule via POST, in force at once, and rechecks', async () => {
+    const res = await post({ ...busy, id: 'test_busy' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().rules.find((e: { id: string }) => e.id === 'test_busy')).toMatchObject({
+      kind: 'added'
+    });
+    expect(await configRules()).toContain('test_busy');
+    expect(recheck).toHaveBeenCalledOnce();
+  });
+
+  it('refuses POST with a taken id, leaving the built-in unchanged', async () => {
+    recheck.mockClear();
+    const res = await post({ ...busy, id: 'cpu_hot', atLeast: 60 });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      errors: { id: 'a rule with this id already exists; edit it instead' }
+    });
+    const config = await app.inject({ method: 'GET', url: '/api/config' });
+    expect(
+      (config.json().rules as { id: string; atLeast: number }[]).find((r) => r.id === 'cpu_hot')
+    ).toMatchObject({ atLeast: 80 });
+    expect(recheck).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for an unknown field on POST', async () => {
+    const res = await post({ ...busy, id: 'test_busy', bogus: 1 });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ errors: { bogus: 'unknown field "bogus"' } });
+  });
+
+  it('needs a session for POST', async () => {
+    expect((await post({ ...busy, id: 'test_busy' }, {})).statusCode).toBe(401);
+  });
+
+  it('answers 400 for a missing or badly formatted id on POST', async () => {
+    expect((await post({ ...busy })).statusCode).toBe(400);
+    expect((await post({ ...busy, id: 'Bad' })).statusCode).toBe(400);
   });
 
   it('needs a session, and a password to be configured', async () => {

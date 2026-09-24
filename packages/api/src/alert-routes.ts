@@ -1,6 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { PiPulseDb } from '@pipulse/storage';
-import { acknowledgeAlert, type Alert, type Rule, type RuleSource } from '@pipulse/alerts';
+import {
+  acknowledgeAlert,
+  RULE_ID_TAKEN,
+  type Alert,
+  type Rule,
+  type RuleSource
+} from '@pipulse/alerts';
 
 export interface AlertRulesOptions {
   /** The rule layers; saving and removing go through it. */
@@ -69,6 +75,23 @@ export function registerAlertRoutes(
   };
 
   app.get('/api/alerts/rules', async () => ({ rules: rules.source.read().entries }));
+
+  app.post<{ Body: Record<string, unknown> }>(
+    '/api/alerts/rules',
+    { bodyLimit: RULE_BODY_LIMIT, schema: { body: { type: 'object' } } },
+    async (request, reply) => {
+      const id = request.body['id'];
+      if (typeof id !== 'string' || !RULE_ID.test(id)) {
+        return reply.status(400).send({ errors: { id: 'id must be lowercase snake_case' } });
+      }
+      const result = rules.source.create(request.body, now());
+      if (!result.ok) {
+        const status = result.errors['id'] === RULE_ID_TAKEN ? 409 : 400;
+        return reply.status(status).send({ errors: result.errors });
+      }
+      return changed();
+    }
+  );
 
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
     '/api/alerts/rules/:id',

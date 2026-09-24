@@ -42,6 +42,8 @@ export interface RuleSet {
 }
 
 export type SaveResult = { ok: true } | { ok: false; errors: Record<string, string> };
+/** `create`'s error when the id is already a built-in, file or saved rule. */
+export const RULE_ID_TAKEN = 'a rule with this id already exists; edit it instead';
 /**
  * `not_saved`: nothing is saved for that id. `errors`: refused, because
  * removing the entry would put the rule below into force with a look-back
@@ -54,6 +56,8 @@ type Retention = { ms: number; text: string };
 export interface RuleSource {
   read(): RuleSet;
   save(raw: unknown, now?: number): SaveResult;
+  /** Like save, but refuses (RULE_ID_TAKEN) an id already used by any layer, so Add can't overwrite. */
+  create(raw: unknown, now?: number): SaveResult;
   remove(id: string, now?: number): RemoveResult;
 }
 
@@ -206,24 +210,40 @@ export function createRuleSource(
     return { rules, entries };
   };
 
+  /**
+   * Validates `raw` and writes it into the saved list read as `list` (so a
+   * caller can check that same list for an id conflict first, in the one
+   * synchronous call, before anything is written).
+   */
+  const write = (raw: unknown, now: number, list: unknown[]): SaveResult => {
+    let entry: Entry;
+    try {
+      entry = check(raw, retentionOnce());
+    } catch (error) {
+      if (!(error instanceof AlertRulesError)) throw error;
+      return { ok: false, errors: { [error.field ?? 'rule']: error.detail ?? error.message } };
+    }
+    const at = list.findIndex((item) => idOf(item) === entry.id);
+    if (at >= 0) list[at] = raw;
+    else if (list.length >= MAX_SAVED_RULES) {
+      return { ok: false, errors: { id: `at most ${MAX_SAVED_RULES} rules can be saved` } };
+    } else list.push(raw);
+    saveSettings(db, { [SAVED_RULES_KEY]: list }, now);
+    return { ok: true };
+  };
+
   return {
     read,
     save(raw, now = Date.now()) {
-      let entry: Entry;
-      try {
-        entry = check(raw, retentionOnce());
-      } catch (error) {
-        if (!(error instanceof AlertRulesError)) throw error;
-        return { ok: false, errors: { [error.field ?? 'rule']: error.detail ?? error.message } };
-      }
+      return write(raw, now, readSaved(db));
+    },
+    create(raw, now = Date.now()) {
       const list = readSaved(db);
-      const at = list.findIndex((item) => idOf(item) === entry.id);
-      if (at >= 0) list[at] = raw;
-      else if (list.length >= MAX_SAVED_RULES) {
-        return { ok: false, errors: { id: `at most ${MAX_SAVED_RULES} rules can be saved` } };
-      } else list.push(raw);
-      saveSettings(db, { [SAVED_RULES_KEY]: list }, now);
-      return { ok: true };
+      const id = idOf(raw);
+      if (below.has(id) || list.some((item) => idOf(item) === id)) {
+        return { ok: false, errors: { id: RULE_ID_TAKEN } };
+      }
+      return write(raw, now, list);
     },
     remove(id, now = Date.now()) {
       const list = readSaved(db);

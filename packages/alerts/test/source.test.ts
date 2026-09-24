@@ -243,4 +243,30 @@ describe('createRuleSource', () => {
   it('still refuses a bad rules file at creation', () => {
     expect(() => source({ rules: [{ id: 'x' }] })).toThrow(AlertRulesError);
   });
+
+  it('create refuses a built-in, file or added id, and validates like save', () => {
+    const s = source({ rules: [{ ...busy, id: 'from_file' }] });
+    const taken = {
+      ok: false,
+      errors: { id: 'a rule with this id already exists; edit it instead' }
+    };
+    expect(s.create({ ...busy, id: 'cpu_hot' })).toEqual(taken);
+    expect(s.create({ ...busy, id: 'from_file' })).toEqual(taken);
+    expect(getSettings(db)[SAVED_RULES_KEY]).toBeUndefined();
+
+    expect(s.save(busy)).toEqual({ ok: true }); // adds test_busy
+    expect(s.create({ ...busy, id: 'test_busy', atLeast: 60 })).toEqual(taken);
+    expect(s.read().rules.find((r) => r.id === 'test_busy')).toMatchObject({ atLeast: 50 });
+
+    expect(s.create({ ...busy, id: 'new_rule' })).toEqual({ ok: true });
+    expect(s.read().entries.find((e) => e.id === 'new_rule')).toMatchObject({
+      kind: 'added',
+      saved: true
+    });
+
+    expect(s.create({ ...busy, id: 'bad_severity', severity: 'loud' })).toEqual({
+      ok: false,
+      errors: { severity: 'severity must be warning or critical' }
+    });
+  });
 });
