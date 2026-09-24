@@ -257,6 +257,34 @@ describe('<AlertsPage>', () => {
     );
   });
 
+  it('shows a failed acknowledge in the Open section', async () => {
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      init?.method === 'POST'
+        ? new Response('{}', { status: 500 })
+        : String(url).startsWith('/api/alerts/rules')
+          ? Response.json({ rules: [] })
+          : Response.json(history)
+    );
+    render(
+      page({
+        open: [alert({ id: 1 })],
+        session: { editable: true, signedIn: true, protectReads: false }
+      }),
+      root
+    );
+    await settle();
+    const acknowledgeButton = [...section('Open').querySelectorAll('button')].find(
+      (b) => b.textContent === 'Acknowledge'
+    )!;
+    await act(() => acknowledgeButton.click());
+    await vi.waitFor(() =>
+      expect(section('Open').querySelector('[role="alert"]')?.textContent).toContain(
+        "Couldn't acknowledge"
+      )
+    );
+    expect(section('Open').textContent).toContain('answered 500');
+  });
+
   it('marks alerts closed because their rule changed', async () => {
     history = [alert({ id: 5, clearedAt: NOW - MIN, clearedBy: 'rule_changed' })];
     render(page(), root);

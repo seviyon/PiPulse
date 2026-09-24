@@ -93,14 +93,20 @@ export function AlertsPage({
   onAcknowledged
 }: AlertsPageProps) {
   const [recent, setRecent] = useState<Recent>({ status: 'loading' });
+  /** A failed acknowledge (not a 401): shown in the Open section. */
+  const [ackError, setAckError] = useState<string>();
   const openKey = open.map((alert) => alert.id).join(',');
   const canEdit = session.editable && session.signedIn;
   const signedOut = () => onSessionChange({ ...session, signedIn: false });
   const acknowledge = (alert: Alert) => {
     sendJson<Alert>('POST', `/api/alerts/${alert.id}/acknowledge`).then(
-      onAcknowledged,
+      (acked) => {
+        setAckError(undefined);
+        onAcknowledged(acked);
+      },
       (error: unknown) => {
         if (error instanceof HttpError && error.status === 401) signedOut();
+        else setAckError(`Couldn't acknowledge: ${(error as Error).message}.`);
       }
     );
   };
@@ -133,6 +139,11 @@ export function AlertsPage({
     <div class="alerts-page">
       <section aria-labelledby="alerts-open">
         <h2 id="alerts-open">Open</h2>
+        {ackError && (
+          <p class="form-error" role="alert">
+            {ackError}
+          </p>
+        )}
         {sorted.length === 0 ? (
           <p class="waiting">No open alerts</p>
         ) : (

@@ -50,6 +50,8 @@ export function RulesSection({
   const [loaded, setLoaded] = useState<Loaded>({ status: 'loading' });
   const [editing, setEditing] = useState<Editing>();
   const [errors, setErrors] = useState<FormErrors>({});
+  /** A failed Disable/Enable/Revert/Delete: shown above the list, not inside any form. */
+  const [rowError, setRowError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   const canEdit = session.editable && session.signedIn;
@@ -69,11 +71,11 @@ export function RulesSection({
     form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [errors]);
 
-  /** Sends one change; true when it was saved. */
-  const send = async (method: 'PUT' | 'DELETE', id: string, body?: Record<string, unknown>) => {
+  /** Sends a form save; server field errors render under the open form. */
+  const saveForm = async (id: string, body: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const result = await sendJson<{ rules: RuleEntry[] }>(method, path(id), body);
+      const result = await sendJson<{ rules: RuleEntry[] }>('PUT', path(id), body);
       setLoaded({ status: 'ready', entries: result.rules });
       setErrors({});
       return true;
@@ -91,6 +93,25 @@ export function RulesSection({
     }
   };
 
+  /**
+   * Sends a Disable/Enable/Revert/Delete: no form is open for these (or a
+   * different rule's form might be), so a failure shows above the list
+   * instead of inside anyone's form.
+   */
+  const sendRow = async (method: 'PUT' | 'DELETE', id: string, body?: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const result = await sendJson<{ rules: RuleEntry[] }>(method, path(id), body);
+      setLoaded({ status: 'ready', entries: result.rules });
+      setRowError(undefined);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) onSignedOut();
+      else setRowError(`Couldn't update this rule: ${(error as Error).message}.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const save = async () => {
     if (!editing) return;
     const draft = editing.id ? { ...editing.draft, id: editing.id } : editing.draft;
@@ -99,7 +120,7 @@ export function RulesSection({
       setErrors(result.errors);
       return;
     }
-    if (await send('PUT', draft.id.trim(), result.body)) setEditing(undefined);
+    if (await saveForm(draft.id.trim(), result.body)) setEditing(undefined);
   };
 
   if (loaded.status === 'loading') return <p class="waiting">Loading</p>;
@@ -290,6 +311,11 @@ export function RulesSection({
         </p>
       )}
       {editing && !editing.id && ruleForm}
+      {rowError && (
+        <p class="form-error" role="alert">
+          {rowError}
+        </p>
+      )}
       <ul class="rule-list">
         {loaded.entries.map((entry) => {
           const toggle = toggleRequest(entry);
@@ -299,6 +325,7 @@ export function RulesSection({
               data-severity={entry.rule?.severity}
               data-disabled={entry.disabled ? 'true' : undefined}
             >
+              {entry.rule && <span class="alert-message">{entry.rule.message}</span>}
               <span>{entry.rule ? describeRule(entry.rule, plugins) : entry.id}</span>
               {entry.rule && (
                 <span class="alert-severity">
@@ -337,7 +364,7 @@ export function RulesSection({
                       class="link-button"
                       disabled={busy}
                       onClick={() =>
-                        void send(
+                        void sendRow(
                           toggle.method,
                           entry.id,
                           toggle.method === 'PUT' ? toggle.body : undefined
@@ -352,7 +379,7 @@ export function RulesSection({
                       type="button"
                       class="link-button"
                       disabled={busy}
-                      onClick={() => void send('DELETE', entry.id)}
+                      onClick={() => void sendRow('DELETE', entry.id)}
                     >
                       Revert
                     </button>
@@ -362,7 +389,7 @@ export function RulesSection({
                       type="button"
                       class="link-button"
                       disabled={busy}
-                      onClick={() => void send('DELETE', entry.id)}
+                      onClick={() => void sendRow('DELETE', entry.id)}
                     >
                       Delete
                     </button>

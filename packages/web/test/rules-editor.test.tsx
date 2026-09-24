@@ -92,9 +92,21 @@ describe('<RulesSection>', () => {
       entry({ id: 'x', kind: 'added', rule: null, problem: 'unknown metric "gone"', saved: true })
     ];
     await show();
+    expect(root.textContent).toContain('CPU running hot');
     expect(root.textContent).toContain('CPU temperature ≥ 80 °C for 2 min');
     expect(root.textContent).toContain('Built-in');
     expect(root.textContent).toContain('Not in force: unknown metric "gone"');
+  });
+
+  it('shows a row action failure above the list, not inside any form', async () => {
+    await show();
+    answer = (_url, init) =>
+      init?.method ? new Response('{}', { status: 500 }) : Response.json({ rules: entries });
+    await act(() => button('Disable').click());
+    await settle();
+    const alert = root.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain('500');
+    expect(alert?.closest('form')).toBeNull();
   });
 
   it('is read-only when signed out, pointing at sign-in', async () => {
