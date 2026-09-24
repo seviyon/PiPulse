@@ -57,7 +57,12 @@ export function registerAlertRoutes(
   if (!rules) return;
 
   const changed = () => {
-    rules.recheck?.();
+    // The change is saved either way; the engine logs its own failures.
+    try {
+      rules.recheck?.();
+    } catch {
+      // Nothing to report here.
+    }
     const { rules: inForce, entries } = rules.source.read();
     options.publish({ type: 'rules', rules: inForce });
     return { rules: entries };
@@ -83,9 +88,11 @@ export function registerAlertRoutes(
   );
 
   app.delete<{ Params: { id: string } }>('/api/alerts/rules/:id', async (request, reply) => {
-    if (!rules.source.remove(request.params.id, now())) {
+    const result = rules.source.remove(request.params.id, now());
+    if (result === 'not_saved') {
       return reply.status(404).send({ error: 'nothing is saved for this rule' });
     }
+    if (result !== 'removed') return reply.status(400).send({ errors: result.errors });
     return changed();
   });
 }

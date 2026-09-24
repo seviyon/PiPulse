@@ -114,6 +114,53 @@ describe('rule routes', () => {
     expect((await del('cpu_busy')).statusCode).toBe(404);
   });
 
+  it('refuses a revert that would put a rule longer than raw retention in force', async () => {
+    let raw = { ms: 2 * DAY, text: '2d' };
+    const fileSource = createRuleSource(db, {
+      cores: 4,
+      metrics,
+      rawRetention: () => raw,
+      file: {
+        name: 'alerts.json',
+        text: JSON.stringify({ rules: [{ ...busy, id: 'long_for', for: '2h' }] })
+      }
+    });
+    const server = buildServer(db, {
+      auth: { passwordHash, failureDelayMs: 0 },
+      alertRules: { source: fileSource, recheck }
+    });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/api/login',
+      payload: { password: 'secret' }
+    });
+    const headers = { cookie: String(login.headers['set-cookie']).split(';')[0]! };
+    const url = '/api/alerts/rules/long_for';
+    expect(
+      (await server.inject({ method: 'PUT', url, headers, payload: { disabled: true } })).statusCode
+    ).toBe(200);
+    raw = { ms: 3_600_000, text: '1h' };
+    recheck.mockClear();
+
+    const refused = await server.inject({ method: 'DELETE', url, headers });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toEqual({
+      errors: { for: 'longer than raw retention (1h); raise it on the Settings page first' }
+    });
+    expect(recheck).not.toHaveBeenCalled();
+    expect(fileSource.read().rules.map((r) => r.id)).not.toContain('long_for');
+    await server.close();
+  });
+
+  it('still answers a saved change when the recheck throws', async () => {
+    recheck.mockImplementation(() => {
+      throw new Error('engine broke');
+    });
+    const res = await put('test_busy', busy);
+    expect(res.statusCode).toBe(200);
+    expect(await configRules()).toContain('test_busy');
+  });
+
   it('needs a session, and a password to be configured', async () => {
     expect((await put('test_busy', busy, {})).statusCode).toBe(401);
     const readOnly = buildServer(db, { alertRules: { source } });
@@ -186,6 +233,8 @@ describe('/api/live notices', () => {
     await vi.waitFor(() =>
       expect(messages.map((m) => m.type)).toEqual(['snapshot', 'rules', 'alert'])
     );
+    expect(messages[0]!.rules!.map((r) => r.id)).toContain('cpu_busy');
+    expect(messages[0]!.rules!.map((r) => r.id)).not.toContain('test_busy');
     expect(messages[1]!.rules!.map((r) => r.id)).toContain('test_busy');
     expect(messages[2]!.event).toBe('acknowledged');
     socket.close();

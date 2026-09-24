@@ -112,12 +112,12 @@ function readRuleSource(): RuleSource {
   }
 }
 const RULES = readRuleSource();
-// The file and built-ins must fit the raw retention in force; saved rules
-// that don't are skipped instead (see createRuleSource).
+// Only rules in force must fit the raw retention in force. The file and
+// built-in rules in force are checked here; saved rules that don't fit are
+// skipped instead (see createRuleSource), and a rule disabled from the
+// browser never runs, so it isn't checked at all.
 const BASE_LOOK_BACK = longestLookBack(
-  RULES.read().entries.flatMap((entry) =>
-    entry.saved ? (entry.overrides ?? []) : (entry.rule ?? [])
-  )
+  RULES.read().rules.filter((rule) => rule.source !== 'saved')
 );
 const RAW_PROBLEM = rawRetentionProblem(RETENTION.raw, BASE_LOOK_BACK);
 if (RAW_PROBLEM) fail(RAW_PROBLEM);

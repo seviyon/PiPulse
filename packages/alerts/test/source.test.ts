@@ -86,9 +86,9 @@ describe('createRuleSource', () => {
       written: { id: 'cpu_busy', atLeast: 90 }
     });
 
-    expect(s.remove('cpu_hot')).toBe(true);
-    expect(s.remove('cpu_busy')).toBe(true);
-    expect(s.remove('cpu_busy')).toBe(false);
+    expect(s.remove('cpu_hot')).toBe('removed');
+    expect(s.remove('cpu_busy')).toBe('removed');
+    expect(s.remove('cpu_busy')).toBe('not_saved');
     const after = s.read();
     expect(after.rules.find((r) => r.id === 'cpu_hot')).toMatchObject({ atLeast: 80 });
     expect(ids(after.rules)).toContain('cpu_busy');
@@ -120,6 +120,10 @@ describe('createRuleSource', () => {
     expect(s.save({ ...busy, for: '3d' })).toEqual({
       ok: false,
       errors: { for: 'longer than raw retention (2d); raise it on the Settings page first' }
+    });
+    expect(s.save({ ...busy, clearAfter: '3d' })).toEqual({
+      ok: false,
+      errors: { clearAfter: 'longer than raw retention (2d); raise it on the Settings page first' }
     });
     expect(s.save({ id: 'not_a_rule', disabled: true })).toMatchObject({
       ok: false,
@@ -158,6 +162,72 @@ describe('createRuleSource', () => {
     expect(problems).toEqual([
       'saved alert rule "cpu_hot" is not in force: longer than raw retention (12h); raise it on the Settings page first'
     ]);
+  });
+
+  it('refuses to revert or enable a rule below whose look-back no longer fits raw retention', () => {
+    const s = source({
+      rules: [
+        { ...busy, id: 'long_for', for: '2h' },
+        { ...busy, id: 'long_clear', clearAfter: '3h' }
+      ]
+    });
+    expect(s.save({ id: 'long_for', disabled: true })).toEqual({ ok: true });
+    expect(s.save({ ...busy, id: 'long_clear', atLeast: 60 })).toEqual({ ok: true });
+    raw = { ms: 60 * MIN, text: '1h' };
+
+    expect(s.remove('long_for')).toEqual({
+      errors: { for: 'longer than raw retention (1h); raise it on the Settings page first' }
+    });
+    expect(s.remove('long_clear')).toEqual({
+      errors: { clearAfter: 'longer than raw retention (1h); raise it on the Settings page first' }
+    });
+    const { rules } = s.read();
+    expect(ids(rules)).not.toContain('long_for');
+    expect(rules.find((r) => r.id === 'long_clear')).toMatchObject({ source: 'saved' });
+
+    raw = { ms: 3 * 60 * MIN, text: '3h' };
+    expect(s.remove('long_for')).toBe('removed');
+    expect(s.remove('long_clear')).toBe('removed');
+    expect(ids(s.read().rules)).toEqual(expect.arrayContaining(['long_for', 'long_clear']));
+  });
+
+  it('only checks the structure of a disabled edited rule, since it never runs', () => {
+    const s = source();
+    const long = { ...busy, id: 'cpu_hot', for: '1d' };
+    expect(s.save(long)).toEqual({ ok: true });
+    raw = { ms: 12 * 60 * MIN, text: '12h' };
+    // Disabling it is allowed although its look-back no longer fits...
+    expect(s.save({ ...long, disabled: true })).toEqual({ ok: true });
+    const { rules, entries } = s.read();
+    // ...and it keeps the built-in below out of force, with no problem shown.
+    expect(ids(rules)).not.toContain('cpu_hot');
+    expect(entries.find((e) => e.id === 'cpu_hot')).toMatchObject({
+      kind: 'edited',
+      disabled: true,
+      problem: null,
+      rule: { forMs: DAY }
+    });
+    expect(problems).toEqual([]);
+    // Enabling it runs the full check again.
+    expect(s.save(long)).toMatchObject({ ok: false, errors: { for: expect.any(String) } });
+  });
+
+  it('reads raw retention once per call, not once per saved entry', () => {
+    let calls = 0;
+    const s = createRuleSource(db, {
+      cores: 4,
+      metrics,
+      rawRetention: () => {
+        calls++;
+        return raw;
+      }
+    });
+    s.save(busy);
+    s.save({ ...busy, id: 'cpu_hot' });
+    s.save({ ...busy, id: 'other_busy' });
+    calls = 0;
+    s.read();
+    expect(calls).toBe(1);
   });
 
   it('shows a corrupt saved row as a problem instead of throwing', () => {

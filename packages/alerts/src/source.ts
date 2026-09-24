@@ -42,11 +42,19 @@ export interface RuleSet {
 }
 
 export type SaveResult = { ok: true } | { ok: false; errors: Record<string, string> };
+/**
+ * `not_saved`: nothing is saved for that id. `errors`: refused, because
+ * removing the entry would put the rule below into force with a look-back
+ * longer than raw retention.
+ */
+export type RemoveResult = 'removed' | 'not_saved' | { errors: Record<string, string> };
+
+type Retention = { ms: number; text: string };
 
 export interface RuleSource {
   read(): RuleSet;
   save(raw: unknown, now?: number): SaveResult;
-  remove(id: string, now?: number): boolean;
+  remove(id: string, now?: number): RemoveResult;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -78,8 +86,10 @@ export function createRuleSource(
     onProblem?: (message: string) => void;
   }
 ): RuleSource {
-  // Look-backs are checked per saved entry against the retention in force;
-  // server.ts checks the file and built-ins against it at startup.
+  // Only rules in force must fit raw retention: each saved entry that would
+  // run is checked against it here, and server.ts checks the file and
+  // built-ins in force at startup. A disabled entry never runs, so it only
+  // has to parse.
   const base = resolveRules({
     cores: options.cores,
     metrics: options.metrics,
@@ -90,8 +100,27 @@ export function createRuleSource(
   const known = options.metrics.map((metric) => metric.id);
   const reported = new Set<string>();
 
+  /** Raw retention, read at most once per call (it queries the settings table). */
+  const retentionOnce = () => {
+    let retention: Retention | undefined;
+    return () => (retention ??= options.rawRetention());
+  };
+
+  /** Throws for the first of `rule`'s look-backs that raw retention can't serve. */
+  const checkLookBack = (rule: Rule, retention: Retention) => {
+    for (const [field, ms] of [
+      ['for', rule.forMs],
+      ['clearAfter', rule.clearAfterMs]
+    ] as const) {
+      if (ms > retention.ms) {
+        const detail = `longer than raw retention (${retention.text}); raise it on the Settings page first`;
+        throw new AlertRulesError(detail, field, detail);
+      }
+    }
+  };
+
   /** Validates one saved entry against the rules below it and this host. */
-  const check = (raw: unknown): Entry => {
+  const check = (raw: unknown, retention: () => Retention): Entry => {
     const entry = parseRuleEntry(raw, 'rule', 'saved');
     if (!entry.rule) {
       if (!below.has(entry.id)) {
@@ -100,29 +129,22 @@ export function createRuleSource(
       }
       return entry;
     }
+    if (entry.disabled) return entry;
     const problem = ruleProblem(entry.rule, known, Infinity);
     if (problem) throw new AlertRulesError(problem.message, problem.field, problem.message);
-    const retention = options.rawRetention();
-    for (const [field, ms] of [
-      ['for', entry.rule.forMs],
-      ['clearAfter', entry.rule.clearAfterMs]
-    ] as const) {
-      if (ms > retention.ms) {
-        const detail = `longer than raw retention (${retention.text}); raise it on the Settings page first`;
-        throw new AlertRulesError(detail, field, detail);
-      }
-    }
+    checkLookBack(entry.rule, retention());
     return entry;
   };
 
   const kindOf = (rule: Rule): RuleKind => (rule.source === 'file' ? 'file' : 'built-in');
 
   const read = (): RuleSet => {
+    const retention = retentionOnce();
     const saved = new Map<string, { raw: unknown; entry?: Entry; problem?: string }>();
     for (const raw of readSaved(db)) {
       const id = idOf(raw);
       try {
-        saved.set(id, { raw, entry: check(raw) });
+        saved.set(id, { raw, entry: check(raw, retention) });
       } catch (error) {
         if (!(error instanceof AlertRulesError)) throw error;
         const problem = error.detail ?? error.message;
@@ -189,7 +211,7 @@ export function createRuleSource(
     save(raw, now = Date.now()) {
       let entry: Entry;
       try {
-        entry = check(raw);
+        entry = check(raw, retentionOnce());
       } catch (error) {
         if (!(error instanceof AlertRulesError)) throw error;
         return { ok: false, errors: { [error.field ?? 'rule']: error.detail ?? error.message } };
@@ -206,9 +228,20 @@ export function createRuleSource(
     remove(id, now = Date.now()) {
       const list = readSaved(db);
       const rest = list.filter((item) => idOf(item) !== id);
-      if (rest.length === list.length) return false;
+      if (rest.length === list.length) return 'not_saved';
+      // Reverting an edit or enabling a disabled rule puts the rule below
+      // back in force, so it must fit raw retention like any rule in force.
+      const under = below.get(id);
+      if (under) {
+        try {
+          checkLookBack(under, options.rawRetention());
+        } catch (error) {
+          if (!(error instanceof AlertRulesError)) throw error;
+          return { errors: { [error.field ?? 'rule']: error.detail ?? error.message } };
+        }
+      }
       saveSettings(db, { [SAVED_RULES_KEY]: rest.length > 0 ? rest : undefined }, now);
-      return true;
+      return 'removed';
     }
   };
 }

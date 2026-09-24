@@ -286,8 +286,15 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             socket.close(4401, 'sign in required');
             return;
           }
+          // The rules in force ride along, so a client that reconnects after
+          // missing a `rules` notice isn't left colouring tiles by stale rules.
           socket.send(
-            JSON.stringify({ type: 'snapshot', samples: getLatest(db), alerts: openAlerts(db) })
+            JSON.stringify({
+              type: 'snapshot',
+              samples: getLatest(db),
+              alerts: openAlerts(db),
+              ...(options.alertRules ? { rules: options.alertRules.source.read().rules } : {})
+            })
           );
 
           const send = (message: object) => {

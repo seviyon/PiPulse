@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { openDb, saveSettings } from '@pipulse/storage';
+import { SAVED_RULES_KEY } from '@pipulse/alerts';
 
 // Runs the built server (root `pretest` builds it) as a real process — the
 // Phase 2 exit criterion: plain HTTP and a WebSocket client both get live data.
@@ -102,6 +104,72 @@ describe('api server process', () => {
     const [exitCode] = await once(child, 'exit');
     expect(stderr).toBe('');
     expect(exitCode).toBe(0);
+  }, 20000);
+
+  it('checks only rules in force against saved raw retention at startup', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const dbPath = join(dir, 'pipulse.sqlite');
+    const rulesPath = join(dir, 'alerts.json');
+    writeFileSync(
+      rulesPath,
+      JSON.stringify({
+        rules: [
+          {
+            id: 'long_for',
+            metric: 'cpu_load',
+            atLeast: 50,
+            for: '2h',
+            severity: 'warning',
+            message: 'Busy'
+          }
+        ]
+      })
+    );
+    const db = openDb(dbPath);
+    saveSettings(db, { 'retention.raw': '1h' });
+    db.close();
+    const start = (disabled: boolean) => {
+      const seeded = openDb(dbPath);
+      saveSettings(seeded, {
+        [SAVED_RULES_KEY]: disabled ? [{ id: 'long_for', disabled: true }] : undefined
+      });
+      seeded.close();
+      const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+        env: {
+          ...process.env,
+          PIPULSE_DB_PATH: dbPath,
+          PIPULSE_HOST: '127.0.0.1',
+          PIPULSE_PORT: '0',
+          PIPULSE_ALERTS_FILE: rulesPath
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      return Promise.race([
+        new Promise<'listening'>((resolve) => {
+          child.stdout.on('data', (chunk: Buffer) => {
+            stdout += chunk.toString();
+            if (stdout.includes('listening on')) {
+              child.kill('SIGTERM');
+              resolve('listening');
+            }
+          });
+        }),
+        once(child, 'exit').then(([code]) => `exited ${String(code)}: ${stderr}`)
+      ]).then(async (outcome) => {
+        if (outcome === 'listening' && child.exitCode === null) await once(child, 'exit');
+        return outcome;
+      });
+    };
+
+    // In force (the file rule as written): 1 h of raw readings can't serve it.
+    expect(await start(false)).toMatch(
+      /exited 1: .*raw retention saved on the Settings page \(1h\) is shorter than rule "long_for"/
+    );
+    // Disabled from the browser, it never runs, so the server starts.
+    expect(await start(true)).toBe('listening');
   }, 20000);
 
   it('refuses to start with an invalid retention setting, naming the variable', async () => {
