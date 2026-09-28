@@ -24,6 +24,7 @@ import {
   type WebhookConfig
 } from '@pipulse/notify';
 import { readAuthConfig, type AuthConfig } from './auth.js';
+import { createHealth } from './health.js';
 import {
   buildServer,
   createFeed,
@@ -151,6 +152,9 @@ const notifications = startNotifications(db, {
   log: (message) => console.warn(`[pipulse] ${message}`)
 });
 
+// Liveness for /api/health: the database answers and readings keep arriving.
+const health = createHealth(db, { trackReadings: true });
+
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
 // buildServer runs before the alert engine starts (below), but its recheck
@@ -172,7 +176,8 @@ const app = buildServer(db, {
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
-  notify: notifications
+  notify: notifications,
+  health
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
@@ -192,7 +197,10 @@ const housekeeping = startHousekeeping(db, {
   }
 });
 const scheduler = startScheduler(db, builtinPlugins, {
-  onSample: live.publish,
+  onSample: (sample) => {
+    health.markReading();
+    live.publish(sample);
+  },
   onError: (plugin, error) => {
     console.error(`[pipulse] ${plugin.id} failed:`, error);
   }

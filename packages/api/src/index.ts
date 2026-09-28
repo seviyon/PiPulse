@@ -17,6 +17,7 @@ import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/ale
 import type { WebhookStatus } from '@pipulse/notify';
 import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './alert-routes.js';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
+import { createHealth, type Health } from './health.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
@@ -112,6 +113,8 @@ export interface ServerOptions {
   settings?: SettingsOptions;
   /** Rule editing and the live rule set; when set, /api/config serves its rules in force. */
   alertRules?: AlertRulesOptions;
+  /** Liveness at /api/health (public); default checks only the database. */
+  health?: Health;
   /** Webhook delivery status, served read-only at /api/notify. */
   notify?: { status(): WebhookStatus[] };
 }
@@ -179,6 +182,14 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   // sent as a duration, read fresh per request, not as a boot timestamp: the
   // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
   // however far the clock later jumps.
+  const health = options.health ?? createHealth(db);
+  app.get('/api/health', async (_request, reply) => {
+    const result = health.check();
+    return result.ok
+      ? { status: 'ok' }
+      : reply.status(503).send({ status: 'unhealthy', problems: result.problems });
+  });
+
   app.get('/api/config', async () => ({
     device,
     plugins,

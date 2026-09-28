@@ -42,7 +42,7 @@ function requestPath(request: FastifyRequest): string {
 }
 
 /** Reads anyone may make even with read protection on. */
-const PUBLIC_READS = new Set(['/api/session']);
+const PUBLIC_READS = new Set(['/api/session', '/api/health']);
 
 const loginSchema = {
   type: 'object',
