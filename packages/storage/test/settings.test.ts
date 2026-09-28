@@ -10,7 +10,7 @@ afterEach(() => db?.close());
 describe('settings', () => {
   it('is at the current schema version with an empty settings table', () => {
     db = openDb(':memory:');
-    expect(SCHEMA_VERSION).toBe(6);
+    expect(SCHEMA_VERSION).toBe(7);
     expect(getSettings(db)).toEqual({});
   });
 

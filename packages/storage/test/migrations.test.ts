@@ -225,8 +225,30 @@ describe('schema migrations', () => {
 
   it('adds acknowledged_at and rule_hash to alerts (migration 6)', () => {
     const db = openDb(join(dir, 'six.db'));
-    expect(SCHEMA_VERSION).toBe(6);
+    expect(SCHEMA_VERSION).toBe(7);
     expect(columns(db, 'alerts')).toEqual(expect.arrayContaining(['acknowledged_at', 'rule_hash']));
+    db.close();
+  });
+
+  it('adds the notifications outbox (migration 7)', () => {
+    const db = openDb(join(dir, 'seven.db'));
+    expect(SCHEMA_VERSION).toBe(7);
+    expect(columns(db, 'notifications')).toEqual([
+      'id',
+      'webhook_id',
+      'alert_id',
+      'event',
+      'rule_id',
+      'metric',
+      'payload',
+      'status',
+      'attempts',
+      'next_at',
+      'last_error',
+      'created_at',
+      'sent_at',
+      'failed_at'
+    ]);
     db.close();
   });
 });

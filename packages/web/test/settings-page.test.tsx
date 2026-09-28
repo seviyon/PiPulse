@@ -75,6 +75,7 @@ beforeEach(() => {
       calls.push({ method, path: url, body });
       if (url === '/api/settings' && method === 'GET') return Response.json(settings);
       if (url === '/api/settings/preview') return Response.json(previewAnswer);
+      if (url === '/api/notify') return Response.json([]);
       if (url === '/api/settings' && method === 'PUT') {
         const answers: Record<number, unknown> = {
           200: settings,
@@ -125,6 +126,16 @@ async function click(text: string) {
 }
 
 describe('SettingsPage', () => {
+  it('shows the notifications section after the storage figures', async () => {
+    render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
+    await settle();
+    const headings = [...root.querySelectorAll('h2')].map((h) => h.textContent);
+    expect(headings).toEqual(['Data retention', 'Storage', 'Notifications']);
+    await vi.waitFor(() =>
+      expect(root.textContent).toContain('No webhooks configured — set PIPULSE_NOTIFY_FILE.')
+    );
+  });
+
   it('in read-only mode shows values and how to enable editing, with no inputs enabled', async () => {
     render(
       <SettingsPage

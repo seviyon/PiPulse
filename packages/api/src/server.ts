@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { cpus } from 'node:os';
+import { cpus, hostname } from 'node:os';
 import {
   openDb,
   policyOf,
@@ -17,6 +17,12 @@ import {
   type AlertEvent,
   type RuleSource
 } from '@pipulse/alerts';
+import {
+  parseNotifyConfig,
+  readNotifyFile,
+  startNotifications,
+  type WebhookConfig
+} from '@pipulse/notify';
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import {
   buildServer,
@@ -123,6 +129,28 @@ const RAW_PROBLEM = rawRetentionProblem(RETENTION.raw, BASE_LOOK_BACK);
 if (RAW_PROBLEM) fail(RAW_PROBLEM);
 const rulesInForce = () => RULES.read().rules;
 
+/** Webhooks from PIPULSE_NOTIFY_FILE, if set; a bad file stops startup with one line. */
+function readWebhooks(): WebhookConfig[] {
+  const path = process.env['PIPULSE_NOTIFY_FILE'];
+  if (!path) return [];
+  try {
+    const file = readNotifyFile(path);
+    if (file.worldReadable)
+      console.warn('[pipulse] PIPULSE_NOTIFY_FILE is readable by other users; chmod 600 it');
+    return parseNotifyConfig(file);
+  } catch (error) {
+    fail(error);
+  }
+}
+// Queues a message per alert raise/clear for each webhook and delivers it
+// in order, retrying for up to 6 h; survives restarts through the outbox.
+const notifications = startNotifications(db, {
+  webhooks: readWebhooks(),
+  hostname: hostname(),
+  metrics: builtinPlugins.map(({ id, label, unit }) => ({ id, label, unit })),
+  log: (message) => console.warn(`[pipulse] ${message}`)
+});
+
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
 // buildServer runs before the alert engine starts (below), but its recheck
@@ -143,7 +171,8 @@ const app = buildServer(db, {
   alertRules: { source: RULES, recheck: () => engine.alerts?.check() },
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
-  settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) }
+  settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
+  notify: notifications
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
@@ -172,7 +201,10 @@ const scheduler = startScheduler(db, builtinPlugins, {
 engine.alerts = startAlerts(db, {
   rules: rulesInForce,
   metrics: METRICS,
-  onChange: alertFeed.publish,
+  onChange: (event) => {
+    alertFeed.publish(event);
+    notifications.enqueue(event);
+  },
   onError: (error, rule) => {
     console.error(
       rule ? `[pipulse] alert rule ${rule.id} failed:` : '[pipulse] alert check failed:',
@@ -208,7 +240,11 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   housekeeping.stop();
   engine.alerts?.stop();
-  const [, drained] = await Promise.all([app.close(), scheduler.stop(SHUTDOWN_TIMEOUT_MS)]);
+  const [, drained] = await Promise.all([
+    app.close(),
+    scheduler.stop(SHUTDOWN_TIMEOUT_MS),
+    notifications.stop()
+  ]);
   db.close();
   if (!drained) {
     console.error(

@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 5b-2 (alert rules in the browser) is complete; 5b-3 (notifications) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 5b-3 (notifications) is complete; 6 (packaging) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -102,10 +102,11 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | `PIPULSE_ALERTS_FILE` | _(none)_ | JSON file of alert rules merged over the built-ins (see [Alerts](#alerts)) |
 | `PIPULSE_ADMIN_PASSWORD_HASH_FILE` | _(none)_ | File with the admin password hash (make one with `hash-password`); unset = read-only (see [Sign-in and settings](#sign-in-and-settings)) |
 | `PIPULSE_PROTECT_READS` | `false` | `true`: every page, API read and the live feed need sign-in |
+| `PIPULSE_NOTIFY_FILE` | _(none)_ | JSON file of webhooks to notify when an alert opens or clears (see [Notifications](#notifications)) |
 
 Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Retention can also be changed on the Settings page, without a restart; a variable that is set wins and locks that field there. Levels must stay in order (raw ≤ 1-minute ≤ hourly ≤ daily); variables out of order stop the server at startup. A longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess within a minute. After a large deletion the database compacts itself (at most once a day, only when at least a quarter of an 8 MB+ file is free and the disk has room for about twice the file). The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`), and `GET /api/notify` (each webhook's id, host, filters, queued count and last delivery or failure — never its full URL or headers). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -169,7 +170,47 @@ To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries 
 
 The temperature defaults suit a Pi 5 with an active cooler (it holds a busy Pi 5 around 55–65 °C) as well as a passively cooled Pi. For a hot enclosure, raise `cpu_warm`; for a fan you want to know about early, lower it.
 
-Signed in, rules can be added, edited, disabled and reverted, and open alerts acknowledged, on the Alerts page; saved rules sit above `PIPULSE_ALERTS_FILE` and the built-ins and apply within 15 seconds, no restart needed. Notifications (e.g. a webhook to Apprise) are still to come.
+Signed in, rules can be added, edited, disabled and reverted, and open alerts acknowledged, on the Alerts page; saved rules sit above `PIPULSE_ALERTS_FILE` and the built-ins and apply within 15 seconds, no restart needed.
+
+### Notifications
+
+To be told when an alert opens or clears, point `PIPULSE_NOTIFY_FILE` at a JSON file of webhooks and restart:
+
+```json
+{
+  "webhooks": [
+    { "id": "apprise", "url": "http://apprise.lan:8000/notify/pipulse" },
+    {
+      "id": "ntfy",
+      "url": "https://ntfy.sh/my-pi",
+      "headers": { "Authorization": "Bearer tk_…" },
+      "body": {
+        "topic": "my-pi",
+        "title": "{{severity}}: {{message}}",
+        "message": "{{metricLabel}} = {{value}} since {{raisedAt}}"
+      },
+      "events": ["raised"],
+      "minSeverity": "critical"
+    }
+  ]
+}
+```
+
+Each webhook needs an `id` and an `http(s)` `url`; `method` (`POST` or `PUT`), `headers`, `body`, `events` (`raised`, `cleared`; default both), `minSeverity` (`warning` or `critical`) and `timeout` (`1s`–`60s`, default `10s`) are optional. Without a `body`, PiPulse sends what Apprise's `/notify` endpoint expects (a title, a body line, and a `type` of `warning`, `failure`, `success` or `info`), so an Apprise URL needs nothing else. A `body` is any JSON with `{{placeholders}}` in its strings — `event`, `ruleId`, `metric`, `metricLabel`, `severity`, `message`, `value`, `rawValue`, `raisedAt`, `clearedAt`, `duration`, `clearedBy`, `hostname` — and always stays valid JSON, whatever the alert message holds. An invalid file stops PiPulse at startup with a message naming the webhook and field.
+
+A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail.
+
+The file usually holds secrets: `chmod 600` it (PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
+
+Messages are queued in the database and sent in order per webhook, retried with backoff (5 s, doubling, up to every 5 minutes) for up to 6 hours, and survive restarts. Removing or disabling a rule closes its alert without a message, and editing a rule so its alert closes and reopens unchanged sends nothing. To check a webhook without waiting for an alert:
+
+```bash
+PIPULSE_NOTIFY_FILE=~/pipulse-notify.json node packages/api/dist/notify-test.js [webhook-id]
+```
+
+It sends a test message to each webhook (or the one named) and prints `delivered` or why it failed.
+
+If the receiver uses HTTPS with a certificate from your own certificate authority (a homelab CA, for example), Node doesn't trust it by default and every delivery fails with `network error (UNABLE_TO_VERIFY_LEAF_SIGNATURE)`. Give Node the CA certificate when starting PiPulse (and `notify-test`): `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
 
 ## Sign-in and settings
 
@@ -191,7 +232,7 @@ PiPulse speaks plain HTTP: the password crosses the network once at sign-in. Kee
 
 ## Configuration
 
-Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts). Retention is editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules are editable on the Alerts page (see [Alerts](#alerts)), signed in. Plugin selection and poll intervals are fixed in code.
+Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts) and the webhooks file described under [Notifications](#notifications). Retention is editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules are editable on the Alerts page (see [Alerts](#alerts)), signed in. Plugin selection and poll intervals are fixed in code.
 
 ## Roadmap
 
@@ -205,7 +246,7 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
-| 5b-3 | Notifications (webhook) | ⏳ Next |
+| 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 

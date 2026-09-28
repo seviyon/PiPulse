@@ -103,3 +103,16 @@ export interface Series {
   resolution: Resolution;
   points: SeriesPoint[];
 }
+
+/** One webhook's delivery status from /api/notify: only its host, never the full URL. */
+export interface WebhookStatus {
+  id: string;
+  host: string;
+  method: 'POST' | 'PUT';
+  events: ('raised' | 'cleared')[];
+  minSeverity: 'warning' | 'critical';
+  /** Notifications queued and not yet delivered. */
+  pending: number;
+  lastSuccessAt: number | null;
+  lastFailure: { at: number; reason: string } | null;
+}

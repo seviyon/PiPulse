@@ -174,6 +174,31 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       ALTER TABLE alerts ADD COLUMN acknowledged_at INTEGER;
       ALTER TABLE alerts ADD COLUMN rule_hash TEXT;
     `);
+  },
+  // 7: 5b-3. The notifications outbox: one row per alert event and webhook,
+  // delivered in order per webhook and retried until sent or given up.
+  // payload is the rendered body, frozen at the event; failed_at is the
+  // latest failed attempt, kept after a later success for the status line.
+  (db) => {
+    db.exec(`
+      CREATE TABLE notifications (
+        id         INTEGER PRIMARY KEY,
+        webhook_id TEXT NOT NULL,
+        alert_id   INTEGER NOT NULL,
+        event      TEXT NOT NULL,
+        rule_id    TEXT NOT NULL,
+        metric     TEXT NOT NULL,
+        payload    TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        attempts   INTEGER NOT NULL DEFAULT 0,
+        next_at    INTEGER NOT NULL,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        sent_at    INTEGER,
+        failed_at  INTEGER
+      );
+      CREATE INDEX idx_notifications_queue ON notifications(webhook_id, status, id);
+    `);
   }
 ];
 
