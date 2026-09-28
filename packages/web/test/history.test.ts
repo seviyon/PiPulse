@@ -26,6 +26,21 @@ const point = (ts: number, avg: number, min = avg, max = avg, count = 1): Series
 });
 
 describe('chartGroups', () => {
+  it('leaves unavailable plugins off History', () => {
+    const groups = chartGroups([
+      { id: 'cpu_load', label: 'CPU', unit: '%', intervalMs: 5000 },
+      {
+        id: 'cpu_voltage',
+        label: 'Core voltage',
+        unit: 'V',
+        intervalMs: 60000,
+        unavailable: 'Not available in Docker'
+      }
+    ]);
+    expect(JSON.stringify(groups)).not.toContain('cpu_voltage');
+    expect(JSON.stringify(groups)).toContain('cpu_load');
+  });
+
   it('gives each metric its own chart, pairs network directions, and skips flags', () => {
     const groups = chartGroups([
       plugin('cpu_load', 'CPU load'),

@@ -46,6 +46,16 @@ export function Tile({
   windowMs,
   max
 }: TileProps) {
+  if (plugin.unavailable) {
+    return (
+      <section class="tile" aria-labelledby={`tile-${plugin.id}`}>
+        <div class="tile-head">
+          <h2 id={`tile-${plugin.id}`}>{plugin.label}</h2>
+        </div>
+        <p class="waiting">{plugin.unavailable}</p>
+      </section>
+    );
+  }
   if (!latest) {
     // Same rule as a stale value: three missed polls.
     const missing = now - waitingSince > plugin.intervalMs * 3;

@@ -11,6 +11,7 @@ import {
   type Preview,
   type SettingsBody
 } from './settings.js';
+import { AboutSection } from './about.js';
 import { NotificationsSection } from './notifications.js';
 import { SignIn } from './sign-in.js';
 import { StatusIcon } from './tile.js';
@@ -270,6 +271,7 @@ export function SettingsPage({
         </dl>
       </section>
       <NotificationsSection />
+      <AboutSection />
     </div>
   );
 }

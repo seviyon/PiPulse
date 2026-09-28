@@ -34,7 +34,8 @@ export function chartGroups(plugins: PluginInfo[]): ChartGroup[] {
   const groups: ChartGroup[] = [];
   const done = new Set<string>();
   for (const plugin of plugins) {
-    if (plugin.unit === 'flags' || done.has(plugin.id)) continue;
+    // Flags have no magnitude to chart; an unavailable plugin has nothing to show.
+    if (plugin.unit === 'flags' || plugin.unavailable || done.has(plugin.id)) continue;
     const pair = pairs.find(
       (candidate) =>
         candidate.metrics.some((metric) => metric.id === plugin.id) &&
