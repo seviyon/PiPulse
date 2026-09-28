@@ -1,5 +1,10 @@
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
-  sh /opt/pipulse/app/packaging/setup.sh --unit-dir none
+  # $2 (the previously configured version) is empty on a first install: only then enable.
+  if [ -z "${2:-}" ]; then
+    sh /opt/pipulse/app/packaging/setup.sh --unit-dir none --first-install
+  else
+    sh /opt/pipulse/app/packaging/setup.sh --unit-dir none
+  fi
 fi

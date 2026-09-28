@@ -33,6 +33,8 @@ echo 'PIPULSE_PORT=8889' >> /etc/pipulse/pipulse.env
 DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold "$out/pipulse_0.0.2_$arch.deb" >/dev/null && ok 'upgrades' || bad 'upgrades'
 grep -q '"0.0.2"' /opt/pipulse/app/version.json && ok 'new version in place' || bad 'new version in place'
 grep -q '^PIPULSE_PORT=8889$' /etc/pipulse/pipulse.env && ok 'edited env kept' || bad 'edited env kept'
+if sh "$repo/packaging/install.sh" --uninstall >/dev/null 2>&1; then bad 'tarball uninstall refuses an apt install'; else ok 'tarball uninstall refuses an apt install'; fi
+[ -x /opt/pipulse/node/bin/node ] && ok 'apt install left intact' || bad 'apt install left intact'
 apt-get remove -y pipulse >/dev/null
 [ ! -e /opt/pipulse ] && [ -f /etc/pipulse/pipulse.env ] && [ -d /var/lib/pipulse ] && ok 'remove keeps data and settings' || bad 'remove keeps data and settings'
 apt-get purge -y pipulse >/dev/null

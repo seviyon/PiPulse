@@ -1,13 +1,17 @@
 #!/bin/sh
-# setup.sh [--no-start] [--unit-dir DIR|none] — the one setup both install
-# paths run: user, folders, settings file, service, and warnings. Idempotent.
+# setup.sh [--no-start] [--first-install] [--unit-dir DIR|none] — the one setup
+# both install paths run: user, folders, settings file, service, and warnings.
+# Idempotent. The service is enabled only on a first install; after that an
+# enabled service is restarted and a disabled or masked one is left alone.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib.sh"
-start=yes unit_dir=/etc/systemd/system
+start=yes first=no unit_dir=/etc/systemd/system
+warn() { printf '[pipulse] warning: %s\n' "$*" >&2; }
 while [ "$#" -gt 0 ]; do
   case $1 in
     --no-start) start=no ;;
+    --first-install) first=yes ;;
     --unit-dir) unit_dir=$2; shift ;;
     *) die "unknown option: $1" ;;
   esac
@@ -36,10 +40,22 @@ chmod 640 /etc/pipulse/pipulse.env
 # 4. Service
 if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
   if [ "$unit_dir" != none ]; then install -m 644 "$here/pipulse.service" "$unit_dir/pipulse.service"; fi
-  systemctl daemon-reload
-  systemctl enable pipulse >/dev/null 2>&1
-  systemctl restart pipulse
-  log 'service enabled and started'
+  systemctl daemon-reload || true
+  if [ "$first" = yes ]; then
+    if systemctl enable pipulse >/dev/null 2>&1; then
+      systemctl restart pipulse
+      log 'service enabled and started'
+    else
+      warn 'could not enable the pipulse service (masked?); start it with: sudo systemctl enable --now pipulse'
+    fi
+  else
+    state=$(systemctl is-enabled pipulse 2>/dev/null || true)
+    case $state in
+      enabled) systemctl restart pipulse; log 'service restarted' ;;
+      masked) warn 'the pipulse service is masked: left as it is, not started' ;;
+      *) warn "the pipulse service is ${state:-not enabled}: left as it is, not started (sudo systemctl enable --now pipulse)" ;;
+    esac
+  fi
 else
   log 'no systemd running (or --no-start): service not started'
 fi

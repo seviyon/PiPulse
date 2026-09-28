@@ -62,6 +62,46 @@ restart() { sh -c "${PIPULSE_RESTART_CMD:-systemctl restart pipulse}"; }
 # The installed release, e.g. 0.6.0.
 installed() { sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /opt/pipulse/app/version.json; }
 
+db_path() { v=$(env_value PIPULSE_DB_PATH); echo "${v:-/var/lib/pipulse/pipulse.sqlite}"; }
+
+# The database (and its WAL files) as it was before an upgrade: a new version may
+# migrate it, and the previous version then refuses a newer schema.
+backup_db() {
+  db=$(db_path)
+  for f in "$db" "$db-wal" "$db-shm"; do
+    rm -f "$f.pre-upgrade"
+    if [ -e "$f" ]; then cp -p "$f" "$f.pre-upgrade"; fi
+  done
+}
+restore_db() {
+  db=$(db_path)
+  [ -e "$db.pre-upgrade" ] || return 0
+  for f in "$db" "$db-wal" "$db-shm"; do
+    rm -f "$f"
+    if [ -e "$f.pre-upgrade" ]; then mv "$f.pre-upgrade" "$f"; fi
+  done
+}
+drop_db_backup() { db=$(db_path); rm -f "$db.pre-upgrade" "$db-wal.pre-upgrade" "$db-shm.pre-upgrade"; }
+
+stop_service() { sh -c "${PIPULSE_STOP_CMD:-systemctl stop pipulse}" >/dev/null 2>&1 || true; }
+
+# Runs setup and (re)starts the service. FIRST is yes on a first install.
+start_service() {
+  if [ -n "${PIPULSE_FORCE_RESTART:-}" ]; then # tests without systemd
+    sh /opt/pipulse/app/packaging/setup.sh --no-start
+    restart
+  elif [ "$1" = yes ]; then
+    sh /opt/pipulse/app/packaging/setup.sh --first-install
+  else
+    sh /opt/pipulse/app/packaging/setup.sh
+  fi
+}
+
+# Whether the service is meant to run (an operator may have disabled or masked it).
+service_wanted() {
+  [ -n "${PIPULSE_FORCE_RESTART:-}" ] || [ "$(systemctl is-enabled pipulse 2>/dev/null || true)" = enabled ]
+}
+
 install_tarball() { # install_tarball FILE NO_START
   tarball=$1 no_start=$2
   work=$(mktemp -d)
@@ -71,49 +111,68 @@ install_tarball() { # install_tarball FILE NO_START
   [ -n "$src" ] || die "$tarball is not a PiPulse release tarball"
   arch=$(PIPULSE_NODE_VERSIONS="$src/packaging/node-versions.json" sh -c ". '$src/packaging/lib.sh'; pipulse_arch")
   sh "$src/packaging/fetch-node.sh" "$arch" "$work/staged"
+  if [ "$no_start" = no ] && [ -z "${PIPULSE_FORCE_RESTART:-}" ]; then
+    [ -d /run/systemd/system ] || die 'systemd is not running: use --no-start'
+  fi
   mkdir -p /opt/pipulse
   rm -rf /opt/pipulse/app.new /opt/pipulse/node.new /opt/pipulse/app.previous /opt/pipulse/node.previous
   mv "$src" /opt/pipulse/app.new
   mv "$work/staged/node" /opt/pipulse/node.new
   had_previous=no
   if [ -d /opt/pipulse/app ]; then
+    had_previous=yes
+    if [ "$no_start" = no ]; then
+      stop_service
+      backup_db
+    fi
     mv /opt/pipulse/app /opt/pipulse/app.previous
     mv /opt/pipulse/node /opt/pipulse/node.previous
-    had_previous=yes
   fi
   mv /opt/pipulse/app.new /opt/pipulse/app
   mv /opt/pipulse/node.new /opt/pipulse/node
   chown -R root:root /opt/pipulse
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
+  first=yes
+  [ "$had_previous" = no ] || first=no
   if [ "$no_start" = yes ]; then
     sh /opt/pipulse/app/packaging/setup.sh --no-start
-  elif [ -n "${PIPULSE_FORCE_RESTART:-}" ]; then
-    sh /opt/pipulse/app/packaging/setup.sh --no-start
-    restart
-  else
-    [ -d /run/systemd/system ] || die 'systemd is not running: use --no-start'
-    sh /opt/pipulse/app/packaging/setup.sh
-  fi
-  if [ "$no_start" = yes ]; then
     rm -rf /opt/pipulse/app.previous /opt/pipulse/node.previous
     log "installed $(installed) (not started)"
     return 0
   fi
+  start_service "$first"
+  if ! service_wanted; then
+    rm -rf /opt/pipulse/app.previous /opt/pipulse/node.previous
+    drop_db_backup
+    log "installed $(installed); the service is not enabled, so it was not started"
+    return 0
+  fi
   if health_ok; then
     rm -rf /opt/pipulse/app.previous /opt/pipulse/node.previous
+    drop_db_backup
     log "running $(installed)"
     return 0
   fi
-  if [ "$had_previous" = yes ]; then
-    log 'the new version did not become healthy: rolling back'
-    rm -rf /opt/pipulse/app /opt/pipulse/node
-    mv /opt/pipulse/app.previous /opt/pipulse/app
-    mv /opt/pipulse/node.previous /opt/pipulse/node
-    install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
-    restart
-    die "rolled back; still running $(installed)"
+  [ "$had_previous" = yes ] || die 'PiPulse did not become healthy; see: journalctl -u pipulse'
+  failed=$(installed)
+  log "$failed did not become healthy: rolling back"
+  stop_service
+  restore_db
+  rm -rf /opt/pipulse/app /opt/pipulse/node
+  mv /opt/pipulse/app.previous /opt/pipulse/app
+  mv /opt/pipulse/node.previous /opt/pipulse/node
+  install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
+  # The previous version's own setup puts its unit file back too.
+  start_service no
+  if health_ok; then die "$failed did not become healthy; rolled back to $(installed), which is running"; fi
+  die "$failed did not become healthy; rolled back to $(installed), but that is not healthy either: see journalctl -u pipulse"
+}
+
+# The tarball commands must not touch an install apt manages.
+refuse_over_apt() {
+  if dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'; then
+    die 'PiPulse is installed with apt here: use apt (sudo apt upgrade / apt remove / apt purge)'
   fi
-  die 'PiPulse did not become healthy; see: journalctl -u pipulse'
 }
 
 uninstall() { # uninstall PURGE
@@ -151,9 +210,10 @@ main() {
   [ "$(id -u)" -eq 0 ] || die 'run as root (sudo)'
   case $mode in
     apt) install_apt ;;
-    uninstall) uninstall no ;;
-    purge) uninstall yes ;;
+    uninstall) refuse_over_apt; uninstall no ;;
+    purge) refuse_over_apt; uninstall yes ;;
     tarball)
+      refuse_over_apt
       if [ -z "$from" ]; then
         dl=$(mktemp -d)
         version=${version:-$(latest_version)}
