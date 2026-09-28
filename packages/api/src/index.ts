@@ -14,8 +14,10 @@ import {
   type Sample
 } from '@pipulse/storage';
 import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/alerts';
+import type { WebhookStatus } from '@pipulse/notify';
 import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './alert-routes.js';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
+import { registerNotifyRoutes } from './notify-routes.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
@@ -110,6 +112,8 @@ export interface ServerOptions {
   settings?: SettingsOptions;
   /** Rule editing and the live rule set; when set, /api/config serves its rules in force. */
   alertRules?: AlertRulesOptions;
+  /** Webhook delivery status, served read-only at /api/notify. */
+  notify?: { status(): WebhookStatus[] };
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -253,6 +257,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     ...(options.alertRules ? { rules: options.alertRules } : {}),
     publish: notices.publish
   });
+  registerNotifyRoutes(app, options.notify);
 
   if (options.settings) registerSettingsRoutes(app, db, options.settings);
 
