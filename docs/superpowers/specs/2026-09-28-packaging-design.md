@@ -131,7 +131,6 @@ Wants=network-online.target
 [Service]
 User=pipulse
 Group=pipulse
-SupplementaryGroups=video
 Environment=PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite
 Environment=PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist
 Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
@@ -157,6 +156,7 @@ WantedBy=multi-user.target
 ```
 
 - `EnvironmentFile` comes after the defaults, so `pipulse.env` can override them.
+- No `SupplementaryGroups=`: the `pipulse` user's own groups apply (it is in `video` when that group exists), and naming a group that doesn't exist would stop the unit from starting.
 - `PrivateDevices` stays off: `vcgencmd` needs `/dev/vchiq`. `ProtectHome` is fine because nothing PiPulse reads lives in a home folder.
 - Every hardening line is checked on `Io` (`systeminformation` runs helper programs such as `df`); a line that breaks a reading is dropped and the reason noted next to the unit.
 - `TimeoutStopSec=20` fits the shutdown limits: the collector's 5 s and the notification sender's 5 s (below).

@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 User=pipulse
 Group=pipulse
-SupplementaryGroups=video
+# The pipulse user's own groups apply (setup.sh adds it to video, for vcgencmd, when
+# that group exists); naming a group here would stop the unit where it doesn't.
 Environment=PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite
 Environment=PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist
 Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning

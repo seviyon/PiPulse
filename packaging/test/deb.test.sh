@@ -5,6 +5,8 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 sh "$repo/packaging/install.sh" --purge >/dev/null 2>&1 || true
 apt-get purge -y pipulse >/dev/null 2>&1 || true
 arch=$(dpkg --print-architecture)
+# These tests run as root in a throwaway container on purpose; say so to lintian.
+lint() { lintian --allow-root --fail-on error "$@"; }
 out=$(mktemp -d)
 "$repo/packaging/build-tarball.sh" 0.0.1 "$out" >/dev/null
 "$repo/packaging/build-tarball.sh" 0.0.2 "$out" >/dev/null
@@ -13,11 +15,11 @@ out=$(mktemp -d)
 fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
-lintian --fail-on error "$out/pipulse_0.0.1_$arch.deb" && ok 'lintian clean' || bad 'lintian clean'
+lint "$out/pipulse_0.0.1_$arch.deb" && ok 'lintian clean' || bad 'lintian clean'
 # A hyphenated version (a pre-release, the CI dry run) is a non-native package to Debian.
 "$repo/packaging/build-tarball.sh" 0.0.3-rc.1 "$out" >/dev/null
 "$repo/packaging/build-deb.sh" 0.0.3-rc.1 "$arch" "$out/pipulse-0.0.3-rc.1.tar.gz" "$out" >/dev/null
-lintian --fail-on error "$out/pipulse_0.0.3-rc.1_$arch.deb" >/dev/null && ok 'lintian clean for a pre-release version' || bad 'lintian clean for a pre-release version'
+lint "$out/pipulse_0.0.3-rc.1_$arch.deb" >/dev/null && ok 'lintian clean for a pre-release version' || bad 'lintian clean for a pre-release version'
 # On a Pi 1 or Zero (armv6 CPU, though Raspbian says armhf) the package refuses to install.
 # (apt-get runs maintainer scripts with PATH=/usr/sbin:/usr/bin:/sbin:/bin, so the
 # stand-in has to replace /usr/bin/uname itself for the moment.)
