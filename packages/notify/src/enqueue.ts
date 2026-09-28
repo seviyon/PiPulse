@@ -51,10 +51,10 @@ export function createEnqueuer(
   const closedByEdit = (alert: Alert) =>
     db
       .prepare(
-        `SELECT severity, message FROM alerts WHERE rule_id = ? AND metric = ? AND cleared_by = 'rule_changed' AND cleared_at = ? ORDER BY id DESC LIMIT 1`
+        `SELECT id, severity, message FROM alerts WHERE rule_id = ? AND metric = ? AND cleared_by = 'rule_changed' AND cleared_at = ? ORDER BY id DESC LIMIT 1`
       )
       .get(alert.ruleId, alert.metric, alert.raisedAt) as
-      { severity: string; message: string } | undefined;
+      { id: number; severity: string; message: string } | undefined;
 
   return (event) => {
     if (options.webhooks.length === 0) return;
@@ -73,7 +73,7 @@ export function createEnqueuer(
         const reached = options.webhooks
           .filter((webhook) => RANK[alert.severity] >= RANK[webhook.minSeverity])
           .map((webhook) => webhook.id);
-        deletePendingClears(db, alert.ruleId, alert.metric, reached);
+        deletePendingClears(db, previous.id, reached);
         if (previous.severity === alert.severity && previous.message === alert.message) return;
       }
       queue('raised', alert, now());

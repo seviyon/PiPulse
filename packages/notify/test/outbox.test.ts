@@ -77,12 +77,15 @@ describe('outbox', () => {
     });
   });
 
-  it('deletes pending clears for one rule and metric', () => {
-    insertNotification(db, row({ event: 'cleared' }));
-    insertNotification(db, row({ event: 'cleared', metric: 'other' }));
-    insertNotification(db, row({ event: 'raised' }));
-    expect(deletePendingClears(db, 'cpu_hot', 'cpu_temperature')).toBe(1);
-    expect(headOf(db, 'apprise')).toMatchObject({ event: 'cleared', metric: 'other' });
+  it("deletes one alert's pending clears for the given webhooks only", () => {
+    insertNotification(db, row({ event: 'cleared', alertId: 7 }));
+    insertNotification(db, row({ event: 'cleared', alertId: 7, webhookId: 'ntfy' }));
+    insertNotification(db, row({ event: 'cleared', alertId: 6 }));
+    insertNotification(db, row({ event: 'raised', alertId: 7 }));
+    expect(deletePendingClears(db, 7, [])).toBe(0);
+    expect(deletePendingClears(db, 7, ['apprise'])).toBe(1);
+    expect(headOf(db, 'apprise')).toMatchObject({ event: 'cleared', alertId: 6 });
+    expect(headOf(db, 'ntfy')).toMatchObject({ event: 'cleared', alertId: 7 });
   });
 
   it('fails pending rows of removed webhooks and prunes finished rows', () => {

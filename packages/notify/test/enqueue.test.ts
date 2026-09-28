@@ -98,6 +98,21 @@ describe('createEnqueuer', () => {
     expect(rows().map(({ w, event }) => `${w} ${event}`)).toEqual(['crit cleared', 'all raised']);
   });
 
+  it("keeps an earlier alert's pending clear when an edit reopens a later one", () => {
+    const enqueue = enqueuer([hook()]);
+    const a = raised({ raisedAt: T - 60_000 });
+    enqueue(a);
+    enqueue({ type: 'cleared', alert: clearAlert(db, a.alert.id, T - 30_000, 'condition') });
+    const b = raised();
+    enqueue(b);
+    enqueue({ type: 'cleared', alert: clearAlert(db, b.alert.id, T + 5000, 'rule_changed') });
+    enqueue(raised({ raisedAt: T + 5000 }));
+    const cleared = db
+      .prepare(`SELECT alert_id AS alertId FROM notifications WHERE event = 'cleared'`)
+      .all();
+    expect(cleared).toEqual([{ alertId: a.alert.id }]);
+  });
+
   it('pairs from the closed alert even for a webhook that only listens to raises', () => {
     const enqueue = enqueuer([hook({ events: ['raised'] })]);
     const r = raised();
