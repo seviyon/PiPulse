@@ -2,7 +2,13 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NotifyConfigError, parseNotifyConfig, readNotifyFile, urlHost } from '../src/config.js';
+import {
+  BLOCKED_PORTS,
+  NotifyConfigError,
+  parseNotifyConfig,
+  readNotifyFile,
+  urlHost
+} from '../src/config.js';
 
 const parse = (webhooks: unknown) =>
   parseNotifyConfig({ name: 'notify.json', text: JSON.stringify({ webhooks }) });
@@ -45,6 +51,23 @@ describe('parseNotifyConfig', () => {
       minSeverity: 'critical',
       timeoutMs: 30_000
     });
+  });
+
+  it('refuses a port fetch blocks, which would fail every delivery', () => {
+    fails(
+      [{ id: 'a', url: 'https://apprise.lan:9/notify/key' }],
+      /url uses port 9, which fetch refuses to connect to/
+    );
+    expect(parse([{ id: 'a', url: 'https://apprise.lan:8443/notify' }])[0]!.url).toBe(
+      'https://apprise.lan:8443/notify'
+    );
+  });
+
+  it('lists only ports that fetch really blocks', async () => {
+    for (const port of BLOCKED_PORTS) {
+      const error = await fetch(`http://127.0.0.1:${port}/`).catch((e: unknown) => e);
+      expect((error as { cause?: Error }).cause?.message, `port ${port}`).toBe('bad port');
+    }
   });
 
   it('refuses a header fetch would reject, naming it without its value', () => {
