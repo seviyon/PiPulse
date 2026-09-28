@@ -16,13 +16,16 @@ install -m 644 "$here/pipulse.service" "$root/lib/systemd/system/pipulse.service
 install -m 640 "$here/pipulse.env" "$root/etc/pipulse/pipulse.env"
 install -m 644 "$here/deb/copyright" "$root/usr/share/doc/pipulse/copyright"
 # Debian wants a changelog even for a package built outside Debian; release notes live on GitHub.
+# A version with a hyphen (e.g. 0.7.0-rc.1) is a "non-native" package to Debian,
+# whose changelog has a different name.
+case $version in *-*) changelog=changelog.Debian.gz ;; *) changelog=changelog.gz ;; esac
 {
   echo "pipulse ($version) stable; urgency=medium"
   echo
   echo "  * Release $version: https://github.com/seviyon/PiPulse/releases/tag/v$version"
   echo
   echo " -- PiPulse releases <seviyon@users.noreply.github.com>  $(date -R)"
-} | gzip -9n > "$root/usr/share/doc/pipulse/changelog.gz"
+} | gzip -9n > "$root/usr/share/doc/pipulse/$changelog"
 mkdir -p "$root/usr/share/lintian/overrides"
 install -m 644 "$here/lintian-overrides" "$root/usr/share/lintian/overrides/pipulse"
 sed -e "s/@VERSION@/$version/" -e "s/@ARCH@/$arch/" "$here/deb/control.in" > "$root/DEBIAN/control"

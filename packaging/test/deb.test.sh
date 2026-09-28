@@ -14,6 +14,10 @@ fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
 lintian --fail-on error "$out/pipulse_0.0.1_$arch.deb" && ok 'lintian clean' || bad 'lintian clean'
+# A hyphenated version (a pre-release, the CI dry run) is a non-native package to Debian.
+"$repo/packaging/build-tarball.sh" 0.0.3-rc.1 "$out" >/dev/null
+"$repo/packaging/build-deb.sh" 0.0.3-rc.1 "$arch" "$out/pipulse-0.0.3-rc.1.tar.gz" "$out" >/dev/null
+lintian --fail-on error "$out/pipulse_0.0.3-rc.1_$arch.deb" >/dev/null && ok 'lintian clean for a pre-release version' || bad 'lintian clean for a pre-release version'
 apt-get install -y "$out/pipulse_0.0.1_$arch.deb" >/dev/null && ok 'installs' || bad 'installs'
 [ -x /opt/pipulse/node/bin/node ] && id pipulse >/dev/null && ok 'node and user' || bad 'node and user'
 echo 'PIPULSE_PORT=8889' >> /etc/pipulse/pipulse.env
