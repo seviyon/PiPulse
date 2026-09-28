@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { parseDuration } from '@pipulse/storage';
+import { parseDuration } from '@pipulse/storage/duration';
 import { checkTemplate, TemplateError } from './template.js';
 
 export interface WebhookConfig {
