@@ -145,7 +145,13 @@ jobs:
           git worktree add pages gh-pages 2>/dev/null || git worktree add --orphan -b gh-pages pages
           sh packaging/apt-publish.sh pages/apt 3 out/pipulse_"$V"_*.deb
           touch pages/.nojekyll # serve the apt files as they are
-          cd pages && git add -A && git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -qm "apt: pipulse $V" && git push origin gh-pages
+          # One fresh commit each release, force-pushed: git history would otherwise keep
+          # every .deb ever published (each carries Node), growing the branch without end.
+          cd pages
+          git checkout -q --orphan pages-new
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -qm "apt: pipulse $V"
+          git push --force origin HEAD:gh-pages
       - name: Checksums
         env:
           APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
