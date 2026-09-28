@@ -1,15 +1,19 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "docker:pinDigests"],
-  "labels": ["release:patch"],
-  "vulnerabilityAlerts": { "labels": ["release:patch", "security"] },
+  "vulnerabilityAlerts": {
+    "labels": ["release:patch", "security"]
+  },
   "packageRules": [
     {
       "matchUpdateTypes": ["patch", "minor", "digest", "pin", "pinDigest"],
       "automerge": true,
       "platformAutomerge": true
     },
-    { "matchUpdateTypes": ["major"], "automerge": false },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
     {
       "matchFileNames": ["packaging/node-versions.json"],
       "matchDepNames": ["node-armhf"],
@@ -20,6 +24,21 @@
       "matchDepNames": ["node-arm64", "node-amd64"],
       "allowedVersions": "/^(24|26|28)\\./",
       "groupName": "bundled Node (64-bit)"
+    },
+    {
+      "description": "Only updates that change what ships make a release: runtime dependencies (bundled into the app or the dashboard).",
+      "matchDepTypes": ["dependencies"],
+      "addLabels": ["release:patch"]
+    },
+    {
+      "description": "The Node bundled into every native install.",
+      "matchFileNames": ["packaging/node-versions.json"],
+      "addLabels": ["release:patch"]
+    },
+    {
+      "description": "The Docker image's base (Node and Debian in the image).",
+      "matchManagers": ["dockerfile"],
+      "addLabels": ["release:patch"]
     }
   ],
   "customManagers": [
