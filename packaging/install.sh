@@ -17,28 +17,88 @@ die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
 install_apt() {
   command -v apt-get >/dev/null 2>&1 || die 'no apt here: use --tarball'
   [ "$(uname -m)" != armv6l ] || die 'this Pi (armv6) is not supported: Node 22 has no official build for it'
-  migrate_tarball_install
+
+  # 1. Reach and verify the repository, and download the package, before changing
+  #    anything an existing install depends on.
   log 'adding the PiPulse apt repository'
-  curl -fsSL "$APT_URL/pipulse.gpg" -o /usr/share/keyrings/pipulse.gpg
+  key=$(mktemp)
+  curl -fsSL "$APT_URL/pipulse.gpg" -o "$key" || { rm -f "$key"; die "could not download the repository key from $APT_URL"; }
+  install -m 644 "$key" /usr/share/keyrings/pipulse.gpg
+  rm -f "$key"
   echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] $APT_URL stable main" > /etc/apt/sources.list.d/pipulse.list
-  apt-get update -qq
-  # Never prompt (stdin is the curl pipe): keep an existing pipulse.env as it is.
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null
+  if ! apt-get update -qq || ! apt-get install -y -qq --download-only pipulse </dev/null; then
+    drop_apt_source
+    die "the PiPulse apt repository at $APT_URL could not be used; nothing was changed"
+  fi
+
+  # 2. A tarball install is moved aside, not deleted, until the package is in.
+  moved=no
+  if tarball_installed; then
+    log 'moving the tarball install to apt (settings and data are kept)'
+    set_aside_tarball
+    moved=yes
+  fi
+
+  # 3. Install. Never prompt (stdin is the curl pipe): keep an existing pipulse.env.
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null; then
+    # Remove, never purge: purging runs postrm's clean-up, which deletes /etc/pipulse
+    # and the data. Removing keeps them (and pipulse.env, a conffile).
+    dpkg --remove --force-remove-reinstreq pipulse >/dev/null 2>&1 || true
+    drop_apt_source
+    if [ "$moved" = yes ]; then
+      restore_tarball
+      die 'installing the package failed; the tarball install was put back as it was'
+    fi
+    die 'installing the package failed'
+  fi
+  if [ "$moved" = yes ]; then drop_tarball_backup; fi
   log 'installed; upgrades now come with: sudo apt upgrade'
 }
 
-# A tarball install moving to apt: remove its app, command and unit (which would
-# shadow the packaged one), keep /etc/pipulse and the data.
-migrate_tarball_install() {
-  [ -d /opt/pipulse ] || [ -e /etc/systemd/system/pipulse.service ] || return 0
-  if dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'; then return 0; fi
-  log 'moving the tarball install to apt (settings and data are kept)'
-  if [ -d /run/systemd/system ]; then systemctl disable --now pipulse >/dev/null 2>&1 || true; fi
-  rm -f /etc/systemd/system/pipulse.service
-  if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
-  rm -rf /opt/pipulse /usr/bin/pipulse
+drop_apt_source() { rm -f /etc/apt/sources.list.d/pipulse.list /usr/share/keyrings/pipulse.gpg; }
+
+# A tarball install: PiPulse files dpkg doesn't own.
+tarball_installed() {
+  [ -d /opt/pipulse ] || [ -e /etc/systemd/system/pipulse.service ] || return 1
+  ! dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'
 }
+
+# Moves the tarball's app, command and unit (which would shadow the packaged one)
+# aside, remembering whether the service was enabled and running. /etc/pipulse and
+# the data stay where they are.
+ASIDE=/var/lib/pipulse-tarball-backup
+set_aside_tarball() {
+  rm -rf "$ASIDE"
+  mkdir -p "$ASIDE"
+  was_enabled=no was_active=no
+  if [ -d /run/systemd/system ]; then
+    if systemctl is-enabled pipulse >/dev/null 2>&1; then was_enabled=yes; fi
+    if systemctl is-active pipulse >/dev/null 2>&1; then was_active=yes; fi
+    systemctl disable --now pipulse >/dev/null 2>&1 || true
+  fi
+  echo "$was_enabled $was_active" > "$ASIDE/state"
+  if [ -d /opt/pipulse ]; then mv /opt/pipulse "$ASIDE/opt"; fi
+  if [ -e /usr/bin/pipulse ]; then mv /usr/bin/pipulse "$ASIDE/pipulse"; fi
+  if [ -e /etc/systemd/system/pipulse.service ]; then mv /etc/systemd/system/pipulse.service "$ASIDE/pipulse.service"; fi
+  if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+}
+
+restore_tarball() {
+  rm -rf /opt/pipulse
+  if [ -d "$ASIDE/opt" ]; then mv "$ASIDE/opt" /opt/pipulse; fi
+  if [ -e "$ASIDE/pipulse" ]; then mv "$ASIDE/pipulse" /usr/bin/pipulse; fi
+  if [ -e "$ASIDE/pipulse.service" ]; then mv "$ASIDE/pipulse.service" /etc/systemd/system/pipulse.service; fi
+  read -r was_enabled was_active < "$ASIDE/state" || true
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    if [ "${was_enabled:-no}" = yes ]; then systemctl enable pipulse >/dev/null 2>&1 || true; fi
+    if [ "${was_active:-no}" = yes ]; then systemctl start pipulse || true; fi
+  fi
+  rm -rf "$ASIDE"
+}
+
+drop_tarball_backup() { rm -rf "$ASIDE"; }
 
 fetch_release() { # fetch_release VERSION DIR → DIR/pipulse-VERSION.tar.gz, checked
   base="https://github.com/$REPO/releases/download/v$1"
