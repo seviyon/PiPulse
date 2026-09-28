@@ -19,6 +19,7 @@ import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './aler
 import { registerAuth, type AuthOptions } from './auth-routes.js';
 import { createHealth, type Health } from './health.js';
 import { registerNotifyRoutes } from './notify-routes.js';
+import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
@@ -113,6 +114,10 @@ export interface ServerOptions {
   settings?: SettingsOptions;
   /** Rule editing and the live rule set; when set, /api/config serves its rules in force. */
   alertRules?: AlertRulesOptions;
+  /** The release version (from version.json); 'dev' when unset. */
+  version?: string;
+  /** The running Node and its end of security support. */
+  node?: NodeSupport;
   /** Liveness at /api/health (public); default checks only the database. */
   health?: Health;
   /** Webhook delivery status, served read-only at /api/notify. */
@@ -190,7 +195,10 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       : reply.status(503).send({ status: 'unhealthy', problems: result.problems });
   });
 
+  const node = options.node ?? nodeSupport();
   app.get('/api/config', async () => ({
+    version: options.version ?? 'dev',
+    node,
     device,
     plugins,
     serverTime: Date.now(),

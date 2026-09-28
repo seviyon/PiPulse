@@ -25,6 +25,7 @@ import {
 } from '@pipulse/notify';
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import { createHealth } from './health.js';
+import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
   createFeed,
@@ -56,6 +57,10 @@ const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
  */
 const WEB_DIR =
   process.env['PIPULSE_WEB_DIR'] ?? fileURLToPath(new URL('../../web/dist', import.meta.url));
+
+// The app root is three levels above packages/api/dist/server.js; a release stamps version.json there.
+const VERSION = readVersion(fileURLToPath(new URL('../../../', import.meta.url)));
+const NODE = nodeSupport();
 
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -177,7 +182,9 @@ const app = buildServer(db, {
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
   notify: notifications,
-  health
+  health,
+  version: VERSION,
+  node: NODE
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
@@ -226,10 +233,14 @@ app
   .then(() => {
     const { port } = app.server.address() as AddressInfo;
     console.log(
-      `[pipulse] listening on http://${HOST}:${port}` +
+      `[pipulse] ${VERSION} (Node ${NODE.version}) listening on http://${HOST}:${port}` +
         (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +
         (PROTECT_READS ? ' (reads need sign-in)' : '')
     );
+    if (NODE.ended)
+      console.warn(
+        `[pipulse] Node ${NODE.line} no longer gets security fixes (since ${NODE.supportEnds})`
+      );
   })
   .catch((error: unknown) => {
     console.error(error);
