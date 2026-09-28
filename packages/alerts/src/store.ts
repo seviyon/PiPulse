@@ -65,10 +65,14 @@ export function latestReading(db: PiPulseDb, metric: string): Reading | null {
 export function latestRollup(db: PiPulseDb, metric: string): Reading | null {
   const newest = (resolution: string) =>
     `SELECT ts, avg AS value FROM metrics_rollup WHERE metric = ?1 AND resolution = '${resolution}' ORDER BY ts DESC LIMIT 1`;
+  // The finest level wins, by an explicit rank: UNION ALL promises no row order.
   const row = db
     .prepare(
-      `SELECT ts, value FROM (${newest('1m')}) UNION ALL SELECT ts, value FROM (${newest('1h')})
-       UNION ALL SELECT ts, value FROM (${newest('1d')}) LIMIT 1`
+      `SELECT ts, value FROM (
+         SELECT ts, value, 1 AS level FROM (${newest('1m')})
+         UNION ALL SELECT ts, value, 2 FROM (${newest('1h')})
+         UNION ALL SELECT ts, value, 3 FROM (${newest('1d')})
+       ) ORDER BY level LIMIT 1`
     )
     .get(metric) as Reading | undefined;
   return row ?? null;
