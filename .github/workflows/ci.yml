@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         node-version: [22.x, 24.x]
@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
   shellcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Shellcheck the packaging scripts
@@ -45,7 +45,7 @@ jobs:
 
   packaging:
     # Installs, upgrades, rolls back and removes PiPulse in a clean Debian container.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: node:22-bookworm-slim
     steps:
       - uses: actions/checkout@v7
@@ -57,7 +57,7 @@ jobs:
         run: sh packaging/test/run.sh
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
