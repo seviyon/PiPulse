@@ -111,7 +111,7 @@ The engine's `onChange` reports every raise and clear. Notifications are sent fo
 
 Not sent: acknowledgements, and clears with `clearedBy: 'rule_removed'` (the operator removed or disabled the rule themselves).
 
-**Pairing an edit's close and reopen.** Since 5b-2, editing a rule closes its open alert as `rule_changed` and, if the edited rule still holds, reopens it in the same engine check with the same timestamp. So a `rule_changed` clear is queued as a "cleared" row that isn't due for 30 s. When a raise for the same rule and metric arrives with `raisedAt` equal to that clear's `clearedAt`, the pending clear row is deleted for each webhook the reopened alert still reaches (a webhook whose `minSeverity` is above the new severity keeps its clear: for it, the alert is over), and a "raised" is queued only if the severity or message differs from the alert that closed. With no re-raise, the "cleared" goes out after 30 s.
+**Pairing an edit's close and reopen.** Since 5b-2, editing a rule closes its open alert as `rule_changed` and, if the edited rule still holds, reopens it in the same engine check with the same timestamp. So a `rule_changed` clear is queued as a "cleared" row that isn't due for 30 s. When a raise for the same rule and metric arrives with `raisedAt` equal to that clear's `clearedAt`, that alert's pending clear row (matched by alert id, never other alerts' clears for the same rule) is deleted for each webhook the reopened alert still reaches (a webhook whose `minSeverity` is above the new severity keeps its clear: for it, the alert is over), and a "raised" is queued only if the severity or message differs from the alert that closed. With no re-raise, the "cleared" goes out after 30 s.
 
 Filters (`events`, `minSeverity`) apply per webhook; a cleared event uses the severity of the alert that cleared.
 
@@ -147,11 +147,11 @@ CREATE INDEX idx_notifications_queue ON notifications(webhook_id, status, id);
 A loop in the server process (`startNotifier`), started next to the engine and stopped on shutdown, the same pattern as housekeeping:
 
 - It wakes on each enqueue and at least every 5 s.
-- Per webhook, one request at a time: it sends that webhook's oldest pending row whose `next_at` has passed. Later rows for the same webhook wait behind it, so a "cleared" never arrives before its "raised". Webhooks don't wait for each other.
+- Per webhook, one request at a time, each webhook in its own loop: it sends that webhook's oldest pending row whose `next_at` has passed. Later rows for the same webhook wait behind it, so a "cleared" never arrives before its "raised". Webhooks don't wait for each other: one hanging until its timeout doesn't slow another's queue.
 - Any 2xx response marks the row `sent`. Anything else is a failed attempt: a non-2xx status, a timeout, a network error, or a 3xx (redirects are not followed, so a URL can't send the Pi elsewhere). At most 1 KB of a response is read, and only to classify it.
 - Retry delay: 5 s after the first failure, doubling, capped at 5 min.
 - After 6 h of failures since the row was created, it is marked `failed` and logged once: `[pipulse] webhook apprise: gave up after 43 attempts (last: HTTP 503)`. Failures before that are not logged per attempt; the Settings page shows them.
-- **Clock jumps.** The Pi has no RTC: a `next_at` more than 5 min in the future is treated as due in 5 min, so a clock jumping backwards can't stall the queue.
+- **Clock jumps.** The Pi has no RTC. While running, the sender compares the wall clock with a monotonic one on every read of the time; a jump of a minute or more (e.g. NTP syncing after boot) moves every pending row's `created_at` and `next_at` by the same amount and is logged, so retries and the 6 h give-up follow real elapsed time. For a jump it can't see (while PiPulse was stopped), a `next_at` more than 5 min in the future is treated as due in 5 min, so the queue can't stall.
 - **Restart.** Pending rows resume where they left off. At startup, pending rows for a webhook id no longer in the file are marked `failed` with `webhook removed`.
 - A failing send is reported and never throws into the engine or the server.
 

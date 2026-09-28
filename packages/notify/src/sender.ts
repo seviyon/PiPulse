@@ -4,6 +4,7 @@ import { createWebhookAction, type AlertAction } from './action.js';
 import { urlHost, type WebhookConfig } from './config.js';
 import { createEnqueuer } from './enqueue.js';
 import {
+  createdAtOf,
   failRemovedWebhooks,
   headOf,
   markAttemptFailed,
@@ -11,6 +12,7 @@ import {
   markSent,
   pruneNotifications,
   setNextAt,
+  shiftPending,
   webhookStats
 } from './outbox.js';
 import type { MetricLabel } from './template.js';
@@ -20,6 +22,8 @@ export const MAX_RETRY_MS = 5 * 60_000;
 export const GIVE_UP_AFTER_MS = 6 * 60 * 60_000;
 export const PRUNE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
+/** A wall-clock move this far from monotonic time between two checks counts as a jump. */
+const CLOCK_JUMP_MS = 60_000;
 
 /** Delay before the next try, given the attempts already made: 1 → 5 s, 2 → 10 s, … capped at 5 min. */
 export function retryDelay(attempts: number): number {
@@ -41,9 +45,10 @@ export async function sendNext(
   { action, timeoutMs }: Deliverer,
   options: SendOptions
 ): Promise<boolean> {
+  // Read the time first: calling now() may shift pending rows (a clock jump).
+  const t = options.now();
   const row = headOf(db, action.id);
   if (!row) return false;
-  const t = options.now();
   // The Pi has no RTC: after the clock jumps back, a retry could sit hours
   // away. Never wait longer than the longest retry delay.
   if (row.nextAt - t > MAX_RETRY_MS) {
@@ -58,7 +63,9 @@ export async function sendNext(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const at = options.now();
-    if (at - row.createdAt >= GIVE_UP_AFTER_MS) {
+    // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
+    const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
+    if (at - createdAt >= GIVE_UP_AFTER_MS) {
       markGivenUp(db, row.id, at, reason);
       options.onGiveUp?.(action.id, row.attempts + 1, reason);
     } else {
@@ -109,13 +116,42 @@ export function startNotifications(
     metrics: MetricLabel[];
     log?: (message: string) => void;
     now?: () => number;
+    /** Monotonic ms (default performance.now), to notice wall-clock jumps. */
+    monotonic?: () => number;
     intervalMs?: number;
     actions?: AlertAction[];
   }
 ): Notifications {
   const { webhooks } = options;
-  const now = options.now ?? Date.now;
+  const wallNow = options.now ?? Date.now;
+  const monotonic = options.monotonic ?? (() => performance.now());
   const log = options.log ?? ((message: string) => console.warn(`[pipulse] ${message}`));
+
+  // The Pi has no RTC: its clock can jump hours when NTP syncs after boot (or
+  // back). Queued rows keep wall-clock times, so move them with the jump;
+  // otherwise a jump forward gives up a fresh row after one try, and a jump
+  // back keeps retrying a dead webhook past 6 h. Every read of the time checks.
+  let lastWall = wallNow();
+  let lastMono = monotonic();
+  const now = () => {
+    const wall = wallNow();
+    const mono = monotonic();
+    const jump = wall - lastWall - (mono - lastMono);
+    lastWall = wall;
+    lastMono = mono;
+    if (Math.abs(jump) >= CLOCK_JUMP_MS) {
+      try {
+        const moved = shiftPending(db, jump);
+        log(
+          `clock jumped ${jump > 0 ? 'forward' : 'back'} ${Math.round(Math.abs(jump) / 1000)} s; ` +
+            `moved ${moved} queued notification${moved === 1 ? '' : 's'} with it`
+        );
+      } catch (error) {
+        log(`notification clock adjustment failed: ${messageOf(error)}`);
+      }
+    }
+    return wall;
+  };
   const actions = webhooks.map((webhook) => ({
     action: options.actions?.find((a) => a.id === webhook.id) ?? createWebhookAction(webhook),
     timeoutMs: webhook.timeoutMs

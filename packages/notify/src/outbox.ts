@@ -108,6 +108,28 @@ export function deletePendingClears(db: PiPulseDb, alertId: number, webhookIds: 
   );
 }
 
+/**
+ * Moves every pending row's times by `ms`, after the wall clock jumped by that
+ * much, so retry schedules and the give-up age follow real elapsed time.
+ */
+export function shiftPending(db: PiPulseDb, ms: number): number {
+  return Number(
+    db
+      .prepare(
+        `UPDATE notifications SET created_at = created_at + ?, next_at = next_at + ? WHERE status = 'pending'`
+      )
+      .run(ms, ms).changes
+  );
+}
+
+/** A row's creation time, as last shifted; undefined once it is gone. */
+export function createdAtOf(db: PiPulseDb, id: number): number | undefined {
+  const row = db
+    .prepare(`SELECT created_at AS createdAt FROM notifications WHERE id = ?`)
+    .get(id) as { createdAt: number } | undefined;
+  return row?.createdAt;
+}
+
 /** Fails pending rows for webhooks no longer configured (not in `keep`). */
 export function failRemovedWebhooks(db: PiPulseDb, keep: string[], at: number): number {
   const placeholders = keep.map(() => '?').join(', ');

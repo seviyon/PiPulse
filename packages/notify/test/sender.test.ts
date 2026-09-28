@@ -179,6 +179,60 @@ describe('startNotifications', () => {
     await n.stop();
   });
 
+  describe('across a clock jump', () => {
+    const HOUR = 60 * 60_000;
+    let mono: number;
+    const logs: string[] = [];
+    const startFailing = () => {
+      mono = 0;
+      logs.length = 0;
+      add('a');
+      return startNotifications(db, {
+        webhooks: [
+          {
+            id: 'a',
+            url: 'http://x',
+            method: 'POST',
+            headers: {},
+            events: ['raised', 'cleared'],
+            minSeverity: 'warning',
+            timeoutMs: 1000
+          }
+        ],
+        hostname: 'Io',
+        metrics: [],
+        now: () => now,
+        monotonic: () => mono,
+        log: (message) => logs.push(message),
+        intervalMs: 10,
+        actions: [action('a', Array(10).fill('HTTP 500'))]
+      });
+    };
+
+    it('keeps retrying after the clock jumps forward (NTP after boot)', async () => {
+      const t0 = now;
+      const n = startFailing();
+      await vi.waitFor(() => expect(headOf(db, 'a')!.attempts).toBe(1));
+      mono += 5_000;
+      now += 10 * HOUR + 5_000;
+      await vi.waitFor(() => expect(headOf(db, 'a')?.attempts).toBe(2));
+      expect(headOf(db, 'a')!.createdAt).toBe(t0 + 10 * HOUR);
+      expect(logs.join('\n')).toMatch(/clock jumped forward/);
+      await n.stop();
+    });
+
+    it('still gives up after 6 hours when the clock jumped back meanwhile', async () => {
+      const n = startFailing();
+      await vi.waitFor(() => expect(headOf(db, 'a')!.attempts).toBe(1));
+      mono += 6 * HOUR + 1_000;
+      now += 3 * HOUR + 1_000;
+      await vi.waitFor(() => expect(headOf(db, 'a')).toBeUndefined());
+      expect(webhookStats(db, 'a').lastFailure).toMatchObject({ reason: 'HTTP 500' });
+      expect(logs.join('\n')).toMatch(/clock jumped back/);
+      await n.stop();
+    });
+  });
+
   it('wakes on enqueue and delivers', async () => {
     const a = action('apprise', [true]);
     const n = startNotifications(db, {
