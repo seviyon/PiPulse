@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
+import { join } from 'node:path';
 import { cpuVoltagePlugin, throttledPlugin } from './vcgencmd.js';
 import { swapIoPlugin } from './swap-io.js';
 import si, { type Systeminformation } from 'systeminformation';
@@ -242,10 +244,33 @@ export interface DeviceInfo {
   cpus: number;
 }
 
-export async function readDeviceInfo(): Promise<DeviceInfo> {
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The host's OS name and Pi model, read under `hostRoot` (a container mounts
+ * the host's /etc/os-release and /proc/device-tree/model there). Missing
+ * files are left out, so the usual sources apply.
+ */
+export function hostOverrides(hostRoot: string): { os?: string; model?: string } {
+  const result: { os?: string; model?: string } = {};
+  const osRelease = readText(join(hostRoot, 'etc/os-release'));
+  const pretty = osRelease?.match(/^PRETTY_NAME="?([^"\n]*)"?$/m)?.[1];
+  if (pretty) result.os = pretty;
+  const model = readText(join(hostRoot, 'model'))?.replace(/\0/g, '').trim();
+  if (model) result.model = model;
+  return result;
+}
+/** Device facts; with `hostRoot`, the OS name and model come from the host's files under it. */
+export async function readDeviceInfo(options: { hostRoot?: string } = {}): Promise<DeviceInfo> {
   const [system, osInfo, mem] = await Promise.all([si.system(), si.osInfo(), si.mem()]);
   const release = [osInfo.release, osInfo.codename && `(${osInfo.codename})`].filter(Boolean);
-  return {
+  const info: DeviceInfo = {
     hostname: osInfo.hostname,
     platform: osInfo.platform,
     arch: osInfo.arch,
@@ -255,6 +280,7 @@ export async function readDeviceInfo(): Promise<DeviceInfo> {
     memoryTotalMb: Math.round((mem.total / 2 ** 20) * 100) / 100,
     cpus: os.cpus().length
   };
+  return { ...info, ...(options.hostRoot ? hostOverrides(options.hostRoot) : {}) };
 }
 
 export const builtinPlugins: CollectorPlugin[] = [

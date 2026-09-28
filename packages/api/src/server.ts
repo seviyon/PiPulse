@@ -24,6 +24,7 @@ import {
   type WebhookConfig
 } from '@pipulse/notify';
 import { readAuthConfig, type AuthConfig } from './auth.js';
+import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
@@ -34,7 +35,19 @@ import {
   rawRetentionProblem
 } from './index.js';
 
+// In a container (the Docker image sets these) the firmware plugins can't run, and
+// the host's OS name and Pi model are mounted under PIPULSE_HOST_ROOT.
+const IN_CONTAINER = process.env['PIPULSE_IN_CONTAINER'] === 'true';
+const HOST_ROOT = process.env['PIPULSE_HOST_ROOT'];
+const { run: RUN_PLUGINS, unavailable: UNAVAILABLE } = splitForContainer(
+  builtinPlugins,
+  IN_CONTAINER
+);
+
 const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
+// What the engine watches: only plugins that run here, so the '*' silence rule
+// (not_collecting) never waits on a plugin a container can't schedule.
+const RUN_METRICS = RUN_PLUGINS.map(({ id, intervalMs }) => ({ id, intervalMs }));
 
 /**
  * PiPulse server: one process that runs the collector scheduler and serves
@@ -168,14 +181,15 @@ const alertFeed = createFeed<AlertEvent>();
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
-  device: await readDeviceInfo(),
+  device: await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {}),
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
     id,
     label,
     unit,
-    intervalMs
+    intervalMs,
+    ...(UNAVAILABLE.has(id) ? { unavailable: CONTAINER_UNAVAILABLE } : {})
   })),
   alertRules: { source: RULES, recheck: () => engine.alerts?.check() },
   alertFeed,
@@ -203,7 +217,7 @@ const housekeeping = startHousekeeping(db, {
     console.error('[pipulse] housekeeping failed:', error);
   }
 });
-const scheduler = startScheduler(db, builtinPlugins, {
+const scheduler = startScheduler(db, RUN_PLUGINS, {
   onSample: (sample) => {
     health.markReading();
     live.publish(sample);
@@ -215,7 +229,7 @@ const scheduler = startScheduler(db, builtinPlugins, {
 // Checks every alert rule now and then every 15 s; raises and clears go to /api/live.
 engine.alerts = startAlerts(db, {
   rules: rulesInForce,
-  metrics: METRICS,
+  metrics: RUN_METRICS,
   onChange: (event) => {
     alertFeed.publish(event);
     notifications.enqueue(event);

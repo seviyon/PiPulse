@@ -33,6 +33,8 @@ export interface PluginInfo {
   label: string;
   unit: string;
   intervalMs: number;
+  /** Why this plugin isn't running here (e.g. 'Not available in Docker'); absent when it runs. */
+  unavailable?: string;
 }
 
 export interface DeviceInfo {
