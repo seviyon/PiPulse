@@ -560,7 +560,8 @@ button:hover {
 }
 
 .alert-list,
-.rule-list {
+.rule-list,
+.webhook-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -569,7 +570,8 @@ button:hover {
 }
 
 .alert-list li,
-.rule-list li {
+.rule-list li,
+.webhook-list li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
