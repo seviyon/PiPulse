@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 5b-2 (alert rules in the browser) is complete; 5b-3 (notifications) is in progress.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 5b-3 (notifications) is complete; 6 (packaging) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -198,6 +198,8 @@ To be told when an alert opens or clears, point `PIPULSE_NOTIFY_FILE` at a JSON 
 
 Each webhook needs an `id` and an `http(s)` `url`; `method` (`POST` or `PUT`), `headers`, `body`, `events` (`raised`, `cleared`; default both), `minSeverity` (`warning` or `critical`) and `timeout` (`1s`–`60s`, default `10s`) are optional. Without a `body`, PiPulse sends what Apprise's `/notify` endpoint expects (a title, a body line, and a `type` of `warning`, `failure`, `success` or `info`), so an Apprise URL needs nothing else. A `body` is any JSON with `{{placeholders}}` in its strings — `event`, `ruleId`, `metric`, `metricLabel`, `severity`, `message`, `value`, `rawValue`, `raisedAt`, `clearedAt`, `duration`, `clearedBy`, `hostname` — and always stays valid JSON, whatever the alert message holds. An invalid file stops PiPulse at startup with a message naming the webhook and field.
 
+A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail.
+
 The file usually holds secrets: `chmod 600` it (PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
 
 Messages are queued in the database and sent in order per webhook, retried with backoff (5 s, doubling, up to every 5 minutes) for up to 6 hours, and survive restarts. Removing or disabling a rule closes its alert without a message, and editing a rule so its alert closes and reopens unchanged sends nothing. To check a webhook without waiting for an alert:
@@ -207,6 +209,8 @@ PIPULSE_NOTIFY_FILE=~/pipulse-notify.json node packages/api/dist/notify-test.js 
 ```
 
 It sends a test message to each webhook (or the one named) and prints `delivered` or why it failed.
+
+If the receiver uses HTTPS with a certificate from your own certificate authority (a homelab CA, for example), Node doesn't trust it by default and every delivery fails with `network error (UNABLE_TO_VERIFY_LEAF_SIGNATURE)`. Give Node the CA certificate when starting PiPulse (and `notify-test`): `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
 
 ## Sign-in and settings
 
@@ -242,7 +246,7 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 5a | Alerting (rules, dashboard alerts) | ✅ Done |
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
-| 5b-3 | Notifications (webhook) | 🚧 In progress |
+| 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (systemd + Docker, multi-arch CI) |  |
 | 7 | Cutover from the legacy daemon |  |
 
