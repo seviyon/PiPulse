@@ -99,6 +99,7 @@ The `pipulse` command wraps the everyday tasks, with the service's settings load
 ```bash
 pipulse version                               # PiPulse and Node versions, and Node's end of support
 pipulse hash-password | sudo tee /etc/pipulse/admin.hash >/dev/null
+sudo chown root:pipulse /etc/pipulse/admin.hash && sudo chmod 640 /etc/pipulse/admin.hash
 sudo pipulse notify-test [webhook-id]         # send a test message through PIPULSE_NOTIFY_FILE
 ```
 

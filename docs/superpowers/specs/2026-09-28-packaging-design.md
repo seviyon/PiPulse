@@ -110,8 +110,9 @@ curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.s
 
 ## Apt repository
 
-- Published by the release workflow to the `gh-pages` branch, served at `https://seviyon.github.io/PiPulse/apt`: suite `stable`, component `main`, architectures `armhf arm64 amd64`, keeping the last 3 versions per architecture in the pool.
+- Published by the release workflow to the `gh-pages` branch as a single fresh commit on each release (force-pushed, so the `.deb`s of old releases don't accumulate in git history), served at `https://seviyon.github.io/PiPulse/apt`: suite `stable`, component `main`, architectures `armhf arm64 amd64`, keeping the last 3 versions per architecture in the pool.
 - `InRelease` and `Release.gpg` signed with a dedicated GPG key whose private half is a repository secret; its public half is published as `https://seviyon.github.io/PiPulse/apt/pipulse.gpg`.
+- **From a tarball install:** the one-line installer moves it to apt — it removes the tarball's app, command and unit (which would shadow the packaged one), keeps `/etc/pipulse` and the data, and installs non-interactively keeping the existing `pipulse.env` (`--force-confold`, stdin closed, as `curl | sudo sh` would leave it).
 - Manual setup, as the README shows it:
 
 ```bash
@@ -244,7 +245,7 @@ volumes:
 
 - Extends `config:recommended`; covers every npm package (dependencies and devDependencies), GitHub Actions (pinned to commit SHAs), the Docker base image (pinned by digest), and `packaging/node-versions.json` through a custom regex manager on the `node-version` datasource.
 - `armhf` is held below Node 23; `arm64`/`amd64` follow the current LTS line.
-- Every Renovate PR is labelled `release:patch`.
+- Only updates that change what ships are labelled `release:patch` (runtime `dependencies`, `packaging/node-versions.json`, the Docker base image, and security alerts); development tools, test libraries and action pins still update but ride along with the next release instead of making one.
 - Patch and minor updates merge automatically once CI passes; majors are opened immediately and wait for review. Security advisories (GitHub's) are raised immediately regardless of schedule.
 
 ## One-time GitHub setup

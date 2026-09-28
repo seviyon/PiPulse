@@ -5,7 +5,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 ## How releases happen
 
 - **A release is a merged PR with a label.** Merging a PR into `main` with `release:patch`, `release:minor` or `release:major` makes the next version from the newest `v*` tag (the first release is `v0.6.0`). A PR without one of those labels releases nothing.
-- **Renovate's PRs carry `release:patch`**, so every dependency, base-image or Node update that merges ships in a release on its own. Patch and minor updates merge themselves once CI passes; majors wait for review.
+- **Renovate releases only what ships.** Its PRs for runtime `dependencies`, the bundled Node (`packaging/node-versions.json`), the Docker base image, and every security alert carry `release:patch`, so they reach the Pis in a release of their own. Development tools, test libraries and action pins still update, but release nothing: they ride along with the next release. Patch and minor updates merge themselves once CI passes; majors wait for review.
 - **Or by hand:** Actions → _Release_ → _Run workflow_, with a version (e.g. to redo a release whose run failed; the version must not be tagged yet).
 - **Only plain `X.Y.Z` versions** are released: a pre-release like `0.7.0-rc.1` would sort above `0.7.0` in apt and strand the Pis that installed it.
 - **The signing key never meets npm.** Building and testing run in jobs with no secrets and a read-only token; only the `publish` job has `APT_SIGNING_KEY`, and it runs no npm or project code.
@@ -16,7 +16,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 1. tests and builds once, and assembles `pipulse-<version>.tar.gz`;
 2. builds `pipulse_<version>_{armhf,arm64,amd64}.deb`, each with its Node (downloaded and GPG-verified), and runs `lintian` on them;
 3. pushes `ghcr.io/seviyon/pipulse:<version>` and `:latest` (`linux/arm64`, `linux/amd64`);
-4. adds the `.deb`s to the apt repository on the `gh-pages` branch (keeping the newest 3 per CPU) and signs its indexes;
+4. adds the `.deb`s to the apt repository on the `gh-pages` branch (keeping the newest 3 per CPU), signs its indexes, and force-pushes the branch as a single fresh commit, so old packages don't pile up in its history;
 5. writes and signs `SHA256SUMS`, tags `v<version>`, and publishes the GitHub Release with the tarball, `.deb`s, `install.sh`, `compose.yaml` and the checksums;
 6. installs the new version from the apt repository in a clean Debian container, exactly as the README tells users to.
 
