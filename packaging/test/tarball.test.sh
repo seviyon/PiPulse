@@ -13,6 +13,7 @@ for path in pipulse-0.0.0-test/version.json pipulse-0.0.0-test/install.sh \
 done
 if grep -q '/node_modules/vitest/' "$out/list"; then echo 'not ok - dev dependency included'; fail=1; else echo 'ok - no dev dependencies'; fi
 if grep -q 'packages/[^/]*/src/' "$out/list"; then echo 'not ok - sources included'; fail=1; else echo 'ok - no sources'; fi
+if tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" && [ -z "$(find "$out/pipulse-0.0.0-test/node_modules" -type d -empty)" ]; then echo 'ok - no empty folders'; else echo 'not ok - empty folders left'; fail=1; fi
 if grep -q 'packaging/test/' "$out/list"; then echo 'not ok - packaging tests included'; fail=1; else echo 'ok - no packaging tests'; fi
 tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" pipulse-0.0.0-test/version.json
 grep -q '"version":"0.0.0-test"' "$out/pipulse-0.0.0-test/version.json" && echo 'ok - version stamped' || { echo 'not ok - version stamped'; fail=1; }

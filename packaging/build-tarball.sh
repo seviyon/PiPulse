@@ -20,6 +20,8 @@ for pkg in "$repo"/packages/*/; do
   cp -R "$pkg/dist" "$root/packages/$p/"
 done
 (cd "$root" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund >/dev/null)
+# npm leaves empty scope folders behind for the development packages it skipped.
+find "$root/node_modules" -type d -empty -delete
 cp -R "$here" "$root/packaging"
 rm -rf "$root/packaging/test"
 cp "$here/install.sh" "$root/install.sh"

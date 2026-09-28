@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ "$1" = purge ]; then
+  rm -rf /etc/pipulse /var/lib/pipulse
+  if getent passwd pipulse >/dev/null; then deluser --system pipulse >/dev/null 2>&1 || true; fi
+  if getent group pipulse >/dev/null; then delgroup --system pipulse >/dev/null 2>&1 || true; fi
+fi
+if [ -d /run/systemd/system ]; then systemctl daemon-reload >/dev/null 2>&1 || true; fi

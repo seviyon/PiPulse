@@ -21,5 +21,10 @@ curl -fsSL -o "$work/$file" "$mirror/v$version/$file"
 (cd "$work" && grep " $file\$" SHASUMS256.txt | sha256sum -c --quiet -) ||
   die "Node $version: $file does not match its signed checksum"
 mkdir -p "$dest/node"
-tar -xJf "$work/$file" -C "$dest/node" --strip-components=1
+# PiPulse needs only the node binary (its dependencies ship installed): leave out
+# npm, corepack, headers and docs.
+tar -xJf "$work/$file" -C "$work"
+mkdir -p "$dest/node/bin"
+cp "$work/${file%.tar.xz}/bin/node" "$dest/node/bin/node"
+cp "$work/${file%.tar.xz}/LICENSE" "$dest/node/LICENSE"
 log "Node $version ($arch) verified"
