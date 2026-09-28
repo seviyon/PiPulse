@@ -96,7 +96,7 @@ curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.s
 
 - **Default (apt):** on a system with apt, it adds the PiPulse apt repository (key to `/usr/share/keyrings/pipulse.gpg`, source to `/etc/apt/sources.list.d/pipulse.list`, `signed-by` that key only), runs `apt-get update` and `apt-get install pipulse`. Upgrades then come from `apt upgrade`.
 - **Tarball mode:** `--tarball` installs from the latest release's tarball instead of apt; `--version X.Y.Z` picks a release; `--from <file>` uses a local tarball (the pre-release test path; implies tarball mode). It checks the tarball against the release's `SHA256SUMS` (not needed with `--from`, where the operator supplied the file), fetches and verifies Node as above, and calls `setup.sh`.
-- **Upgrade with rollback (tarball mode):** unpack to `app.new` / `node.new`, move the current ones to `app.previous` / `node.previous`, swap in the new ones, restart, and wait up to 30 s for `/api/config` to answer on the port (and host, unless it is `0.0.0.0`) set in `pipulse.env`. If it doesn't, restore the previous version, restart it, report which version is running and exit non-zero. `app.previous` is removed after a successful upgrade.
+- **Upgrade with rollback (tarball mode):** unpack to `app.new` / `node.new`, move the current ones to `app.previous` / `node.previous`, swap in the new ones, restart, and wait up to 30 s for `/api/health` to answer `200` on the port (and host, unless it is `0.0.0.0`) set in `pipulse.env`. If it doesn't, restore the previous version, restart it, report which version is running and exit non-zero. `app.previous` is removed after a successful upgrade.
 - **Removing (tarball mode):** `--uninstall` stops and disables the service and removes `/opt/pipulse`, `/usr/bin/pipulse` and the unit, keeping `/etc/pipulse` and `/var/lib/pipulse`; `--purge` also removes those and the `pipulse` user. (An apt install is removed with `apt remove` / `apt purge`.)
 - Refuses: `armv6`, running without root, and tarball mode without a running systemd unless `--no-start` is given (then it installs, runs `setup.sh`, and skips starting and the health check; CI uses this in containers).
 - **Safe to pipe into a shell:** the whole script is one `main` function called on its last line, so a truncated download runs nothing. The README also shows the two-step form (download, read, run).
@@ -177,7 +177,7 @@ A commented template, `packaging/pipulse.env`, listing every variable with its d
 
 64-bit only: `linux/arm64` and `linux/amd64`.
 
-- **`Dockerfile`, two stages.** Stage 1 (on the build machine's own CPU, since the output is plain JavaScript): `npm ci`, build, prune to production dependencies, write `version.json`. Stage 2: `node:24-bookworm-slim` pinned by digest (Renovate bumps it), the app copied in, a non-root `pipulse` user, `/data` as a volume, `PIPULSE_DB_PATH=/data/pipulse.sqlite`, `PIPULSE_HOST_ROOT=/host`, `PIPULSE_IN_CONTAINER=true`, the ExperimentalWarning silenced, and a `HEALTHCHECK` on `/api/config`.
+- **`Dockerfile`, two stages.** Stage 1 (on the build machine's own CPU, since the output is plain JavaScript): `npm ci`, build, prune to production dependencies, write `version.json`. Stage 2: `node:24-bookworm-slim` pinned by digest (Renovate bumps it), the app copied in, a non-root `pipulse` user, `/data` as a volume, `PIPULSE_DB_PATH=/data/pipulse.sqlite`, `PIPULSE_HOST_ROOT=/host`, `PIPULSE_IN_CONTAINER=true`, the ExperimentalWarning silenced, and a `HEALTHCHECK` on `/api/health` (below): `node -e` fetching `http://127.0.0.1:$PIPULSE_PORT/api/health` (the slim image has no curl), every 30 s, 5 s timeout, 3 retries, 60 s start period. Dockhand, Portainer and `docker ps` show it as the container's health.
 - **Debian slim, not Alpine:** `systeminformation` runs GNU tools (`df` with options BusyBox lacks), so Alpine would break the disk readings.
 - **`compose.yaml`**, commented so the host access isn't mistaken for over-privileging:
 
@@ -209,6 +209,11 @@ volumes:
 4. **Host root.** With `PIPULSE_HOST_ROOT` set, the device info reads the OS name (`PRETTY_NAME`) from `$PIPULSE_HOST_ROOT/etc/os-release` and the model from `$PIPULSE_HOST_ROOT/model` when those files exist, falling back to today's sources. Unset (native), nothing changes.
 5. **In a container.** With `PIPULSE_IN_CONTAINER=true`, the server doesn't schedule the `cpu_voltage` and `throttled` plugins and lists them in `/api/config` with `unavailable: "Not available in Docker"`. Their tiles show that text instead of "No readings yet"; History leaves them out. The versioned `CollectorPlugin` interface doesn't change: the decision is the server's.
 6. **Prompt shutdown** (the deferred minor from 5b-3). `notifications.stop()` aborts deliveries in progress (the same signal as their timeout, combined with `AbortSignal.any`) and waits at most 5 s. A delivery cut short by shutdown is not a failed attempt: its row stays pending, untouched, and the next start sends it at once.
+7. **`GET /api/health`.** Always public — the auth hook allows it even with `PIPULSE_PROTECT_READS=true`, like `/api/session` — so a container manager or the installer can check it without signing in. It answers `200 {"status":"ok"}` when both hold, otherwise `503 {"status":"unhealthy","problems":[…]}` with short fixed strings:
+   - **database:** a `SELECT 1` on the open database succeeds (`"database unavailable"`);
+   - **collector:** the scheduler stored a reading within the last 5 minutes, measured on the monotonic clock so a wall-clock jump can't flip it (`"no readings for 5 min"`). A plugin that fails on its own doesn't count against it; only all collection stopping does.
+
+   It reveals nothing else (no version, no host details), and it is cheap enough to run every 30 s on a Pi 2.
 
 ## CI and release workflows
 
@@ -218,7 +223,7 @@ volumes:
 - Build the tarball and the `amd64` `.deb`; `lintian` the `.deb`.
 - In a clean `debian:bookworm` container: `install.sh --from … --no-start` (no systemd), check the user, folders, modes and `pipulse.env`, start PiPulse from `/opt/pipulse` as the service would and require `/api/config` to answer with the stamped version; then the same for `dpkg -i` of the `.deb`.
 - **Negative test:** a tampered `SHASUMS256.txt` and a list signed by a key not in `node-keys/` must each stop the Node download.
-- Build the Docker image for `amd64`, run it, require `/api/config` to answer and `cpu_voltage` to be listed unavailable.
+- Build the Docker image for `amd64`, run it, require its Docker health to reach `healthy`, `/api/config` to answer, and `cpu_voltage` to be listed unavailable.
 - **Release dry-run:** a PR that touches `packaging/`, `Dockerfile`, `compose.yaml` or `.github/workflows/` runs the full release pipeline without publishing.
 
 **`release.yml`:**
@@ -261,7 +266,7 @@ Done by the operator (the plan lists the exact steps):
 
 ## Testing
 
-- **Unit (Vitest):** `version.json` reading and the `dev` fallback; the end-of-support table (before, after, unknown line); device info with `PIPULSE_HOST_ROOT` pointing at fixture files; plugins marked unavailable in a container and `/api/config` listing them; the tile's "Not available in Docker" text; the Settings About section (with and without the warning); `notifications.stop()` finishing within 5 s and leaving an interrupted row pending with its attempts unchanged.
+- **Unit (Vitest):** `version.json` reading and the `dev` fallback; the end-of-support table (before, after, unknown line); device info with `PIPULSE_HOST_ROOT` pointing at fixture files; plugins marked unavailable in a container and `/api/config` listing them; the tile's "Not available in Docker" text; the Settings About section (with and without the warning); `/api/health` — `200` when healthy, `503` naming the problem when the database fails or no reading was stored for 5 min, public under `PIPULSE_PROTECT_READS`, unaffected by a wall-clock jump; `notifications.stop()` finishing within 5 s and leaving an interrupted row pending with its attempts unchanged.
 - **Packaging (CI):** as listed under [CI and release workflows](#ci-and-release-workflows).
 
 ## Exit criterion
