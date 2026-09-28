@@ -8,7 +8,8 @@
 # Everything is inside main(), called on the last line, so a truncated download runs nothing.
 set -eu
 REPO=seviyon/PiPulse
-APT_URL=https://seviyon.github.io/PiPulse/apt
+# PIPULSE_APT_URL is for tests only (a local repository).
+APT_URL=${PIPULSE_APT_URL:-https://seviyon.github.io/PiPulse/apt}
 
 log() { printf '[pipulse] %s\n' "$*"; }
 die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
@@ -16,12 +17,27 @@ die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
 install_apt() {
   command -v apt-get >/dev/null 2>&1 || die 'no apt here: use --tarball'
   [ "$(uname -m)" != armv6l ] || die 'this Pi (armv6) is not supported: Node 22 has no official build for it'
+  migrate_tarball_install
   log 'adding the PiPulse apt repository'
   curl -fsSL "$APT_URL/pipulse.gpg" -o /usr/share/keyrings/pipulse.gpg
   echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] $APT_URL stable main" > /etc/apt/sources.list.d/pipulse.list
   apt-get update -qq
-  apt-get install -y pipulse
+  # Never prompt (stdin is the curl pipe): keep an existing pipulse.env as it is.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null
   log 'installed; upgrades now come with: sudo apt upgrade'
+}
+
+# A tarball install moving to apt: remove its app, command and unit (which would
+# shadow the packaged one), keep /etc/pipulse and the data.
+migrate_tarball_install() {
+  [ -d /opt/pipulse ] || [ -e /etc/systemd/system/pipulse.service ] || return 0
+  if dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'; then return 0; fi
+  log 'moving the tarball install to apt (settings and data are kept)'
+  if [ -d /run/systemd/system ]; then systemctl disable --now pipulse >/dev/null 2>&1 || true; fi
+  rm -f /etc/systemd/system/pipulse.service
+  if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+  rm -rf /opt/pipulse /usr/bin/pipulse
 }
 
 fetch_release() { # fetch_release VERSION DIR → DIR/pipulse-VERSION.tar.gz, checked
