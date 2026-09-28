@@ -1,0 +1,25 @@
+#!/bin/sh
+# pipulse — PiPulse's command-line helper (installed as /usr/bin/pipulse).
+set -eu
+node=/opt/pipulse/node/bin/node
+app=/opt/pipulse/app
+env=/etc/pipulse/pipulse.env
+run() {
+  # Load the service's settings (and NODE_EXTRA_CA_CERTS) the way systemd does.
+  # shellcheck source=/dev/null  # settings, not code to follow
+  if [ -r "$env" ]; then set -a; . "$env"; set +a; fi
+  exec "$node" --disable-warning=ExperimentalWarning "$@"
+}
+case ${1:-} in
+  version)
+    ver=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$app/version.json" 2>/dev/null || true)
+    echo "PiPulse ${ver:-dev}, Node $("$node" --version)" ;;
+  notify-test)
+    shift
+    if [ "$(id -u)" -eq 0 ]; then exec setpriv --reuid=pipulse --regid=pipulse --init-groups "$0" notify-test "$@"; fi
+    run "$app/packages/api/dist/notify-test.js" "$@" ;;
+  hash-password)
+    run "$app/packages/api/dist/hash-password.js" ;;
+  *)
+    echo 'usage: pipulse version | notify-test [webhook-id] | hash-password' >&2; exit 2 ;;
+esac

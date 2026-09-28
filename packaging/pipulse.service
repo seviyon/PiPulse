@@ -1,0 +1,31 @@
+[Unit]
+Description=PiPulse system monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pipulse
+Group=pipulse
+SupplementaryGroups=video
+Environment=PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite
+Environment=PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist
+Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+EnvironmentFile=/etc/pipulse/pipulse.env
+ExecStart=/opt/pipulse/node/bin/node /opt/pipulse/app/packages/api/dist/server.js
+WorkingDirectory=/var/lib/pipulse
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/pipulse
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
