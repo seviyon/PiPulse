@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "docker:pinDigests"],
+  "labels": ["release:patch"],
+  "vulnerabilityAlerts": { "labels": ["release:patch", "security"] },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch", "minor", "digest", "pin", "pinDigest"],
+      "automerge": true,
+      "platformAutomerge": true
+    },
+    { "matchUpdateTypes": ["major"], "automerge": false },
+    {
+      "matchFileNames": ["packaging/node-versions.json"],
+      "matchDepNames": ["node-armhf"],
+      "allowedVersions": "<23"
+    },
+    {
+      "matchFileNames": ["packaging/node-versions.json"],
+      "matchDepNames": ["node-arm64", "node-amd64"],
+      "allowedVersions": "/^(24|26|28)\\./",
+      "groupName": "bundled Node (64-bit)"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^packaging/node-versions\\.json$/"],
+      "matchStrings": ["\"(?<depName>armhf|arm64|amd64)\": \"(?<currentValue>[0-9.]+)\""],
+      "depNameTemplate": "node-{{depName}}",
+      "packageNameTemplate": "node",
+      "datasourceTemplate": "node-version"
+    }
+  ]
+}
