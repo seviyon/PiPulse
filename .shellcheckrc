@@ -1,0 +1,6 @@
+# packaging/ scripts are POSIX sh; lib.sh is sourced, so it has no shebang.
+shell=sh
+# They source lib.sh through a path computed at run time ("$here/lib.sh").
+disable=SC1091
+# Tests use `check && echo ok || echo not ok`; echo can't fail, so it's safe.
+disable=SC2015
