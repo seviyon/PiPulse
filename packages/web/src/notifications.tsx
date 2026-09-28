@@ -71,8 +71,7 @@ export function NotificationsSection() {
               )}
               {webhook.lastFailure && (
                 <span>
-                  Last failed {formatDateTime(webhook.lastFailure.at)} ({webhook.lastFailure.reason}
-                  )
+                  Last failed {formatDateTime(webhook.lastFailure.at)}: {webhook.lastFailure.reason}
                 </span>
               )}
               {webhook.pending > 0 && <span>{webhook.pending} waiting</span>}

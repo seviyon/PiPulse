@@ -86,7 +86,7 @@ describe('NotificationsSection', () => {
     expect(ntfy.textContent).toContain('ntfy.sh');
     expect(ntfy.textContent).toContain('raised only, critical only');
     expect(ntfy.textContent).toContain(`Last delivered ${formatDateTime(at(9, 0))}`);
-    expect(ntfy.textContent).toContain(`Last failed ${formatDateTime(at(10, 40))} (timeout)`);
+    expect(ntfy.textContent).toContain(`Last failed ${formatDateTime(at(10, 40))}: timeout`);
     expect(ntfy.textContent).toContain('3 waiting');
     expect(ntfy.textContent).toContain('Failing');
     expect(ntfy.querySelector('svg')).not.toBeNull();
