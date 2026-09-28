@@ -76,7 +76,7 @@ On a Raspberry Pi (or any Debian-based Linux) — Pi 2 and newer, 32- or 64-bit:
 curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh
 ```
 
-That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js (the system's is left alone). It runs as the `pipulse` service on port **8888**; open `http://<pi>:8888/`. New releases then arrive with `sudo apt upgrade`. Prefer to read the script first? Download it, read it, then run it:
+That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js (the system's is left alone). It runs as the `pipulse` service on port **8888**; open `http://<pi>:8888/`. New releases then arrive with `sudo apt upgrade`. Running the one-liner again is safe: it installs any newer version, and if something fails (no network, a failed upgrade) it leaves the existing install and its apt source as they were. Prefer to read the script first? Download it, read it, then run it:
 
 ```bash
 curl -fsSLO https://github.com/seviyon/PiPulse/releases/latest/download/install.sh

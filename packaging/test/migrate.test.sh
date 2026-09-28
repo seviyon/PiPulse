@@ -75,6 +75,38 @@ grep -q '"0.0.2"' /opt/pipulse/app/version.json 2>/dev/null && ok 'the packaged 
 grep -q '^PIPULSE_PORT=8889$' /etc/pipulse/pipulse.env && ok 'edited settings kept' || bad 'edited settings kept'
 grep -q '^data$' /var/lib/pipulse/pipulse.sqlite && ok 'data kept' || bad 'data kept'
 
+# 4. The one-liner again on this apt-installed Pi, but the repository can't be reached:
+#    the existing source, key and package must survive.
+cp /etc/apt/sources.list.d/pipulse.list /tmp/list.before
+cp /usr/share/keyrings/pipulse.gpg /tmp/key.before
+apt_intact() {
+  cmp -s /etc/apt/sources.list.d/pipulse.list /tmp/list.before && cmp -s /usr/share/keyrings/pipulse.gpg /tmp/key.before
+}
+# (The key downloads, the indexes don't: the harder case, since the key is replaced first.)
+half_repo=$(mktemp -d)
+cp "$apt_dir/pipulse.gpg" "$half_repo/pipulse.gpg"
+chmod -R a+rX "$half_repo"
+if PIPULSE_APT_URL="file://$half_repo" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 're-run, unreachable: fails'; else ok 're-run, unreachable: fails'; fi
+apt_intact && ok 're-run, unreachable: apt source and key kept' || bad 're-run, unreachable: apt source and key kept'
+dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed' && ok 're-run, unreachable: package still installed' || bad 're-run, unreachable: package still installed'
+
+# 5. The one-liner again, and the upgrade it brings fails in postinst: the package must
+#    not be removed (dpkg's state is left for apt-get -f install), and the source kept.
+"$repo/packaging/build-tarball.sh" 0.0.3 "$out" >/dev/null
+"$repo/packaging/build-deb.sh" 0.0.3 "$arch" "$out/pipulse-0.0.3.tar.gz" "$out" >/dev/null
+up_dir=$(mktemp -d)
+dpkg-deb -R "$out/pipulse_0.0.3_$arch.deb" "$up_dir/pkg"
+printf '#!/bin/sh\necho "simulated postinst failure" >&2\nexit 1\n' > "$up_dir/pkg/DEBIAN/postinst"
+dpkg-deb --root-owner-group --build "$up_dir/pkg" "$up_dir/pipulse_0.0.3_$arch.deb" >/dev/null
+up_repo=$(mktemp -d)
+sh "$repo/packaging/apt-publish.sh" "$up_repo" 3 "$up_dir/pipulse_0.0.3_$arch.deb" >/dev/null
+chmod -R a+rX "$up_repo"
+if PIPULSE_APT_URL="file://$up_repo" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 're-run, failing upgrade: fails'; else ok 're-run, failing upgrade: fails'; fi
+apt_intact && ok 're-run, failing upgrade: apt source and key kept' || bad 're-run, failing upgrade: apt source and key kept'
+dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -qv 'not-installed' && [ -d /opt/pipulse/app ] && ok 're-run, failing upgrade: package not removed' || bad 're-run, failing upgrade: package not removed'
+grep -q '^data$' /var/lib/pipulse/pipulse.sqlite && ok 're-run, failing upgrade: data kept' || bad 're-run, failing upgrade: data kept'
+
+dpkg --remove --force-remove-reinstreq pipulse >/dev/null 2>&1 || true
 apt-get purge -y pipulse >/dev/null 2>&1 || true
 rm -f /etc/apt/sources.list.d/pipulse.list /usr/share/keyrings/pipulse.gpg
 exit $fail

@@ -18,16 +18,27 @@ install_apt() {
   command -v apt-get >/dev/null 2>&1 || die 'no apt here: use --tarball'
   [ "$(uname -m)" != armv6l ] || die 'this Pi (armv6) is not supported: Node 22 has no official build for it'
 
+  # What is already here, so a failure can put it back: a Pi installed from apt
+  # may run the one-liner again.
+  saved=$(mktemp -d)
+  had_source=no was_installed=no
+  if [ -e /etc/apt/sources.list.d/pipulse.list ] || [ -e /usr/share/keyrings/pipulse.gpg ]; then
+    had_source=yes
+    if [ -e /etc/apt/sources.list.d/pipulse.list ]; then cp -p /etc/apt/sources.list.d/pipulse.list "$saved/list"; fi
+    if [ -e /usr/share/keyrings/pipulse.gpg ]; then cp -p /usr/share/keyrings/pipulse.gpg "$saved/key"; fi
+  fi
+  if dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'; then was_installed=yes; fi
+
   # 1. Reach and verify the repository, and download the package, before changing
   #    anything an existing install depends on.
   log 'adding the PiPulse apt repository'
   key=$(mktemp)
-  curl -fsSL "$APT_URL/pipulse.gpg" -o "$key" || { rm -f "$key"; die "could not download the repository key from $APT_URL"; }
+  curl -fsSL "$APT_URL/pipulse.gpg" -o "$key" || { rm -rf "$key" "$saved"; die "could not download the repository key from $APT_URL; nothing was changed"; }
   install -m 644 "$key" /usr/share/keyrings/pipulse.gpg
   rm -f "$key"
   echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] $APT_URL stable main" > /etc/apt/sources.list.d/pipulse.list
   if ! apt-get update -qq || ! apt-get install -y -qq --download-only pipulse </dev/null; then
-    drop_apt_source
+    restore_apt_source
     die "the PiPulse apt repository at $APT_URL could not be used; nothing was changed"
   fi
 
@@ -42,21 +53,36 @@ install_apt() {
   # 3. Install. Never prompt (stdin is the curl pipe): keep an existing pipulse.env.
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null; then
+    restore_apt_source
+    if [ "$was_installed" = yes ]; then
+      # An upgrade of a working install: never remove it. dpkg keeps its state for
+      # `sudo apt-get -f install` (or the next apt upgrade) to finish or retry.
+      die 'upgrading the package failed; PiPulse was left installed: see the output above, then run: sudo apt-get -f install'
+    fi
     # Remove, never purge: purging runs postrm's clean-up, which deletes /etc/pipulse
     # and the data. Removing keeps them (and pipulse.env, a conffile).
     dpkg --remove --force-remove-reinstreq pipulse >/dev/null 2>&1 || true
-    drop_apt_source
     if [ "$moved" = yes ]; then
       restore_tarball
       die 'installing the package failed; the tarball install was put back as it was'
     fi
     die 'installing the package failed'
   fi
+  rm -rf "$saved"
   if [ "$moved" = yes ]; then drop_tarball_backup; fi
   log 'installed; upgrades now come with: sudo apt upgrade'
 }
 
-drop_apt_source() { rm -f /etc/apt/sources.list.d/pipulse.list /usr/share/keyrings/pipulse.gpg; }
+# Puts the apt source and key back as they were before this run (or removes them
+# if this run added them).
+restore_apt_source() {
+  rm -f /etc/apt/sources.list.d/pipulse.list /usr/share/keyrings/pipulse.gpg
+  if [ "$had_source" = yes ]; then
+    if [ -e "$saved/list" ]; then cp -p "$saved/list" /etc/apt/sources.list.d/pipulse.list; fi
+    if [ -e "$saved/key" ]; then cp -p "$saved/key" /usr/share/keyrings/pipulse.gpg; fi
+  fi
+  rm -rf "$saved"
+}
 
 # A tarball install: PiPulse files dpkg doesn't own.
 tarball_installed() {
