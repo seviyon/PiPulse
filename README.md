@@ -94,6 +94,8 @@ sudo apt update && sudo apt install pipulse
 
 **Settings** live in `/etc/pipulse/pipulse.env` (every variable is listed there, commented out, with its default); files it points at — a password hash, a rules file, a notify file, a CA certificate — go in `/etc/pipulse/` too (`root:pipulse`, mode `640`). After a change: `sudo systemctl restart pipulse`. The database is `/var/lib/pipulse/pipulse.sqlite`. The installer warns, without changing anything, when the port is already taken or ufw would block it.
 
+**Plain HTTP, for now.** PiPulse serves plain HTTP and listens on every interface by default. On a network others can watch (shared Wi-Fi, a guest VLAN), the sign-in password and the session cookie can be captured. Keep it on a network you trust, set `PIPULSE_HOST` to a single interface if that helps, and don't expose its port to the internet. HTTPS by default (a self-signed certificate made for each Pi, or your own) is planned as Phase 6b.
+
 The `pipulse` command wraps the everyday tasks, with the service's settings loaded:
 
 ```bash
@@ -280,6 +282,7 @@ Configuration is environment variables for now (see the table under [Develop](#d
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
 | 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (apt, tarball, Docker, releases, Renovate) | 🚧 In progress |
+| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ Next |
 | 7 | Cutover from the legacy daemon |  |
 
 ## Credits
