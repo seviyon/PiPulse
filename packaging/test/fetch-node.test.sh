@@ -12,6 +12,11 @@ fake=$(mktemp -d)
 printf '#!/bin/sh\necho armhf\n' > "$fake/dpkg" && chmod +x "$fake/dpkg"
 check sh -c "PATH='$fake':\$PATH; . '$here/lib.sh'; [ \"\$(pipulse_arch)\" = armhf ]"
 
+name='refuses a Pi Zero or Pi 1 (Raspbian says armhf, the CPU is armv6)'
+fake6=$(mktemp -d)
+printf '#!/bin/sh\necho armhf\n' > "$fake6/dpkg" && printf '#!/bin/sh\necho armv6l\n' > "$fake6/uname" && chmod +x "$fake6/dpkg" "$fake6/uname"
+check sh -c "! PATH='$fake6':\$PATH sh -c '. \"$here/lib.sh\"; pipulse_arch' 2>/dev/null"
+
 name='refuses armv6'
 check sh -c "! PIPULSE_ARCH=armel sh -c '. \"$here/lib.sh\"; pipulse_arch' 2>/dev/null"
 

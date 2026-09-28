@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck the packaging scripts
-        run: shellcheck packaging/*.sh packaging/pipulse packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/test/*.sh
+        run: shellcheck packaging/*.sh packaging/pipulse packaging/deb/preinst packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/test/*.sh
 
   packaging:
     # Installs, upgrades, rolls back and removes PiPulse in a clean Debian container.

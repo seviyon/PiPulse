@@ -45,7 +45,7 @@ else
 fi
 
 # 5. Warnings (never change anything)
-port=$(sed -n 's/^PIPULSE_PORT=\([0-9]*\).*/\1/p' /etc/pipulse/pipulse.env | tail -n 1)
+port=$(env_value PIPULSE_PORT)
 port=${port:-8888}
 if command -v ss >/dev/null 2>&1; then
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -n 1)

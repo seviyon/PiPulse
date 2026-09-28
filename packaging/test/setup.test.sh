@@ -15,9 +15,9 @@ id -nG pipulse | grep -qw video && ok 'in video group' || bad 'in video group'
 [ "$(stat -c '%U:%G %a' /etc/pipulse/pipulse.env)" = 'root:pipulse 640' ] && ok 'env mode' || bad 'env mode'
 [ "$(stat -c '%U %a' /var/lib/pipulse)" = 'pipulse 700' ] && ok '/var/lib/pipulse mode' || bad '/var/lib/pipulse mode'
 grep -q 'no systemd' /tmp/setup.log && ok 'says it skipped the service' || bad 'says it skipped the service'
-echo 'PIPULSE_PORT=8889' >> /etc/pipulse/pipulse.env
+echo 'PIPULSE_PORT="8889"' >> /etc/pipulse/pipulse.env # quoted, as systemd allows
 sh "$here/setup.sh" --no-start >/dev/null 2>&1
-grep -q '^PIPULSE_PORT=8889$' /etc/pipulse/pipulse.env && ok 'keeps an existing env' || bad 'keeps an existing env'
+grep -q '^PIPULSE_PORT="8889"$' /etc/pipulse/pipulse.env && ok 'keeps an existing env' || bad 'keeps an existing env'
 # A process on the configured port produces a warning naming it.
 python3 -m http.server 8889 >/dev/null 2>&1 & srv=$!
 sleep 1

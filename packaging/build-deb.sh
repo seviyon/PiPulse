@@ -31,7 +31,7 @@ install -m 644 "$here/lintian-overrides" "$root/usr/share/lintian/overrides/pipu
 sed -e "s/@VERSION@/$version/" -e "s/@ARCH@/$arch/" "$here/deb/control.in" > "$root/DEBIAN/control"
 echo "Installed-Size: $(du -sk "$root" | cut -f1)" >> "$root/DEBIAN/control"
 install -m 644 "$here/deb/conffiles" "$root/DEBIAN/conffiles"
-for s in postinst prerm postrm; do install -m 755 "$here/deb/$s" "$root/DEBIAN/$s"; done
+for s in preinst postinst prerm postrm; do install -m 755 "$here/deb/$s" "$root/DEBIAN/$s"; done
 mkdir -p "$out"
 dpkg-deb --root-owner-group --build "$root" "$out/pipulse_${version}_${arch}.deb" >/dev/null
 log "built $out/pipulse_${version}_${arch}.deb"

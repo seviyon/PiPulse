@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# Raspbian's armhf also runs on the Pi 1 and Zero (armv6), where the bundled
+# armv7 Node can't run: refuse before anything is unpacked.
+if [ "$(uname -m)" = armv6l ]; then
+  echo 'pipulse: this Pi (armv6) is not supported: Node 22 has no official build for it' >&2
+  exit 1
+fi

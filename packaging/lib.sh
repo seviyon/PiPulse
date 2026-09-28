@@ -4,6 +4,9 @@ die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
 
 # The CPU as Debian names it: userland, not kernel (a Pi 4 on 32-bit Pi OS is armhf).
 pipulse_arch() {
+  # Raspbian's armhf is built for armv6, so dpkg says armhf on a Pi 1 or Zero too:
+  # ask the CPU itself first.
+  [ "$(uname -m)" != armv6l ] || die "this Pi (armv6) is not supported: Node 22 has no official build for it"
   arch=${PIPULSE_ARCH:-}
   if [ -z "$arch" ]; then
     if command -v dpkg >/dev/null 2>&1; then arch=$(dpkg --print-architecture)
@@ -15,6 +18,12 @@ pipulse_arch() {
     armel | armv6l) die "this Pi (armv6) is not supported: Node 22 has no official build for it" ;;
     *) die "unsupported CPU: $arch" ;;
   esac
+}
+
+# env_value NAME [FILE] — a setting from pipulse.env as systemd reads it: the last
+# NAME= line, with surrounding quotes removed.
+env_value() {
+  sed -n "s/^$1=//p" "${2:-/etc/pipulse/pipulse.env}" 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 # node_version ARCH — the pinned Node version for that CPU.

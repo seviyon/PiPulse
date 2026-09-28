@@ -15,6 +15,7 @@ die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
 
 install_apt() {
   command -v apt-get >/dev/null 2>&1 || die 'no apt here: use --tarball'
+  [ "$(uname -m)" != armv6l ] || die 'this Pi (armv6) is not supported: Node 22 has no official build for it'
   log 'adding the PiPulse apt repository'
   curl -fsSL "$APT_URL/pipulse.gpg" -o /usr/share/keyrings/pipulse.gpg
   echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] $APT_URL stable main" > /etc/apt/sources.list.d/pipulse.list
@@ -37,17 +38,23 @@ latest_version() {
 health_ok() {
   url=${PIPULSE_HEALTH_URL:-}
   if [ -z "$url" ]; then
-    port=$(sed -n 's/^PIPULSE_PORT=\([0-9]*\).*/\1/p' /etc/pipulse/pipulse.env 2>/dev/null | tail -n 1)
-    host=$(sed -n 's/^PIPULSE_HOST=\(.*\)/\1/p' /etc/pipulse/pipulse.env 2>/dev/null | tail -n 1)
+    port=$(env_value PIPULSE_PORT)
+    host=$(env_value PIPULSE_HOST)
     case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
     url="http://$host:${port:-8888}/api/health"
   fi
   i=0
   while [ "$i" -lt "${PIPULSE_HEALTH_WAIT:-30}" ]; do
-    curl -fs "$url" >/dev/null 2>&1 && return 0
+    curl -fs --max-time 3 "$url" >/dev/null 2>&1 && return 0
     i=$((i + 1)); sleep 1
   done
   return 1
+}
+
+# A setting from pipulse.env as systemd reads it (last line, quotes removed).
+# (Same as lib.sh's: this script must work alone when piped from curl.)
+env_value() {
+  sed -n "s/^$1=//p" /etc/pipulse/pipulse.env 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 restart() { sh -c "${PIPULSE_RESTART_CMD:-systemctl restart pipulse}"; }
