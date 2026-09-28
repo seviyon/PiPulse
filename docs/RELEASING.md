@@ -7,6 +7,8 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 - **A release is a merged PR with a label.** Merging a PR into `main` with `release:patch`, `release:minor` or `release:major` makes the next version from the newest `v*` tag (the first release is `v0.6.0`). A PR without one of those labels releases nothing.
 - **Renovate's PRs carry `release:patch`**, so every dependency, base-image or Node update that merges ships in a release on its own. Patch and minor updates merge themselves once CI passes; majors wait for review.
 - **Or by hand:** Actions → _Release_ → _Run workflow_, with a version (e.g. to redo a release whose run failed; the version must not be tagged yet).
+- **Only plain `X.Y.Z` versions** are released: a pre-release like `0.7.0-rc.1` would sort above `0.7.0` in apt and strand the Pis that installed it.
+- **The signing key never meets npm.** Building and testing run in jobs with no secrets and a read-only token; only the `publish` job has `APT_SIGNING_KEY`, and it runs no npm or project code.
 - **Versions exist only in releases.** The `package.json` files stay at `0.0.0`; the release build writes `version.json` into what it ships, and nothing commits to `main`.
 
 `.github/workflows/release.yml` then, in one run:

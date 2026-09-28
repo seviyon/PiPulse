@@ -229,7 +229,8 @@ volumes:
 **`release.yml`:**
 
 - Triggers: a PR merged into `main` with a `release:*` label, or `workflow_dispatch` with a version.
-- Steps, in one workflow (a tag pushed with `GITHUB_TOKEN` doesn't start other workflows, so the pipeline can't be split across them):
+- **Only plain `X.Y.Z` versions are released** (a hyphenated one such as `0.7.0-rc.1` sorts above `0.7.0` in apt, so Pis that installed it would never upgrade to the real one).
+- **The signing key never meets npm.** The workflow is one file (a tag pushed with `GITHUB_TOKEN` doesn't start other workflows) but several jobs: `version` and `build` (npm with `--ignore-scripts`, build, tests, tarball, `.deb`s) run with a read-only token that isn't kept in the checkout and no secrets; `image` can push to GHCR but has no signing key; `publish`, the only job with the key, runs no npm and no project code — it signs and publishes the files `build` handed over, and moves the image's `:latest` last. Steps:
   1. Compute the version; fail if its tag already exists.
   2. `npm ci`, build, test, stamp `version.json`, assemble the tarball.
   3. For each CPU: fetch and verify Node, build the `.deb`, `lintian`.
