@@ -18,8 +18,12 @@ beforeAll(async () => {
 });
 
 describe('createHealth', () => {
-  it('is healthy at start and while readings arrive', () => {
+  it('is unhealthy until the first reading, then healthy while readings arrive', () => {
     const health = createHealth(db, { monotonic: () => mono, trackReadings: true });
+    // A version that starts but can't collect must not look healthy (the installer rolls it back).
+    expect(health.check()).toEqual({ ok: false, problems: ['no readings yet'] });
+    mono += 5_000;
+    health.markReading();
     expect(health.check()).toEqual({ ok: true, problems: [] });
     mono += READING_STALE_MS - 1;
     health.markReading();
@@ -29,6 +33,7 @@ describe('createHealth', () => {
 
   it('reports no readings for 5 min, on the monotonic clock only', () => {
     const health = createHealth(db, { monotonic: () => mono, trackReadings: true });
+    health.markReading();
     mono += READING_STALE_MS;
     expect(health.check()).toEqual({ ok: false, problems: ['no readings for 5 min'] });
   });
@@ -36,6 +41,7 @@ describe('createHealth', () => {
   it('ignores the wall clock (an NTP jump does not flip it)', () => {
     const realNow = Date.now;
     const health = createHealth(db, { monotonic: () => mono, trackReadings: true });
+    health.markReading();
     Date.now = () => realNow() + 10 * 60 * 60_000;
     try {
       expect(health.check().ok).toBe(true);
@@ -62,6 +68,11 @@ describe('GET /api/health', () => {
   it('answers 200 when healthy and 503 naming the problem when not', async () => {
     const health = createHealth(db, { monotonic: () => mono, trackReadings: true });
     const app = buildServer(db, { health });
+    expect((await app.inject('/api/health')).json()).toEqual({
+      status: 'unhealthy',
+      problems: ['no readings yet']
+    });
+    health.markReading();
     expect((await app.inject('/api/health')).json()).toEqual({ status: 'ok' });
     mono += READING_STALE_MS;
     const res = await app.inject('/api/health');

@@ -24,8 +24,9 @@ export function createHealth(
   options: { monotonic?: () => number; trackReadings?: boolean } = {}
 ): Health {
   const monotonic = options.monotonic ?? (() => performance.now());
-  // Start counts as a reading: the first poll gets the full grace period.
-  let lastReading = monotonic();
+  // No reading yet means not healthy: a version that starts but can't collect
+  // must not pass the installer's check (the first poll comes within seconds).
+  let lastReading: number | undefined;
   return {
     markReading() {
       lastReading = monotonic();
@@ -33,12 +34,15 @@ export function createHealth(
     check() {
       const problems: string[] = [];
       try {
-        db.prepare('SELECT 1').get();
+        // Reads the database file's header, not just the connection.
+        db.prepare('PRAGMA user_version').get();
       } catch {
         problems.push('database unavailable');
       }
-      if (options.trackReadings && monotonic() - lastReading >= READING_STALE_MS) {
-        problems.push('no readings for 5 min');
+      if (options.trackReadings) {
+        if (lastReading === undefined) problems.push('no readings yet');
+        else if (monotonic() - lastReading >= READING_STALE_MS)
+          problems.push('no readings for 5 min');
       }
       return { ok: problems.length === 0, problems };
     }

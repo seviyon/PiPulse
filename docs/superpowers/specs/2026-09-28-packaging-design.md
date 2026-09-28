@@ -210,8 +210,8 @@ volumes:
 5. **In a container.** With `PIPULSE_IN_CONTAINER=true`, the server doesn't schedule the `cpu_voltage` and `throttled` plugins and lists them in `/api/config` with `unavailable: "Not available in Docker"`. Their tiles show that text instead of "No readings yet"; History leaves them out. The versioned `CollectorPlugin` interface doesn't change: the decision is the server's.
 6. **Prompt shutdown** (the deferred minor from 5b-3). `notifications.stop()` aborts deliveries in progress (the same signal as their timeout, combined with `AbortSignal.any`) and waits at most 5 s. A delivery cut short by shutdown is not a failed attempt: its row stays pending, untouched, and the next start sends it at once.
 7. **`GET /api/health`.** Always public — the auth hook allows it even with `PIPULSE_PROTECT_READS=true`, like `/api/session` — so a container manager or the installer can check it without signing in. It answers `200 {"status":"ok"}` when both hold, otherwise `503 {"status":"unhealthy","problems":[…]}` with short fixed strings:
-   - **database:** a `SELECT 1` on the open database succeeds (`"database unavailable"`);
-   - **collector:** the scheduler stored a reading within the last 5 minutes, measured on the monotonic clock so a wall-clock jump can't flip it (`"no readings for 5 min"`). A plugin that fails on its own doesn't count against it; only all collection stopping does.
+   - **database:** reading the database header (`PRAGMA user_version`) succeeds (`"database unavailable"`);
+   - **collector:** the scheduler has stored a reading (`"no readings yet"` until the first one, which comes within seconds — so a version that starts but can't collect never passes the installer's check) and did so within the last 5 minutes, measured on the monotonic clock so a wall-clock jump can't flip it (`"no readings for 5 min"`). A plugin that fails on its own doesn't count against it; only all collection stopping does.
 
    It reveals nothing else (no version, no host details), and it is cheap enough to run every 30 s on a Pi 2.
 
