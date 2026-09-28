@@ -1,4 +1,6 @@
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +8,7 @@ import {
   BLOCKED_PORTS,
   NotifyConfigError,
   parseNotifyConfig,
+  RESERVED_HEADERS,
   readNotifyFile,
   urlHost
 } from '../src/config.js';
@@ -51,6 +54,39 @@ describe('parseNotifyConfig', () => {
       minSeverity: 'critical',
       timeoutMs: 30_000
     });
+  });
+
+  it('refuses headers fetch rejects when sending, in any letter case', () => {
+    for (const name of ['Transfer-Encoding', 'keep-alive', 'Upgrade', 'expect', 'Content-Length']) {
+      fails(
+        [{ id: 'a', url: 'http://x', headers: { [name]: '1' } }],
+        new RegExp(`headers: "${name}" is set by PiPulse's HTTP client and can't be used`)
+      );
+    }
+  });
+
+  it('lists only headers fetch really rejects when sending', async () => {
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on('end', () => response.end());
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    try {
+      for (const name of RESERVED_HEADERS) {
+        const error = await fetch(url, {
+          method: 'POST',
+          headers: { [name]: '999' },
+          body: '{}'
+        }).then(
+          () => undefined,
+          (e: unknown) => e
+        );
+        expect(error, name).toBeInstanceOf(Error);
+      }
+    } finally {
+      server.close();
+    }
   });
 
   it('refuses a port fetch blocks, which would fail every delivery', () => {

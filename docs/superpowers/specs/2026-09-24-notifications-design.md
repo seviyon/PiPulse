@@ -50,16 +50,16 @@ Out of scope:
 }
 ```
 
-| Field         | Required | Meaning                                                                                              |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------- |
-| `id`          | yes      | Unique, lowercase snake_case. Shown in logs and on the Settings page.                                |
-| `url`         | yes      | `http://` or `https://`.                                                                             |
-| `method`      | no       | `POST` (default) or `PUT`.                                                                           |
-| `headers`     | no       | Map of header name to string value, e.g. `Authorization`. `Content-Type: application/json` is added. |
-| `body`        | no       | A JSON template (below). Default: Apprise's shape, see [Default body](#default-body).                |
-| `events`      | no       | Which events to send: `raised`, `cleared`. Default both.                                             |
-| `minSeverity` | no       | `warning` (default) or `critical`: skip alerts below it.                                             |
-| `timeout`     | no       | Duration for one request, `1s`–`60s`. Default `10s`.                                                 |
+| Field         | Required | Meaning                                                                                                                                                                                                                                                                                      |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | yes      | Unique, lowercase snake_case. Shown in logs and on the Settings page.                                                                                                                                                                                                                        |
+| `url`         | yes      | `http://` or `https://`.                                                                                                                                                                                                                                                                     |
+| `method`      | no       | `POST` (default) or `PUT`.                                                                                                                                                                                                                                                                   |
+| `headers`     | no       | Map of header name to string value, e.g. `Authorization`. `Content-Type: application/json` is added. Names and values `fetch` would reject (including `Content-Length`, `Expect`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`) are refused at startup, naming the header but not its value. |
+| `body`        | no       | A JSON template (below). Default: Apprise's shape, see [Default body](#default-body).                                                                                                                                                                                                        |
+| `events`      | no       | Which events to send: `raised`, `cleared`. Default both.                                                                                                                                                                                                                                     |
+| `minSeverity` | no       | `warning` (default) or `critical`: skip alerts below it.                                                                                                                                                                                                                                     |
+| `timeout`     | no       | Duration for one request, `1s`–`60s`. Default `10s`.                                                                                                                                                                                                                                         |
 
 The file is read once at startup. Any problem stops startup with one line naming the webhook and field, the same policy as the rules file: invalid JSON, an unknown field, a duplicate `id`, a bad URL or method, an unknown placeholder, a bad duration. Editing the file takes effect on restart.
 

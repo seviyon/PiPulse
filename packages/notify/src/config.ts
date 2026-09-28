@@ -46,6 +46,19 @@ export const BLOCKED_PORTS: readonly number[] = [
   6669, 6679, 6697, 10080
 ];
 
+/**
+ * Headers the Headers class accepts but fetch rejects when sending (it manages
+ * them itself), so a notify file setting one would fail every delivery.
+ * content-length is refused whatever its value: each message's length differs.
+ */
+export const RESERVED_HEADERS: readonly string[] = [
+  'content-length',
+  'expect',
+  'keep-alive',
+  'transfer-encoding',
+  'upgrade'
+];
+
 /** "host:port" (or just "host"), with any credentials, path and query stripped. */
 export function urlHost(url: string): string {
   return new URL(url).host;
@@ -116,6 +129,8 @@ function parseWebhook(raw: unknown, where: string): WebhookConfig {
     // it is often a secret.
     for (const [name, value] of Object.entries(headers)) {
       const label = JSON.stringify(name);
+      if (RESERVED_HEADERS.includes(name.toLowerCase()))
+        fail(`headers: ${label} is set by PiPulse's HTTP client and can't be used`);
       try {
         new Headers([[name, 'x']]);
       } catch {
