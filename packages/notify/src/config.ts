@@ -97,6 +97,22 @@ function parseWebhook(raw: unknown, where: string): WebhookConfig {
       fail('headers must map names to strings');
     }
     headers = headersRaw as Record<string, string>;
+    // Checked the way fetch will see them, so a bad header stops startup instead of
+    // failing every delivery. Never echo the value (or fetch's message, which does):
+    // it is often a secret.
+    for (const [name, value] of Object.entries(headers)) {
+      const label = JSON.stringify(name);
+      try {
+        new Headers([[name, 'x']]);
+      } catch {
+        fail(`headers: ${label} is not a valid header name`);
+      }
+      try {
+        new Headers([['x-pipulse-check', value]]);
+      } catch {
+        fail(`headers: the value of ${label} is not a valid header value`);
+      }
+    }
   }
 
   const eventsRaw = r['events'];

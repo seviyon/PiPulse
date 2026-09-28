@@ -47,6 +47,18 @@ describe('parseNotifyConfig', () => {
     });
   });
 
+  it('refuses a header fetch would reject, naming it without its value', () => {
+    fails(
+      [{ id: 'a', url: 'http://x', headers: { 'Bad Name': 'v' } }],
+      /headers: "Bad Name" is not a valid header name/
+    );
+    const secret = { id: 'a', url: 'http://x', headers: { Authorization: 'Bearer s3cret\nX: y' } };
+    fails([secret], /headers: the value of "Authorization" is not a valid header value/);
+    expect(() => parse([secret])).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('s3cret') })
+    );
+  });
+
   it('names the webhook and field for every problem', () => {
     fails(
       [{ id: 'a', url: 'http://x', bogus: 1 }],
