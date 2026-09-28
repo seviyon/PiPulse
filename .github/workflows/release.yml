@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.6.1)'
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency: release
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged &&
+       (contains(github.event.pull_request.labels.*.name, 'release:patch') ||
+        contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+        contains(github.event.pull_request.labels.*.name, 'release:major')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The merge commit itself, even if main moved on since.
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Version
+        id: version
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+          INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT" ]; then v=$INPUT; else
+            bump=$(printf '%s' "$LABELS" | tr ' ' '\n' | sed -n 's/^release://p' | sort | tail -n 1)
+            v=$(sh packaging/next-version.sh "$(git tag -l 'v*' --sort=-v:refname | head -n 1)" "$bump")
+          fi
+          git rev-parse -q --verify "refs/tags/v$v" >/dev/null && { echo "v$v already exists"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq gpgv lintian apt-utils >/dev/null
+      - run: npm ci && npm test
+      - name: Tarball and .debs
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          sh packaging/build-tarball.sh "$V" out
+          for arch in armhf arm64 amd64; do sh packaging/build-deb.sh "$V" "$arch" "out/pipulse-$V.tar.gz" out; lintian --fail-on error "out/pipulse_${V}_${arch}.deb"; done
+          cp packaging/install.sh compose.yaml out/
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/seviyon/pipulse:${{ steps.version.outputs.version }}
+            ghcr.io/seviyon/pipulse:latest
+      - name: Import the signing key
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: printf '%s' "$APT_SIGNING_KEY" | gpg --batch --import
+      - name: Apt repository
+        env:
+          V: ${{ steps.version.outputs.version }}
+          APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+        run: |
+          git fetch origin gh-pages:gh-pages 2>/dev/null || true
+          git worktree add pages gh-pages 2>/dev/null || { git worktree add --orphan -b gh-pages pages; }
+          sh packaging/apt-publish.sh pages/apt 3 out/pipulse_"$V"_*.deb
+          touch pages/.nojekyll # serve the apt files as they are
+          cd pages && git add -A && git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -qm "apt: pipulse $V" && git push origin gh-pages
+      - name: Checksums
+        env:
+          APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+        run: |
+          cd out && sha256sum pipulse-*.tar.gz pipulse_*.deb install.sh compose.yaml > SHA256SUMS
+          printf '%s' "$APT_SIGNING_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 -abs -o SHA256SUMS.asc SHA256SUMS
+      - name: Tag and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$V" --target "$(git rev-parse HEAD)" --title "PiPulse $V" --generate-notes \
+            out/pipulse-"$V".tar.gz out/pipulse_"$V"_*.deb out/install.sh out/compose.yaml out/SHA256SUMS out/SHA256SUMS.asc
+      - name: Check what users get
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          # GitHub Pages publishes asynchronously: retry for up to 10 minutes.
+          for i in $(seq 1 20); do
+            curl -fsS "https://seviyon.github.io/PiPulse/apt/dists/stable/main/binary-amd64/Packages" 2>/dev/null | grep -q "^Version: $V$" && break
+            echo "waiting for GitHub Pages ($i/20)"; sleep 30
+          done
+          docker run --rm debian:bookworm-slim sh -c "
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null &&
+            curl -fsSL https://seviyon.github.io/PiPulse/apt/pipulse.gpg -o /usr/share/keyrings/pipulse.gpg &&
+            echo 'deb [signed-by=/usr/share/keyrings/pipulse.gpg] https://seviyon.github.io/PiPulse/apt stable main' > /etc/apt/sources.list.d/pipulse.list &&
+            apt-get update -qq && apt-get install -y -qq pipulse >/dev/null &&
+            grep -q '\"$V\"' /opt/pipulse/app/version.json"
