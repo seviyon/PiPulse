@@ -222,10 +222,17 @@ export function retentionSource(
   log: (message: string) => void = console.warn
 ): () => RetentionSettings {
   const logged = new Set<string>();
+  const once = (message: string) => {
+    if (logged.has(message)) return;
+    logged.add(message);
+    log(message);
+  };
   return () =>
-    resolveRetention(env, getSettings(db), (message) => {
-      if (logged.has(message)) return;
-      logged.add(message);
-      log(message);
-    });
+    resolveRetention(
+      env,
+      getSettings(db, (key) =>
+        once(`saved setting ${key} is not valid JSON; using the default until it is saved again`)
+      ),
+      once
+    );
 }

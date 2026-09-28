@@ -30,10 +30,13 @@ describe('settings', () => {
     expect(row.updated_at).toBe(2000);
   });
 
-  it('reads a corrupt row as unset instead of throwing', () => {
+  it('reads a corrupt row as unset instead of throwing, and reports its key', () => {
     db = openDb(':memory:');
     db.prepare("INSERT INTO settings VALUES ('retention.raw', '{not json', 1)").run();
-    expect(getSettings(db)).toEqual({});
+    const corrupt: string[] = [];
+    expect(getSettings(db, (key) => corrupt.push(key))).toEqual({});
+    expect(corrupt).toEqual(['retention.raw']);
+    expect(getSettings(db)).toEqual({}); // reporting is optional
   });
 
   it('writes nothing when one value fails', () => {

@@ -139,6 +139,16 @@ describe('saveRetention and retentionSource', () => {
     expect(getRetention()['1h']).toMatchObject({ text: '2y', source: 'saved' });
   });
 
+  it('logs a corrupt saved value once, naming its key', () => {
+    db.prepare("INSERT INTO settings VALUES ('retention.raw', '{not json', 1)").run();
+    const log = vi.fn();
+    const getRetention = retentionSource(db, {}, log);
+    expect(getRetention().raw.text).toBe('2d');
+    getRetention();
+    expect(log).toHaveBeenCalledOnce();
+    expect(log.mock.calls[0]![0]).toMatch(/retention\.raw.*not valid JSON/);
+  });
+
   it('logs an ignored saved value once, not on every read', () => {
     saveSettings(db, { 'retention.raw': 'soon' });
     const log = vi.fn();

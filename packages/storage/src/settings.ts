@@ -1,7 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-/** Every saved setting by key ("retention.raw"), values parsed from JSON. */
-export function getSettings(db: DatabaseSync): Record<string, unknown> {
+/**
+ * Every saved setting by key ("retention.raw"), values parsed from JSON. A row
+ * that isn't valid JSON (only possible through corruption or an edit outside
+ * PiPulse) reads as unset and is passed to `onCorrupt`, so callers can say so.
+ */
+export function getSettings(
+  db: DatabaseSync,
+  onCorrupt?: (key: string) => void
+): Record<string, unknown> {
   const rows = db.prepare('SELECT key, value FROM settings').all() as unknown as {
     key: string;
     value: string;
@@ -12,6 +19,7 @@ export function getSettings(db: DatabaseSync): Record<string, unknown> {
       settings[row.key] = JSON.parse(row.value);
     } catch {
       // A corrupt row reads as unset; the default applies until it is saved again.
+      onCorrupt?.(row.key);
     }
   }
   return settings;

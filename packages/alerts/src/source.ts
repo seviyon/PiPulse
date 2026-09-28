@@ -65,8 +65,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const idOf = (raw: unknown) => (isRecord(raw) && typeof raw['id'] === 'string' ? raw['id'] : '?');
 
-function readSaved(db: PiPulseDb): unknown[] {
-  const value = getSettings(db)[SAVED_RULES_KEY];
+function readSaved(db: PiPulseDb, onCorrupt?: (key: string) => void): unknown[] {
+  const value = getSettings(db, (key) => {
+    if (key === SAVED_RULES_KEY) onCorrupt?.(key);
+  })[SAVED_RULES_KEY];
   return Array.isArray(value) ? value : [];
 }
 
@@ -145,7 +147,14 @@ export function createRuleSource(
   const read = (): RuleSet => {
     const retention = retentionOnce();
     const saved = new Map<string, { raw: unknown; entry?: Entry; problem?: string }>();
-    for (const raw of readSaved(db)) {
+    const corrupt = (key: string) => {
+      const line = `saved setting ${key} is not valid JSON; the saved alert rules are ignored until they are saved again`;
+      if (!reported.has(line)) {
+        reported.add(line);
+        options.onProblem?.(line);
+      }
+    };
+    for (const raw of readSaved(db, corrupt)) {
       const id = idOf(raw);
       try {
         saved.set(id, { raw, entry: check(raw, retention) });
