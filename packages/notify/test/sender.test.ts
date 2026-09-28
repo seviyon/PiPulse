@@ -151,6 +151,34 @@ describe('startNotifications', () => {
     await n.stop();
   });
 
+  it("delivers a healthy webhook's backlog while another hangs until its timeout", async () => {
+    const webhook = (id: string) => ({
+      id,
+      url: 'http://x',
+      method: 'POST' as const,
+      headers: {},
+      events: ['raised' as const, 'cleared' as const],
+      minSeverity: 'warning' as const,
+      timeoutMs: 2000
+    });
+    add('slow');
+    add('fast');
+    add('fast', 'cleared');
+    add('fast');
+    const slow = action('slow', ['hang', 'hang']);
+    const fast = action('fast', [true, true, true]);
+    const n = startNotifications(db, {
+      webhooks: [webhook('slow'), webhook('fast')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      intervalMs: 1e9,
+      actions: [slow, fast]
+    });
+    await vi.waitFor(() => expect(fast.sent).toHaveLength(3), { timeout: 500 });
+    await n.stop();
+  });
+
   it('wakes on enqueue and delivers', async () => {
     const a = action('apprise', [true]);
     const n = startNotifications(db, {

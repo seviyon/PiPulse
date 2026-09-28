@@ -26,45 +26,56 @@ export function retryDelay(attempts: number): number {
   return Math.min(FIRST_RETRY_MS * 2 ** Math.max(0, attempts - 1), MAX_RETRY_MS);
 }
 
-/** Delivers at most one due row per webhook, in parallel across webhooks; resolves to how many were sent. */
+interface Deliverer {
+  action: AlertAction;
+  timeoutMs: number;
+}
+interface SendOptions {
+  now: () => number;
+  onGiveUp?: (webhookId: string, attempts: number, reason: string) => void;
+}
+
+/** Delivers the webhook's oldest pending row if it is due; resolves to whether it was sent. */
+export async function sendNext(
+  db: PiPulseDb,
+  { action, timeoutMs }: Deliverer,
+  options: SendOptions
+): Promise<boolean> {
+  const row = headOf(db, action.id);
+  if (!row) return false;
+  const t = options.now();
+  // The Pi has no RTC: after the clock jumps back, a retry could sit hours
+  // away. Never wait longer than the longest retry delay.
+  if (row.nextAt - t > MAX_RETRY_MS) {
+    setNextAt(db, row.id, t + MAX_RETRY_MS);
+    return false;
+  }
+  if (row.nextAt > t) return false;
+  try {
+    await action.deliver(row.payload, AbortSignal.timeout(timeoutMs));
+    markSent(db, row.id, options.now());
+    return true;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const at = options.now();
+    if (at - row.createdAt >= GIVE_UP_AFTER_MS) {
+      markGivenUp(db, row.id, at, reason);
+      options.onGiveUp?.(action.id, row.attempts + 1, reason);
+    } else {
+      markAttemptFailed(db, row.id, at, reason, at + retryDelay(row.attempts + 1));
+    }
+    return false;
+  }
+}
+
+/** One sendNext per webhook, in parallel; resolves to how many were sent. */
 export async function sendDue(
   db: PiPulseDb,
-  actions: { action: AlertAction; timeoutMs: number }[],
-  options: {
-    now: () => number;
-    onGiveUp?: (webhookId: string, attempts: number, reason: string) => void;
-  }
+  deliverers: Deliverer[],
+  options: SendOptions
 ): Promise<number> {
-  const results = await Promise.all(
-    actions.map(async ({ action, timeoutMs }) => {
-      const row = headOf(db, action.id);
-      if (!row) return 0;
-      const t = options.now();
-      // The Pi has no RTC: after the clock jumps back, a retry could sit hours
-      // away. Never wait longer than the longest retry delay.
-      if (row.nextAt - t > MAX_RETRY_MS) {
-        setNextAt(db, row.id, t + MAX_RETRY_MS);
-        return 0;
-      }
-      if (row.nextAt > t) return 0;
-      try {
-        await action.deliver(row.payload, AbortSignal.timeout(timeoutMs));
-        markSent(db, row.id, options.now());
-        return 1;
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        const at = options.now();
-        if (at - row.createdAt >= GIVE_UP_AFTER_MS) {
-          markGivenUp(db, row.id, at, reason);
-          options.onGiveUp?.(action.id, row.attempts + 1, reason);
-        } else {
-          markAttemptFailed(db, row.id, at, reason, at + retryDelay(row.attempts + 1));
-        }
-        return 0;
-      }
-    })
-  );
-  return results.reduce<number>((a, b) => a + b, 0);
+  const sent = await Promise.all(deliverers.map((d) => sendNext(db, d, options)));
+  return sent.filter(Boolean).length;
 }
 
 export interface WebhookStatus {
@@ -145,37 +156,54 @@ export function startNotifications(
     return { enqueue: () => {}, status, stop: async () => {} };
   }
 
-  let running: Promise<void> | undefined;
-  let again = false;
   let stopped = false;
-
-  const drain = async () => {
-    while (!stopped) {
-      again = false;
-      maybePrune();
-      let sent = 0;
-      try {
-        sent = await sendDue(db, actions, {
-          now,
-          onGiveUp: (id, n, reason) =>
-            log(`webhook ${id}: gave up after ${n} attempts (last: ${reason})`)
-        });
-      } catch (error) {
-        log(`notification delivery failed: ${messageOf(error)}`);
-      }
-      if (sent === 0 && !again) return;
-    }
+  const sendOptions: SendOptions = {
+    now,
+    onGiveUp: (id, n, reason) => log(`webhook ${id}: gave up after ${n} attempts (last: ${reason})`)
   };
+
+  // One delivery loop per webhook, so a webhook that hangs until its timeout
+  // never holds back another's queue; order only matters within one webhook.
+  const lanes = actions.map((deliverer) => {
+    let busy = false;
+    let again = false;
+    let running: Promise<void> | undefined;
+    const drain = async () => {
+      // `busy` is set before the first await and cleared right after the last
+      // check, so a wake can never land in a gap and be lost.
+      busy = true;
+      try {
+        let sent: boolean;
+        do {
+          again = false;
+          sent = false;
+          try {
+            sent = await sendNext(db, deliverer, sendOptions);
+          } catch (error) {
+            log(`notification delivery failed: ${messageOf(error)}`);
+          }
+        } while (!stopped && (sent || again));
+      } finally {
+        busy = false;
+      }
+    };
+    return {
+      wake() {
+        if (stopped) return;
+        if (busy) {
+          again = true;
+          return;
+        }
+        running = drain();
+      },
+      done: () => running
+    };
+  });
 
   const wake = () => {
     if (stopped) return;
-    if (running) {
-      again = true;
-      return;
-    }
-    running = drain().finally(() => {
-      running = undefined;
-    });
+    maybePrune();
+    for (const lane of lanes) lane.wake();
   };
 
   const enqueue = createEnqueuer(db, {
@@ -197,7 +225,7 @@ export function startNotifications(
     async stop() {
       clearInterval(timer);
       stopped = true;
-      await running;
+      await Promise.all(lanes.map((lane) => lane.done()));
     }
   };
 }
