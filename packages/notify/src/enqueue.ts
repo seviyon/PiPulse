@@ -68,7 +68,12 @@ export function createEnqueuer(
       }
       const previous = closedByEdit(alert);
       if (previous) {
-        deletePendingClears(db, alert.ruleId, alert.metric);
+        // Only where the reopened alert still reaches: a webhook below its new
+        // severity gets the clear, since for it the alert is over.
+        const reached = options.webhooks
+          .filter((webhook) => RANK[alert.severity] >= RANK[webhook.minSeverity])
+          .map((webhook) => webhook.id);
+        deletePendingClears(db, alert.ruleId, alert.metric, reached);
         if (previous.severity === alert.severity && previous.message === alert.message) return;
       }
       queue('raised', alert, now());

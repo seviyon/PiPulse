@@ -91,14 +91,24 @@ export function setNextAt(db: PiPulseDb, id: number, nextAt: number): void {
   db.prepare(`UPDATE notifications SET next_at = ? WHERE id = ?`).run(nextAt, id);
 }
 
-/** Drops pending 'cleared' notifications for a rule/metric (e.g. superseded by a re-raise). */
-export function deletePendingClears(db: PiPulseDb, ruleId: string, metric: string): number {
+/**
+ * Drops pending 'cleared' notifications for a rule/metric (e.g. superseded by a
+ * re-raise), for every webhook or only those in `webhookIds`.
+ */
+export function deletePendingClears(
+  db: PiPulseDb,
+  ruleId: string,
+  metric: string,
+  webhookIds?: string[]
+): number {
+  if (webhookIds?.length === 0) return 0;
+  const only = webhookIds ? ` AND webhook_id IN (${webhookIds.map(() => '?').join(', ')})` : '';
   return Number(
     db
       .prepare(
-        `DELETE FROM notifications WHERE status = 'pending' AND event = 'cleared' AND rule_id = ? AND metric = ?`
+        `DELETE FROM notifications WHERE status = 'pending' AND event = 'cleared' AND rule_id = ? AND metric = ?${only}`
       )
-      .run(ruleId, metric).changes
+      .run(ruleId, metric, ...(webhookIds ?? [])).changes
   );
 }
 

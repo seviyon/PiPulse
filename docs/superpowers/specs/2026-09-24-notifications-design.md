@@ -111,7 +111,7 @@ The engine's `onChange` reports every raise and clear. Notifications are sent fo
 
 Not sent: acknowledgements, and clears with `clearedBy: 'rule_removed'` (the operator removed or disabled the rule themselves).
 
-**Pairing an edit's close and reopen.** Since 5b-2, editing a rule closes its open alert as `rule_changed` and, if the edited rule still holds, reopens it in the same engine check with the same timestamp. So a `rule_changed` clear is queued as a "cleared" row that isn't due for 30 s. When a raise for the same rule and metric arrives with `raisedAt` equal to that clear's `clearedAt`, the pending clear row is deleted, and a "raised" is queued only if the severity or message differs from the alert that closed. With no re-raise, the "cleared" goes out after 30 s.
+**Pairing an edit's close and reopen.** Since 5b-2, editing a rule closes its open alert as `rule_changed` and, if the edited rule still holds, reopens it in the same engine check with the same timestamp. So a `rule_changed` clear is queued as a "cleared" row that isn't due for 30 s. When a raise for the same rule and metric arrives with `raisedAt` equal to that clear's `clearedAt`, the pending clear row is deleted for each webhook the reopened alert still reaches (a webhook whose `minSeverity` is above the new severity keeps its clear: for it, the alert is over), and a "raised" is queued only if the severity or message differs from the alert that closed. With no re-raise, the "cleared" goes out after 30 s.
 
 Filters (`events`, `minSeverity`) apply per webhook; a cleared event uses the severity of the alert that cleared.
 

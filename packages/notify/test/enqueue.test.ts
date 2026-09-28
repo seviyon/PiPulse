@@ -90,6 +90,14 @@ describe('createEnqueuer', () => {
     expect(rows().map((x) => x.event)).toEqual(['raised']);
   });
 
+  it('still sends the clear to a webhook the edited, lower-severity alert no longer reaches', () => {
+    const enqueue = enqueuer([hook(), hook({ id: 'crit', minSeverity: 'critical' })]);
+    const r = raised(); // critical: both webhooks hear it
+    enqueue({ type: 'cleared', alert: clearAlert(db, r.alert.id, T + 5000, 'rule_changed') });
+    enqueue(raised({ raisedAt: T + 5000, severity: 'warning' }));
+    expect(rows().map(({ w, event }) => `${w} ${event}`)).toEqual(['crit cleared', 'all raised']);
+  });
+
   it('pairs from the closed alert even for a webhook that only listens to raises', () => {
     const enqueue = enqueuer([hook({ events: ['raised'] })]);
     const r = raised();
