@@ -715,3 +715,8 @@ button:hover {
   width: 100%;
   min-width: 5rem;
 }
+
+.fingerprint {
+  overflow-wrap: anywhere;
+  font-size: 0.85em;
+}
