@@ -175,4 +175,24 @@ describe('startReloader', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('picks up a change that landed between the startup load and startReloader', () => {
+    let sig = 'before-load';
+    const preLoad = sig;
+    const initial = A;
+    sig = 'renewed'; // files changed after the caller's read, before startReloader
+    const applied: LoadedCertificate[] = [];
+    const provider = startReloader({
+      initial,
+      initialSignature: preLoad,
+      load: () => B,
+      signature: () => sig,
+      apply: (cert) => applied.push(cert),
+      timer: false
+    });
+    provider.poll();
+    provider.poll();
+    expect(applied).toEqual([B]);
+    expect(provider.current()).toBe(B);
+  });
 });

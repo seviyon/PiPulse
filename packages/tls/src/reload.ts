@@ -33,6 +33,11 @@ export function startReloader(options: {
   load: () => LoadedCertificate;
   signature: () => string;
   apply: (cert: LoadedCertificate) => void;
+  /**
+   * The files' signature as read BEFORE the caller loaded `initial`, so a
+   * change landing during startup is still seen. Omitted: read now.
+   */
+  initialSignature?: string;
   pollMs?: number;
   now?: () => number;
   log?: (message: string) => void;
@@ -42,7 +47,7 @@ export function startReloader(options: {
   const now = options.now ?? Date.now;
   const log = options.log ?? (() => {});
   let active = options.initial;
-  let activeSignature = options.signature();
+  let activeSignature = options.initialSignature ?? options.signature();
   let pending: string | undefined;
   const state: ReloadState = { state: 'ok', lastAttempt: null, lastError: null };
   let lastLogged: { message: string; at: number } | undefined;
