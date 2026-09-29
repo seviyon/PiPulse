@@ -16,6 +16,10 @@ const make = (crt: string, key: string, chain = [fixture('intermediate.crt')]): 
     names: []
   });
 const A = make('leaf.crt', 'leaf.key');
+const A_WITH_ROOT = make('leaf.crt', 'leaf.key', [
+  fixture('intermediate.crt'),
+  fixture('root-ca.crt')
+]);
 const B = make('leaf2.crt', 'leaf2.key');
 const B_INCOMPLETE = make('leaf2.crt', 'leaf2.key', []);
 
@@ -136,6 +140,15 @@ describe('startReloader', () => {
     r.provider.poll();
     expect(r.applied).toEqual([]);
     expect(r.provider.reload().state).toBe('ok');
+  });
+
+  it('reloads a changed chain when the leaf certificate is unchanged', () => {
+    const r = setup();
+    r.change('s1', () => A_WITH_ROOT);
+    r.provider.poll();
+    r.provider.poll();
+    expect(r.applied).toEqual([A_WITH_ROOT]);
+    expect(r.provider.current().contextFingerprint).toBe(A_WITH_ROOT.contextFingerprint);
   });
 
   it('tries each distinct change once and logs the same failure at most hourly', () => {

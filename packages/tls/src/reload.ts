@@ -76,7 +76,7 @@ export function startReloader(options: {
       fail(messageOf(error));
       return;
     }
-    if (candidate.fingerprint === active.fingerprint) {
+    if (candidate.contextFingerprint === active.contextFingerprint) {
       state.state = 'ok';
       state.lastError = null;
       return;

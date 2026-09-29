@@ -86,7 +86,7 @@ export function statSignature(paths: string[]): string {
     .map((path) => {
       try {
         const stat = statSync(path);
-        return `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+        return `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.mode & 0o777}:${stat.uid}:${stat.gid}`;
       } catch {
         return 'missing';
       }

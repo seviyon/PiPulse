@@ -35,6 +35,7 @@ export const VERIFY_CODES = new Set([
 ]);
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const MAX_HEALTH_BODY_BYTES = 64 * 1024;
 
 /** Monitoring is running; a pre-6b server (no `monitoring` field) says status ok. */
 export function healthy(body: unknown): boolean {
@@ -136,6 +137,13 @@ export async function checkHealth(
   const byName = isIP(identity) === 0;
 
   return new Promise<CheckResult>((resolve) => {
+    let settled = false;
+    const finish = (result: CheckResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(result);
+    };
     const req = request(
       {
         host: connect,
@@ -149,8 +157,16 @@ export async function checkHealth(
       },
       (res) => {
         let data = '';
+        let bytes = 0;
         res.setEncoding('utf8');
-        res.on('data', (chunk: string) => (data += chunk));
+        res.on('data', (chunk: string) => {
+          bytes += Buffer.byteLength(chunk);
+          if (bytes > MAX_HEALTH_BODY_BYTES) {
+            req.destroy(new Error('health response is too large'));
+            return;
+          }
+          data += chunk;
+        });
         res.on('end', () => {
           let body: unknown;
           try {
@@ -158,7 +174,7 @@ export async function checkHealth(
           } catch {
             body = undefined;
           }
-          resolve(
+          finish(
             res.statusCode === 200 && healthy(body)
               ? { code: 0, message: 'healthy' }
               : { code: 1, message: `unhealthy (HTTP ${res.statusCode ?? '?'})` }
@@ -166,10 +182,13 @@ export async function checkHealth(
         });
       }
     );
+    const deadline = setTimeout(() => {
+      req.destroy(new Error('timed out'));
+    }, timeoutMs);
     req.on('timeout', () => req.destroy(new Error('timed out')));
     req.on('error', (error) => {
       const code = (error as NodeJS.ErrnoException).code ?? '';
-      resolve(
+      finish(
         VERIFY_CODES.has(code)
           ? { code: 2, message: `TLS verification failed: ${code}` }
           : { code: 1, message: `not answering: ${messageOf(error)}` }

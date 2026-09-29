@@ -1,4 +1,4 @@
-import { createPrivateKey, X509Certificate, type KeyObject } from 'node:crypto';
+import { createHash, createPrivateKey, X509Certificate, type KeyObject } from 'node:crypto';
 import { isIP } from 'node:net';
 import { basename } from 'node:path';
 import { rootCertificates } from 'node:tls';
@@ -45,6 +45,8 @@ export interface LoadedCertificate {
   cert: string;
   /** SHA-256 of the leaf, colon-separated hex. */
   fingerprint: string;
+  /** SHA-256 of the complete key and certificate chain served to clients. */
+  contextFingerprint: string;
   /** Unix ms. */
   notBefore: number;
   notAfter: number;
@@ -163,6 +165,19 @@ export function inspectMaterial(input: {
     else degrade('degraded-incomplete-chain', 'incomplete-chain');
   }
 
+  // A client validates every non-root certificate in the supplied chain. Keep
+  // an unusable intermediate from being reported as a healthy certificate.
+  const now = Date.now();
+  for (let i = 1; i < certs.length; i++) {
+    const cert = certs[i]!;
+    if (anchor?.fingerprint256 === cert.fingerprint256) continue;
+    if (now < cert.validFromDate.getTime() || now >= cert.validToDate.getTime()) {
+      throw new CertificateRefused(
+        `certificate ${i + 1} is ${now < cert.validFromDate.getTime() ? 'not yet valid' : 'expired'}`
+      );
+    }
+  }
+
   const missingNames = input.names.filter((name) =>
     isIP(name)
       ? leaf.checkIP(name) === undefined
@@ -175,6 +190,11 @@ export function inspectMaterial(input: {
     key: input.keyPem,
     cert: input.certPems.join(''),
     fingerprint: leaf.fingerprint256,
+    contextFingerprint: createHash('sha256')
+      .update(input.keyPem)
+      .update('\0')
+      .update(input.certPems.join(''))
+      .digest('hex'),
     notBefore: leaf.validFromDate.getTime(),
     notAfter: leaf.validToDate.getTime(),
     sans: parseSans(leaf.subjectAltName),

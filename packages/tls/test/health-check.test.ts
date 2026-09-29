@@ -89,6 +89,35 @@ describe('checkHealth over HTTPS', () => {
     });
     expect((await checkHealth(tlsEnv(closed), { readState: noState })).code).toBe(1);
   });
+
+  it('enforces an overall timeout when a peer trickles a response', async () => {
+    const trickle = createHttpsServer(
+      { key: fixture('leaf.key'), cert: fixture('leaf.crt') + fixture('intermediate.crt') },
+      (_request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        const timer = setInterval(() => response.write(' '), 10);
+        response.on('close', () => clearInterval(timer));
+      }
+    );
+    const port = await listen(trickle);
+    const result = await checkHealth(tlsEnv(port), { readState: noState, timeoutMs: 50 });
+    expect(result.code).toBe(1);
+    expect(result.message).toContain('timed out');
+  });
+
+  it('rejects an oversized response body', async () => {
+    const oversized = createHttpsServer(
+      { key: fixture('leaf.key'), cert: fixture('leaf.crt') + fixture('intermediate.crt') },
+      (_request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end('x'.repeat(65 * 1024));
+      }
+    );
+    const port = await listen(oversized);
+    const result = await checkHealth(tlsEnv(port), { readState: noState });
+    expect(result.code).toBe(1);
+    expect(result.message).toContain('health response is too large');
+  });
 });
 
 describe('VERIFY_CODES', () => {

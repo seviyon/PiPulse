@@ -112,7 +112,14 @@ describe('statSignature', () => {
     symlinkSync(b, link);
     expect(statSignature([link])).not.toBe(before);
     utimesSync(b, new Date(0), new Date(0));
-    expect(statSignature([join(dir, 'nope'), b])).toMatch(/^missing\|\d+:\d+:0$/);
+    expect(statSignature([join(dir, 'nope'), b])).toMatch(/^missing\|\d+:\d+:0:\d+:\d+:\d+$/);
+  });
+
+  it('changes when generated-file permissions or ownership change', () => {
+    const path = write('permissions.pem', 0o640);
+    const before = statSignature([path]);
+    chmodSync(path, 0o600);
+    expect(statSignature([path])).not.toBe(before);
   });
 });
 
