@@ -4,7 +4,13 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', 'packages/web/dist/**']
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      'packages/web/dist/**',
+      'out/**',
+      '.superpowers/**'
+    ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -14,6 +20,13 @@ export default tseslint.config(
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
       ]
+    }
+  },
+  {
+    // Plain Node scripts outside the TypeScript packages (the Docker health check).
+    files: ['packaging/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', fetch: 'readonly', AbortSignal: 'readonly' }
     }
   }
 );

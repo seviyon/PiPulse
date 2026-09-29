@@ -35,6 +35,26 @@ describe('<Tile> without a reading', () => {
   });
 });
 
+describe('<Tile> for a plugin that cannot run here', () => {
+  it('says why instead of waiting for readings', () => {
+    render(
+      <Tile
+        plugin={{ ...plugin, unavailable: 'Not available in Docker' }}
+        latest={undefined}
+        series={[]}
+        now={1_000_000 + 60_000}
+        waitingSince={1_000_000}
+        rules={[]}
+        windowMs={900_000}
+      />,
+      root
+    );
+    expect(root.textContent).toContain('Not available in Docker');
+    expect(root.textContent).not.toContain('Waiting for the first reading');
+    expect(root.textContent).not.toContain('No readings yet');
+  });
+});
+
 describe('<Tile> for throttle flags', () => {
   it('shows the decoded state with no meter or sparkline', () => {
     const throttled = { id: 'throttled', label: 'Throttling', unit: 'flags', intervalMs: 10_000 };

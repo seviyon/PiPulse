@@ -12,3 +12,4 @@ coverage/
 *.timestamp-*.mjs
 *.swp
 .playwright-mcp/
+/out/

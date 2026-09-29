@@ -1,0 +1,16 @@
+services:
+  pipulse:
+    image: ghcr.io/seviyon/pipulse:latest
+    restart: unless-stopped
+    network_mode: host # the host's network counters and hostname; set PIPULSE_PORT in pipulse.env
+    env_file:
+      - path: ./pipulse.env # your settings (see packaging/pipulse.env); optional until you need one
+        required: false
+    volumes:
+      - pipulse-data:/data
+      - ./config:/etc/pipulse:ro # password hash, rules, notify file, CA certificate
+      - /boot/firmware:/boot/firmware:ro # the /boot usage tile (use /boot on older Pi OS)
+      - /etc/os-release:/host/etc/os-release:ro # the host's OS name, not the image's
+      - /proc/device-tree/model:/host/model:ro # the Pi model (Docker hides /sys/firmware)
+volumes:
+  pipulse-data:

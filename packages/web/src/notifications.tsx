@@ -43,7 +43,8 @@ export function NotificationsSection() {
       <div class="note">
         <p>
           Webhooks are set in the file named by <code>PIPULSE_NOTIFY_FILE</code>; test one with{' '}
-          <code>node packages/api/dist/notify-test.js</code>.
+          <code>sudo pipulse notify-test</code> (from a source checkout,{' '}
+          <code>node packages/api/dist/notify-test.js</code>).
         </p>
       </div>
       {loaded.status === 'loading' && <p class="waiting">Loading</p>}

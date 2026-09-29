@@ -1,0 +1,17 @@
+# PiPulse is a third-party add-on, not part of Debian: /opt is where the FHS
+# puts those (like /opt/google/chrome), and it keeps its bundled Node and
+# dependencies apart from the system's.
+pipulse: dir-or-file-in-opt [opt/*]
+
+# The bundled Node stays byte-identical to Node's GPG-verified release build:
+# not stripped, and with the zlib Node itself embeds.
+pipulse: unstripped-binary-or-object [opt/pipulse/node/bin/node]
+pipulse: embedded-library zlib [opt/pipulse/node/bin/node]
+
+# npm packages' own "#!/usr/bin/env node" scripts: PiPulse runs everything with
+# its bundled Node, so no nodejs package is needed.
+pipulse: missing-dep-for-interpreter node (does not satisfy nodejs:any) [opt/pipulse/app/node_modules/*]
+
+# Third-party npm packages are shipped exactly as published, stray files included.
+pipulse: package-contains-eslint-config-file [opt/pipulse/app/node_modules/*]
+pipulse: wrong-path-for-interpreter /usr/bin/bash != /bin/bash [opt/pipulse/app/node_modules/*]

@@ -26,7 +26,8 @@ export class NotifyConfigError extends Error {}
 export function readNotifyFile(path: string): NotifyFile {
   try {
     const text = readFileSync(path, 'utf8');
-    const worldReadable = (statSync(path).mode & 0o077) !== 0;
+    // Only "other" counts: the installed service reads it through its group (root:pipulse 640).
+    const worldReadable = (statSync(path).mode & 0o007) !== 0;
     return { name: path, text, worldReadable };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? String(error);

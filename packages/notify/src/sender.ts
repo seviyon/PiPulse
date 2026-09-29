@@ -22,6 +22,8 @@ export const MAX_RETRY_MS = 5 * 60_000;
 export const GIVE_UP_AFTER_MS = 6 * 60 * 60_000;
 export const PRUNE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
+/** How long stop() waits for deliveries in progress (as the collector's shutdown does). */
+export const STOP_WAIT_MS = 5_000;
 /** A wall-clock move this far from monotonic time between two checks counts as a jump. */
 const CLOCK_JUMP_MS = 60_000;
 
@@ -37,6 +39,8 @@ interface Deliverer {
 interface SendOptions {
   now: () => number;
   onGiveUp?: (webhookId: string, attempts: number, reason: string) => void;
+  /** Aborted on shutdown: a delivery cut short by it isn't counted as an attempt. */
+  stopSignal?: AbortSignal;
 }
 
 /** Delivers the webhook's oldest pending row if it is due; resolves to whether it was sent. */
@@ -56,11 +60,15 @@ export async function sendNext(
     return false;
   }
   if (row.nextAt > t) return false;
+  const signals = [AbortSignal.timeout(timeoutMs)];
+  if (options.stopSignal) signals.push(options.stopSignal);
   try {
-    await action.deliver(row.payload, AbortSignal.timeout(timeoutMs));
+    await action.deliver(row.payload, AbortSignal.any(signals));
     markSent(db, row.id, options.now());
     return true;
   } catch (error) {
+    // Cut short by shutdown: not the receiver's fault, so not an attempt.
+    if (options.stopSignal?.aborted) return false;
     const reason = error instanceof Error ? error.message : String(error);
     const at = options.now();
     // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
@@ -193,8 +201,10 @@ export function startNotifications(
   }
 
   let stopped = false;
+  const stopping = new AbortController();
   const sendOptions: SendOptions = {
     now,
+    stopSignal: stopping.signal,
     onGiveUp: (id, n, reason) => log(`webhook ${id}: gave up after ${n} attempts (last: ${reason})`)
   };
 
@@ -261,7 +271,13 @@ export function startNotifications(
     async stop() {
       clearInterval(timer);
       stopped = true;
-      await Promise.all(lanes.map((lane) => lane.done()));
+      stopping.abort();
+      let giveUp: NodeJS.Timeout | undefined;
+      await Promise.race([
+        Promise.all(lanes.map((lane) => lane.done())),
+        new Promise((resolve) => (giveUp = setTimeout(resolve, STOP_WAIT_MS)))
+      ]);
+      clearTimeout(giveUp);
     }
   };
 }

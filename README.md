@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 5b-3 (notifications) is complete; 6 (packaging) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 5b-3 (notifications) is complete; 6 (packaging: apt, tarball and Docker installs, automatic releases) is in progress.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -64,11 +64,63 @@ PiPulse/
 | Frontend | Preact + Vite (React-compatible, ~3 KB runtime) | Preact 10.29.8, Vite 8.3.0 |
 | Testing | Vitest (unit/integration today), Playwright (end-to-end, planned) | Vitest 5.0.1 |
 | Lint/format | ESLint (flat config) + Prettier | ESLint 10.11.0, Prettier 3.9.8 |
-| Deployment | systemd unit **and** a multi-arch Docker image (`linux/arm64`, `linux/arm/v7`) | — |
+| Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`) | — |
 
 Dependency versions above reflect the last verified clean install (`npm install`, 0 vulnerabilities); see `package.json`/`package-lock.json` for exact ranges.
 
-## Getting started
+## Install
+
+On a Raspberry Pi (or any Debian-based Linux) — Pi 2 and newer, 32- or 64-bit:
+
+```bash
+curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh
+```
+
+That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js (the system's is left alone). It runs as the `pipulse` service on port **8889** (next to RPi-Monitor, which uses 8888); open `http://<pi>:8889/`. New releases then arrive with `sudo apt upgrade`. Running the one-liner again is safe: it installs any newer version. If the repository can't be reached, nothing changes. If an upgrade fails, PiPulse stays installed and its apt source is kept, but the new version is left half-configured until you run `sudo apt-get -f install` (the installer says so). Prefer to read the script first? Download it, read it, then run it:
+
+```bash
+curl -fsSLO https://github.com/seviyon/PiPulse/releases/latest/download/install.sh
+less install.sh
+sudo sh install.sh
+```
+
+Or add the repository by hand:
+
+```bash
+curl -fsSL https://seviyon.github.io/PiPulse/apt/pipulse.gpg | sudo tee /usr/share/keyrings/pipulse.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] https://seviyon.github.io/PiPulse/apt stable main" | sudo tee /etc/apt/sources.list.d/pipulse.list
+sudo apt update && sudo apt install pipulse
+```
+
+**Settings** live in `/etc/pipulse/pipulse.env` (every variable is listed there, commented out, with its default); files it points at — a password hash, a rules file, a notify file, a CA certificate — go in `/etc/pipulse/` too (`root:pipulse`, mode `640`). After a change: `sudo systemctl restart pipulse`. The database is `/var/lib/pipulse/pipulse.sqlite`. The installer warns, without changing anything, when the port is already taken or ufw would block it.
+
+**Plain HTTP, for now.** PiPulse serves plain HTTP and listens on every interface by default. On a network others can watch (shared Wi-Fi, a guest VLAN), the sign-in password and the session cookie can be captured. Keep it on a network you trust, set `PIPULSE_HOST` to a single interface if that helps, and don't expose its port to the internet. HTTPS by default (a self-signed certificate made for each Pi, or your own) is planned as Phase 6b.
+
+The `pipulse` command wraps the everyday tasks, with the service's settings loaded:
+
+```bash
+pipulse version                               # PiPulse and Node versions, and Node's end of support
+pipulse hash-password | sudo tee /etc/pipulse/admin.hash >/dev/null
+sudo chown root:pipulse /etc/pipulse/admin.hash && sudo chmod 640 /etc/pipulse/admin.hash
+sudo pipulse notify-test [webhook-id]         # send a test message through PIPULSE_NOTIFY_FILE
+```
+
+**Remove:** `sudo apt remove pipulse` keeps your settings and data; `sudo apt purge pipulse` deletes them.
+
+**Without apt** (or to try a build before it's released), install from the release tarball instead. It checks the download, installs the same way, and rolls back on its own if an upgrade doesn't come up healthy:
+
+```bash
+curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh -s -- --tarball
+sudo sh install.sh --version 0.6.1              # a specific release
+sudo sh install.sh --from pipulse-0.6.1.tar.gz  # a local file
+sudo sh install.sh --uninstall                  # keeps /etc/pipulse and the data; --purge removes them
+```
+
+**Docker** (64-bit hosts: a Pi 3/4/5 on 64-bit Pi OS, or a PC): download [`compose.yaml`](compose.yaml), put your settings in `pipulse.env` and any files in `config/` next to it, then `docker compose up -d`. The compose file shares the host's network and mounts `/boot/firmware`, `/etc/os-release` and the Pi model read-only, so the readings are the host's, not the container's; core voltage and throttling need the Pi firmware and show "Not available in Docker". Its health check (`/api/health`) shows up in Docker, Dockhand and Portainer. Keep it on your LAN.
+
+**Node.js support.** Each install carries its own Node: 22 LTS on 32-bit Pis (the last Node line built for 32-bit ARM) and 24 LTS on 64-bit. Node security fixes reach you through normal PiPulse releases. Node 22's security support ends on **30 April 2027**; after that a 32-bit Pi keeps working on an unpatched Node, and the Settings page and the startup log say so. Moving PiPulse to a 64-bit Pi is the long-term fix. The Pi 1 and Pi Zero (`armv6`) aren't supported.
+
+## Develop
 
 Requires **Node.js >=22.13.0** (for built-in `node:sqlite` support with no experimental flag).
 
@@ -81,10 +133,10 @@ npm test          # builds, then runs the Vitest suites across all packages
 npm run dev       # runs the server (collector + API) in watch mode
 ```
 
-To run the server (collector + dashboard + REST API + WebSocket feed) from a build, then open `http://<host>:8888/`:
+To run the server (collector + dashboard + REST API + WebSocket feed) from a build, then open `http://<host>:8889/` (an installed PiPulse reads the same variables from `/etc/pipulse/pipulse.env`):
 
 ```bash
-PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
+PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8889 \
   node --disable-warning=ExperimentalWarning packages/api/dist/server.js
 ```
 
@@ -92,7 +144,7 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | ----------------- | ---------------- | -------------------------------- |
 | `PIPULSE_DB_PATH` | `pipulse.sqlite` | SQLite database file             |
 | `PIPULSE_HOST`    | `0.0.0.0`        | Interface to bind                |
-| `PIPULSE_PORT`    | `8888`           | HTTP/WebSocket port              |
+| `PIPULSE_PORT`    | `8889`           | HTTP/WebSocket port              |
 | `PIPULSE_WEB_DIR` | `packages/web/dist` | Built dashboard to serve at `/` (API-only if missing) |
 | `PIPULSE_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed on `/api/live`, comma-separated (e.g. behind a reverse proxy) |
 | `PIPULSE_RETENTION_RAW` | `2d` | How long raw samples are kept |
@@ -106,7 +158,7 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 
 Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Retention can also be changed on the Settings page, without a restart; a variable that is set wins and locks that field there. Levels must stay in order (raw ≤ 1-minute ≤ hourly ≤ daily); variables out of order stop the server at startup. A longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess within a minute. After a large deletion the database compacts itself (at most once a day, only when at least a quarter of an 8 MB+ file is free and the disk has room for about twice the file). The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/config` (device, including its CPU count, plugins, the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`), and `GET /api/notify` (each webhook's id, host, filters, queued count and last delivery or failure — never its full URL or headers). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/health` (public: `200` while the database answers and readings arrive, `503` naming the problem otherwise), `GET /api/config` (PiPulse `version`, the running `node` and its end of support, device, including its CPU count, plugins (each with `unavailable` when it can't run here), the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`), and `GET /api/notify` (each webhook's id, host, filters, queued count and last delivery or failure — never its full URL or headers). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -116,25 +168,7 @@ To run only the collector daemon, without the API (writes to `PIPULSE_DB_PATH`, 
 PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages/collector
 ```
 
-> For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8888`).
-
-### Running in production
-
-**Native (systemd)**
-
-```bash
-npm run build
-sudo ./deploy/systemd/install.sh
-sudo systemctl enable --now pipulse
-```
-
-**Docker**
-
-```bash
-docker compose -f deploy/docker/compose.yml up -d
-```
-
-The Docker image needs host visibility to report accurate host metrics — the compose file mounts `/proc` and `/sys` (read-only) and runs with `pid: host`. Keep the container on your LAN only; don't publish its port to the internet.
+> For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8889`).
 
 ## Alerts
 
@@ -200,7 +234,7 @@ Each webhook needs an `id` and an `http(s)` `url`; `method` (`POST` or `PUT`), `
 
 A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail.
 
-The file usually holds secrets: `chmod 600` it (PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
+The file usually holds secrets: keep other users out of it (`sudo chown root:pipulse /etc/pipulse/notify.json && sudo chmod 640 /etc/pipulse/notify.json` on an installed PiPulse, `chmod 600` when you run it as yourself; PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
 
 Messages are queued in the database and sent in order per webhook, retried with backoff (5 s, doubling, up to every 5 minutes) for up to 6 hours, and survive restarts. Removing or disabling a rule closes its alert without a message, and editing a rule so its alert closes and reopens unchanged sends nothing. To check a webhook without waiting for an alert:
 
@@ -232,7 +266,7 @@ PiPulse speaks plain HTTP: the password crosses the network once at sign-in. Kee
 
 ## Configuration
 
-Configuration is environment variables for now (see the table under [Getting started](#getting-started)), plus the alert rules file described under [Alerts](#alerts) and the webhooks file described under [Notifications](#notifications). Retention is editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules are editable on the Alerts page (see [Alerts](#alerts)), signed in. Plugin selection and poll intervals are fixed in code.
+Configuration is environment variables for now (see the table under [Develop](#develop); an installed PiPulse reads them from `/etc/pipulse/pipulse.env`, see [Install](#install)), plus the alert rules file described under [Alerts](#alerts) and the webhooks file described under [Notifications](#notifications). Retention is editable on the Settings page (see [Sign-in and settings](#sign-in-and-settings)); alert rules are editable on the Alerts page (see [Alerts](#alerts)), signed in. Plugin selection and poll intervals are fixed in code.
 
 ## Roadmap
 
@@ -247,7 +281,8 @@ Configuration is environment variables for now (see the table under [Getting sta
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
 | 5b-3 | Notifications (webhook) | ✅ Done |
-| 6 | Packaging (systemd + Docker, multi-arch CI) |  |
+| 6 | Packaging (apt, tarball, Docker, releases, Renovate) | 🚧 In progress |
+| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ Next |
 | 7 | Cutover from the legacy daemon |  |
 
 ## Credits

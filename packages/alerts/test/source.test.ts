@@ -240,6 +240,14 @@ describe('createRuleSource', () => {
     });
   });
 
+  it('reports corrupt saved rules once and keeps the other layers in force', () => {
+    db.prepare("INSERT INTO settings VALUES ('alerts.rules', '[{broken', 1)").run();
+    const s = source();
+    expect(ids(s.read().rules)).toContain('cpu_busy');
+    s.read();
+    expect(problems.filter((p) => p.includes('not valid JSON'))).toHaveLength(1);
+  });
+
   it('still refuses a bad rules file at creation', () => {
     expect(() => source({ rules: [{ id: 'x' }] })).toThrow(AlertRulesError);
   });

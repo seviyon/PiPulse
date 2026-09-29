@@ -10,6 +10,8 @@ export interface PluginInfo {
   label: string;
   unit: string;
   intervalMs: number;
+  /** Why this plugin isn't running here (e.g. 'Not available in Docker'); absent when it runs. */
+  unavailable?: string;
 }
 
 export interface DeviceInfo {
@@ -79,6 +81,18 @@ export interface Config {
   uptimeMs?: number;
   /** The effective alert rules; absent from older servers. */
   rules?: Rule[];
+  /** The PiPulse release ('dev' from a checkout); absent from older servers. */
+  version?: string;
+  /** The running Node and its end of security support; absent from older servers. */
+  node?: NodeSupport;
+}
+
+export interface NodeSupport {
+  version: string;
+  line: number;
+  /** YYYY-MM-DD, or null for a Node line PiPulse has no date for. */
+  supportEnds: string | null;
+  ended: boolean;
 }
 
 export type LiveMessage =

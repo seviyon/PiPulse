@@ -1,0 +1,12 @@
+Package: pipulse
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Andres <seviyon@users.noreply.github.com>
+Depends: adduser, libc6, libgcc-s1, libstdc++6
+Section: admin
+Priority: optional
+Homepage: https://github.com/seviyon/PiPulse
+Description: Raspberry Pi system monitor with a live web dashboard
+ PiPulse collects CPU, temperature, memory, disk and network readings into
+ SQLite, checks them against alert rules, sends webhook notifications and
+ serves a live dashboard and history charts. Includes its own Node.js.

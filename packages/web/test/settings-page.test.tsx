@@ -76,6 +76,7 @@ beforeEach(() => {
       if (url === '/api/settings' && method === 'GET') return Response.json(settings);
       if (url === '/api/settings/preview') return Response.json(previewAnswer);
       if (url === '/api/notify') return Response.json([]);
+      if (url === '/api/config') return Response.json({ version: 'dev' });
       if (url === '/api/settings' && method === 'PUT') {
         const answers: Record<number, unknown> = {
           200: settings,
@@ -130,7 +131,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
     await settle();
     const headings = [...root.querySelectorAll('h2')].map((h) => h.textContent);
-    expect(headings).toEqual(['Data retention', 'Storage', 'Notifications']);
+    expect(headings).toEqual(['Data retention', 'Storage', 'Notifications', 'About']);
     await vi.waitFor(() =>
       expect(root.textContent).toContain('No webhooks configured — set PIPULSE_NOTIFY_FILE.')
     );

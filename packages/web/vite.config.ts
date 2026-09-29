@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
 
 /** Where `npm run dev` forwards /api (REST and the /api/live WebSocket). */
-const apiTarget = process.env['PIPULSE_API'] ?? 'http://localhost:8888';
+const apiTarget = process.env['PIPULSE_API'] ?? 'http://localhost:8889';
 
 export default defineConfig({
   plugins: [preact()],

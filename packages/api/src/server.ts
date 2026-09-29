@@ -24,6 +24,9 @@ import {
   type WebhookConfig
 } from '@pipulse/notify';
 import { readAuthConfig, type AuthConfig } from './auth.js';
+import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
+import { createHealth } from './health.js';
+import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
   createFeed,
@@ -32,7 +35,19 @@ import {
   rawRetentionProblem
 } from './index.js';
 
+// In a container (the Docker image sets these) the firmware plugins can't run, and
+// the host's OS name and Pi model are mounted under PIPULSE_HOST_ROOT.
+const IN_CONTAINER = process.env['PIPULSE_IN_CONTAINER'] === 'true';
+const HOST_ROOT = process.env['PIPULSE_HOST_ROOT'];
+const { run: RUN_PLUGINS, unavailable: UNAVAILABLE } = splitForContainer(
+  builtinPlugins,
+  IN_CONTAINER
+);
+
 const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }));
+// What the engine watches: only plugins that run here, so the '*' silence rule
+// (not_collecting) never waits on a plugin a container can't schedule.
+const RUN_METRICS = RUN_PLUGINS.map(({ id, intervalMs }) => ({ id, intervalMs }));
 
 /**
  * PiPulse server: one process that runs the collector scheduler and serves
@@ -42,7 +57,7 @@ const METRICS = builtinPlugins.map(({ id, intervalMs }) => ({ id, intervalMs }))
  */
 const DB_PATH = process.env['PIPULSE_DB_PATH'] ?? 'pipulse.sqlite';
 const HOST = process.env['PIPULSE_HOST'] ?? '0.0.0.0';
-const PORT = Number(process.env['PIPULSE_PORT'] ?? 8888);
+const PORT = Number(process.env['PIPULSE_PORT'] ?? 8889);
 /** Comma-separated extra browser origins allowed on /api/live, e.g. behind a reverse proxy. */
 const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
   .split(',')
@@ -55,6 +70,10 @@ const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
  */
 const WEB_DIR =
   process.env['PIPULSE_WEB_DIR'] ?? fileURLToPath(new URL('../../web/dist', import.meta.url));
+
+// The app root is three levels above packages/api/dist/server.js; a release stamps version.json there.
+const VERSION = readVersion(fileURLToPath(new URL('../../../', import.meta.url)));
+const NODE = nodeSupport();
 
 /** How long shutdown waits for in-flight sensor reads before giving up on them. */
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -136,7 +155,7 @@ function readWebhooks(): WebhookConfig[] {
   try {
     const file = readNotifyFile(path);
     if (file.worldReadable)
-      console.warn('[pipulse] PIPULSE_NOTIFY_FILE is readable by other users; chmod 600 it');
+      console.warn('[pipulse] PIPULSE_NOTIFY_FILE is readable by other users; chmod o-r it');
     return parseNotifyConfig(file);
   } catch (error) {
     fail(error);
@@ -151,6 +170,9 @@ const notifications = startNotifications(db, {
   log: (message) => console.warn(`[pipulse] ${message}`)
 });
 
+// Liveness for /api/health: the database answers and readings keep arriving.
+const health = createHealth(db, { trackReadings: true });
+
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
 // buildServer runs before the alert engine starts (below), but its recheck
@@ -159,20 +181,24 @@ const alertFeed = createFeed<AlertEvent>();
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
-  device: await readDeviceInfo(),
+  device: await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {}),
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
     id,
     label,
     unit,
-    intervalMs
+    intervalMs,
+    ...(UNAVAILABLE.has(id) ? { unavailable: CONTAINER_UNAVAILABLE } : {})
   })),
   alertRules: { source: RULES, recheck: () => engine.alerts?.check() },
   alertFeed,
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
-  notify: notifications
+  notify: notifications,
+  health,
+  version: VERSION,
+  node: NODE
 });
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
@@ -191,8 +217,11 @@ const housekeeping = startHousekeeping(db, {
     console.error('[pipulse] housekeeping failed:', error);
   }
 });
-const scheduler = startScheduler(db, builtinPlugins, {
-  onSample: live.publish,
+const scheduler = startScheduler(db, RUN_PLUGINS, {
+  onSample: (sample) => {
+    health.markReading();
+    live.publish(sample);
+  },
   onError: (plugin, error) => {
     console.error(`[pipulse] ${plugin.id} failed:`, error);
   }
@@ -200,7 +229,7 @@ const scheduler = startScheduler(db, builtinPlugins, {
 // Checks every alert rule now and then every 15 s; raises and clears go to /api/live.
 engine.alerts = startAlerts(db, {
   rules: rulesInForce,
-  metrics: METRICS,
+  metrics: RUN_METRICS,
   onChange: (event) => {
     alertFeed.publish(event);
     notifications.enqueue(event);
@@ -218,10 +247,14 @@ app
   .then(() => {
     const { port } = app.server.address() as AddressInfo;
     console.log(
-      `[pipulse] listening on http://${HOST}:${port}` +
+      `[pipulse] ${VERSION} (Node ${NODE.version}) listening on http://${HOST}:${port}` +
         (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +
         (PROTECT_READS ? ' (reads need sign-in)' : '')
     );
+    if (NODE.ended)
+      console.warn(
+        `[pipulse] Node ${NODE.line} no longer gets security fixes (since ${NODE.supportEnds})`
+      );
   })
   .catch((error: unknown) => {
     console.error(error);

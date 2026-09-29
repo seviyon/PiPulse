@@ -11,6 +11,7 @@ import {
   type Preview,
   type SettingsBody
 } from './settings.js';
+import { AboutSection } from './about.js';
 import { NotificationsSection } from './notifications.js';
 import { SignIn } from './sign-in.js';
 import { StatusIcon } from './tile.js';
@@ -152,9 +153,10 @@ export function SettingsPage({
           <div class="note">
             <p>
               Editing is off: no admin password is configured. To turn it on, run{' '}
-              <code>node packages/api/dist/hash-password.js</code>, save its output to a file only
-              PiPulse can read, set <code>PIPULSE_ADMIN_PASSWORD_HASH_FILE</code> to that file and
-              restart PiPulse.
+              <code>pipulse hash-password</code> (from a source checkout,{' '}
+              <code>node packages/api/dist/hash-password.js</code>), save its output to a file only
+              PiPulse can read, set <code>PIPULSE_ADMIN_PASSWORD_HASH_FILE</code> to that file in{' '}
+              <code>/etc/pipulse/pipulse.env</code> and restart PiPulse.
             </p>
           </div>
         )}
@@ -270,6 +272,7 @@ export function SettingsPage({
         </dl>
       </section>
       <NotificationsSection />
+      <AboutSection />
     </div>
   );
 }

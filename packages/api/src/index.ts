@@ -17,7 +17,9 @@ import { listAlerts, openAlerts, type AlertEvent, type Rule } from '@pipulse/ale
 import type { WebhookStatus } from '@pipulse/notify';
 import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './alert-routes.js';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
+import { createHealth, type Health } from './health.js';
 import { registerNotifyRoutes } from './notify-routes.js';
+import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
@@ -31,6 +33,8 @@ export interface PluginInfo {
   label: string;
   unit: string;
   intervalMs: number;
+  /** Why this plugin isn't running here (e.g. 'Not available in Docker'); absent when it runs. */
+  unavailable?: string;
 }
 
 export interface DeviceInfo {
@@ -112,6 +116,12 @@ export interface ServerOptions {
   settings?: SettingsOptions;
   /** Rule editing and the live rule set; when set, /api/config serves its rules in force. */
   alertRules?: AlertRulesOptions;
+  /** The release version (from version.json); 'dev' when unset. */
+  version?: string;
+  /** The running Node and its end of security support. */
+  node?: NodeSupport;
+  /** Liveness at /api/health (public); default checks only the database. */
+  health?: Health;
   /** Webhook delivery status, served read-only at /api/notify. */
   notify?: { status(): WebhookStatus[] };
 }
@@ -179,7 +189,18 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   // sent as a duration, read fresh per request, not as a boot timestamp: the
   // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
   // however far the clock later jumps.
+  const health = options.health ?? createHealth(db);
+  app.get('/api/health', async (_request, reply) => {
+    const result = health.check();
+    return result.ok
+      ? { status: 'ok' }
+      : reply.status(503).send({ status: 'unhealthy', problems: result.problems });
+  });
+
+  const node = options.node ?? nodeSupport();
   app.get('/api/config', async () => ({
+    version: options.version ?? 'dev',
+    node,
     device,
     plugins,
     serverTime: Date.now(),

@@ -4,6 +4,7 @@ import { headOf, insertNotification, markSent, webhookStats } from '../src/outbo
 import {
   GIVE_UP_AFTER_MS,
   PRUNE_AFTER_MS,
+  STOP_WAIT_MS,
   retryDelay,
   sendDue,
   startNotifications
@@ -231,6 +232,34 @@ describe('startNotifications', () => {
       expect(logs.join('\n')).toMatch(/clock jumped back/);
       await n.stop();
     });
+  });
+
+  it('stops within 5 s, leaving an interrupted delivery pending and uncounted', async () => {
+    add('a');
+    const hang = action('a', ['hang']);
+    const n = startNotifications(db, {
+      webhooks: [
+        {
+          id: 'a',
+          url: 'http://x',
+          method: 'POST',
+          headers: {},
+          events: ['raised', 'cleared'],
+          minSeverity: 'warning',
+          timeoutMs: 60_000
+        }
+      ],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      intervalMs: 1e9,
+      actions: [hang]
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20)); // delivery in flight
+    const started = performance.now();
+    await n.stop();
+    expect(performance.now() - started).toBeLessThan(STOP_WAIT_MS);
+    expect(headOf(db, 'a')).toMatchObject({ attempts: 0, lastError: null });
   });
 
   it('wakes on enqueue and delivers', async () => {

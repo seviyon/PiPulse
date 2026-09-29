@@ -92,6 +92,8 @@ describe('GET /api/config', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
+      version: 'dev',
+      node: expect.objectContaining({ version: process.version.slice(1) }),
       device: { hostname: 'pihole', platform: 'linux', arch: 'arm' },
       plugins: [{ id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 }],
       serverTime: expect.any(Number),
