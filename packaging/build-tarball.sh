@@ -26,5 +26,7 @@ cp -R "$here" "$root/packaging"
 rm -rf "$root/packaging/test"
 cp "$here/install.sh" "$root/install.sh"
 printf '{"version":"%s"}\n' "$version" > "$root/version.json"
-tar -czf "$out/$name.tar.gz" -C "$stage" "$name"
+# No extended attributes: macOS tar would add its own (com.apple.provenance),
+# which GNU tar on the Pi warns about for every file.
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/$name.tar.gz" -C "$stage" "$name"
 log "built $out/$name.tar.gz"
