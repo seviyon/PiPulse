@@ -70,7 +70,7 @@ export function healthTarget(
       ? 'localhost'
       : sans.ip.includes('127.0.0.1')
         ? '127.0.0.1'
-        : (sans.dns[0] ?? '127.0.0.1'));
+        : (sans.ip[0] ?? sans.dns[0] ?? '127.0.0.1'));
   return { connect: '127.0.0.1', identity };
 }
 

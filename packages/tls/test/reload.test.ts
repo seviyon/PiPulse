@@ -22,6 +22,13 @@ const A_WITH_ROOT = make('leaf.crt', 'leaf.key', [
 ]);
 const B = make('leaf2.crt', 'leaf2.key');
 const B_INCOMPLETE = make('leaf2.crt', 'leaf2.key', []);
+const A_UNTRUSTED = inspectMaterial({
+  source: 'operator',
+  keyPem: fixture('leaf.key'),
+  certPems: [fixture('leaf.crt'), fixture('intermediate.crt')],
+  trust: { anchors: [], system: false },
+  names: []
+});
 
 function setup(
   initial = A,
@@ -140,6 +147,16 @@ describe('startReloader', () => {
     r.provider.poll();
     expect(r.applied).toEqual([]);
     expect(r.provider.reload().state).toBe('ok');
+  });
+
+  it('updates trust metadata when only the CA changes', () => {
+    const r = setup();
+    r.change('s1', () => A_UNTRUSTED);
+    r.provider.poll();
+    r.provider.poll();
+    expect(r.applied).toEqual([]);
+    expect(r.provider.current()).toBe(A_UNTRUSTED);
+    expect(r.provider.current().chainClass).toBe(A_UNTRUSTED.chainClass);
   });
 
   it('reloads a changed chain when the leaf certificate is unchanged', () => {

@@ -77,6 +77,9 @@ export function startReloader(options: {
       return;
     }
     if (candidate.contextFingerprint === active.contextFingerprint) {
+      // The trust metadata can change independently of the served key/chain.
+      // Publish it without replacing the live TLS context.
+      active = candidate;
       state.state = 'ok';
       state.lastError = null;
       return;

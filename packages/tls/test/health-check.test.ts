@@ -161,7 +161,7 @@ describe('healthTarget', () => {
     });
   });
 
-  it('on a wildcard bind prefers the declared name, then localhost, then 127.0.0.1, then the first DNS name', () => {
+  it('on a wildcard bind prefers the declared name, then localhost, then loopback, then an IP or DNS SAN', () => {
     expect(healthTarget({}, sans(['localhost']), ['io.lan'])).toEqual({
       connect: '127.0.0.1',
       identity: 'io.lan'
@@ -179,6 +179,10 @@ describe('healthTarget', () => {
     expect(healthTarget({}, sans(['example.internal']), [])).toEqual({
       connect: '127.0.0.1',
       identity: 'example.internal'
+    });
+    expect(healthTarget({}, sans([], ['192.168.1.20']), [])).toEqual({
+      connect: '127.0.0.1',
+      identity: '192.168.1.20'
     });
     expect(healthTarget({}, sans([]), [])).toEqual({ connect: '127.0.0.1', identity: '127.0.0.1' });
   });

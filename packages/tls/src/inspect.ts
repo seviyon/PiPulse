@@ -5,6 +5,7 @@ import { rootCertificates } from 'node:tls';
 import type { CertSource } from './config.js';
 import { readSecureFile } from './files.js';
 import { parseBundle, parseCertificateFile, parseKeyFile } from './pem.js';
+import type { ClockReading } from './clock.js';
 
 export type Validity = 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
 export type ChainClass =
@@ -98,6 +99,7 @@ export function inspectMaterial(input: {
   certPems: string[];
   trust: Trust;
   names: string[];
+  clock?: ClockReading;
 }): LoadedCertificate {
   const certs = input.certPems.map((pem, i) => {
     try {
@@ -167,14 +169,16 @@ export function inspectMaterial(input: {
 
   // A client validates every non-root certificate in the supplied chain. Keep
   // an unusable intermediate from being reported as a healthy certificate.
-  const now = Date.now();
-  for (let i = 1; i < certs.length; i++) {
-    const cert = certs[i]!;
-    if (anchor?.fingerprint256 === cert.fingerprint256) continue;
-    if (now < cert.validFromDate.getTime() || now >= cert.validToDate.getTime()) {
-      throw new CertificateRefused(
-        `certificate ${i + 1} is ${now < cert.validFromDate.getTime() ? 'not yet valid' : 'expired'}`
-      );
+  if (input.clock?.synced ?? true) {
+    const now = Date.now();
+    for (let i = 1; i < certs.length; i++) {
+      const cert = certs[i]!;
+      if (anchor?.fingerprint256 === cert.fingerprint256) continue;
+      if (now < cert.validFromDate.getTime() || now >= cert.validToDate.getTime()) {
+        throw new CertificateRefused(
+          `certificate ${i + 1} is ${now < cert.validFromDate.getTime() ? 'not yet valid' : 'expired'}`
+        );
+      }
     }
   }
 
@@ -223,7 +227,11 @@ function named<T>(setting: string, inspect: () => T): T {
  */
 export function loadCertificate(
   source: CertSource,
-  options: { names: string[]; generatedOwner?: { uid?: number; gid?: number } }
+  options: {
+    names: string[];
+    generatedOwner?: { uid?: number; gid?: number };
+    clock?: ClockReading;
+  }
 ): LoadedCertificate {
   if (source.kind === 'operator') {
     const certPems = parseCertificateFile(
@@ -244,7 +252,14 @@ export function loadCertificate(
         }
       : { anchors: [], system: true };
     return named('PIPULSE_TLS_CERT/PIPULSE_TLS_KEY', () =>
-      inspectMaterial({ source: 'operator', keyPem, certPems, trust, names: options.names })
+      inspectMaterial({
+        source: 'operator',
+        keyPem,
+        certPems,
+        trust,
+        names: options.names,
+        ...(options.clock !== undefined ? { clock: options.clock } : {})
+      })
     );
   }
   const owner = options.generatedOwner ?? {};
@@ -262,7 +277,8 @@ export function loadCertificate(
       keyPem: bundle.key,
       certPems: bundle.certs,
       trust: { anchors: ca, system: false },
-      names: options.names
+      names: options.names,
+      ...(options.clock !== undefined ? { clock: options.clock } : {})
     })
   );
   return { ...inspected, caFingerprint: new X509Certificate(ca[0]!).fingerprint256 };

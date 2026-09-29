@@ -139,6 +139,11 @@ if (
 const loadActive = (source: CertSource): LoadedCertificate =>
   loadCertificate(source, {
     names: TLS.names,
+    clock: readClock({
+      timesyncDir: TLS.timesyncDir,
+      now: Date.now(),
+      trust: TLS.clockTrust
+    }),
     generatedOwner: { uid: 0, ...(process.getgid ? { gid: process.getgid() } : {}) }
   });
 const certPaths = (source: CertSource): string[] =>
