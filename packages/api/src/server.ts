@@ -57,7 +57,7 @@ const RUN_METRICS = RUN_PLUGINS.map(({ id, intervalMs }) => ({ id, intervalMs })
  */
 const DB_PATH = process.env['PIPULSE_DB_PATH'] ?? 'pipulse.sqlite';
 const HOST = process.env['PIPULSE_HOST'] ?? '0.0.0.0';
-const PORT = Number(process.env['PIPULSE_PORT'] ?? 8888);
+const PORT = Number(process.env['PIPULSE_PORT'] ?? 8889);
 /** Comma-separated extra browser origins allowed on /api/live, e.g. behind a reverse proxy. */
 const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
   .split(',')

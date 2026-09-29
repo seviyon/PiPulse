@@ -76,7 +76,7 @@ On a Raspberry Pi (or any Debian-based Linux) — Pi 2 and newer, 32- or 64-bit:
 curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh
 ```
 
-That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js (the system's is left alone). It runs as the `pipulse` service on port **8888**; open `http://<pi>:8888/`. New releases then arrive with `sudo apt upgrade`. Running the one-liner again is safe: it installs any newer version. If the repository can't be reached, nothing changes. If an upgrade fails, PiPulse stays installed and its apt source is kept, but the new version is left half-configured until you run `sudo apt-get -f install` (the installer says so). Prefer to read the script first? Download it, read it, then run it:
+That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js (the system's is left alone). It runs as the `pipulse` service on port **8889** (next to RPi-Monitor, which uses 8888); open `http://<pi>:8889/`. New releases then arrive with `sudo apt upgrade`. Running the one-liner again is safe: it installs any newer version. If the repository can't be reached, nothing changes. If an upgrade fails, PiPulse stays installed and its apt source is kept, but the new version is left half-configured until you run `sudo apt-get -f install` (the installer says so). Prefer to read the script first? Download it, read it, then run it:
 
 ```bash
 curl -fsSLO https://github.com/seviyon/PiPulse/releases/latest/download/install.sh
@@ -133,10 +133,10 @@ npm test          # builds, then runs the Vitest suites across all packages
 npm run dev       # runs the server (collector + API) in watch mode
 ```
 
-To run the server (collector + dashboard + REST API + WebSocket feed) from a build, then open `http://<host>:8888/` (an installed PiPulse reads the same variables from `/etc/pipulse/pipulse.env`):
+To run the server (collector + dashboard + REST API + WebSocket feed) from a build, then open `http://<host>:8889/` (an installed PiPulse reads the same variables from `/etc/pipulse/pipulse.env`):
 
 ```bash
-PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
+PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8889 \
   node --disable-warning=ExperimentalWarning packages/api/dist/server.js
 ```
 
@@ -144,7 +144,7 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8888 \
 | ----------------- | ---------------- | -------------------------------- |
 | `PIPULSE_DB_PATH` | `pipulse.sqlite` | SQLite database file             |
 | `PIPULSE_HOST`    | `0.0.0.0`        | Interface to bind                |
-| `PIPULSE_PORT`    | `8888`           | HTTP/WebSocket port              |
+| `PIPULSE_PORT`    | `8889`           | HTTP/WebSocket port              |
 | `PIPULSE_WEB_DIR` | `packages/web/dist` | Built dashboard to serve at `/` (API-only if missing) |
 | `PIPULSE_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed on `/api/live`, comma-separated (e.g. behind a reverse proxy) |
 | `PIPULSE_RETENTION_RAW` | `2d` | How long raw samples are kept |
@@ -168,7 +168,7 @@ To run only the collector daemon, without the API (writes to `PIPULSE_DB_PATH`, 
 PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages/collector
 ```
 
-> For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8888`).
+> For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8889`).
 
 ## Alerts
 

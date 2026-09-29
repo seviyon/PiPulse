@@ -22,7 +22,7 @@ ENV PIPULSE_DB_PATH=/data/pipulse.sqlite \
     NODE_OPTIONS=--disable-warning=ExperimentalWarning
 USER pipulse
 VOLUME /data
-EXPOSE 8888
+EXPOSE 8889
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
   CMD ["node", "/opt/pipulse/healthcheck.mjs"]
 CMD ["node", "/opt/pipulse/app/packages/api/dist/server.js"]

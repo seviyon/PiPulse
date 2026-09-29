@@ -62,7 +62,7 @@ fi
 
 # 5. Warnings (never change anything)
 port=$(env_value PIPULSE_PORT)
-port=${port:-8888}
+port=${port:-8889}
 if command -v ss >/dev/null 2>&1; then
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -n 1)
   if [ -n "$holder" ] && [ "$holder" != node ]; then
