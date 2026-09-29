@@ -80,6 +80,19 @@ describe('inspectMaterial, accepted material', () => {
   });
 });
 
+describe('inspectMaterial, names', () => {
+  it('does not take the subject CN for a name (no CN fallback)', () => {
+    const cert = inspect([fixture('cn-only.crt'), intermediate], fixture('cn-only.key'), root, [
+      'io.lan'
+    ]);
+    expect(cert).toMatchObject({
+      class: 'degraded-san',
+      reasons: ['san-missing'],
+      missingNames: ['io.lan']
+    });
+  });
+});
+
 describe('inspectMaterial, refused material', () => {
   it.each([
     [
@@ -221,5 +234,47 @@ describe('loadCertificate', () => {
         { names: [] }
       )
     ).toThrow('PIPULSE_TLS_CERT: file not found');
+  });
+
+  it('names the setting when the key does not match', () => {
+    expect(() =>
+      loadCertificate(
+        {
+          kind: 'operator',
+          certPath: put('cert.pem', leaf + intermediate, 0o644),
+          keyPath: put('key.pem', fixture('leaf2.key'))
+        },
+        { names: [] }
+      )
+    ).toThrow(/^PIPULSE_TLS_CERT\/PIPULSE_TLS_KEY: the private key does not match/);
+  });
+
+  it('refuses a well-framed but broken PIPULSE_TLS_CA with its name, once', () => {
+    const broken = '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n';
+    const source = {
+      kind: 'operator' as const,
+      certPath: put('cert.pem', leaf + intermediate, 0o644),
+      keyPath: put('key.pem', fixture('leaf.key')),
+      caPath: put('ca.pem', broken, 0o644)
+    };
+    expect(() => loadCertificate(source, { names: [] })).toThrow(CertificateRefused);
+    expect(() => loadCertificate(source, { names: [] })).toThrow(
+      /^PIPULSE_TLS_CA: certificate 1 can't be parsed$/
+    );
+  });
+
+  it('names the bundle file when a generated bundle is refused', () => {
+    const uid = process.getuid!();
+    const gid = process.getgid!();
+    expect(() =>
+      loadCertificate(
+        {
+          kind: 'generated',
+          bundlePath: put('leaf.pem', fixture('leaf2.key') + leaf + intermediate, 0o640),
+          caPath: put('ca.crt', fixture('root-ca.crt'), 0o644)
+        },
+        { names: [], generatedOwner: { uid, gid } }
+      )
+    ).toThrow(/^leaf\.pem: the private key does not match/);
   });
 });

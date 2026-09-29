@@ -1,5 +1,6 @@
 import { createPrivateKey, X509Certificate, type KeyObject } from 'node:crypto';
 import { isIP } from 'node:net';
+import { basename } from 'node:path';
 import { rootCertificates } from 'node:tls';
 import type { CertSource } from './config.js';
 import { readSecureFile } from './files.js';
@@ -23,6 +24,12 @@ export const EXPIRING_SOON_MS = { operator: 14 * DAY_MS, generated: 30 * DAY_MS 
 /** Material that must never be served: startup stops, a reload keeps the old context. */
 export class CertificateRefused extends Error {
   override name = 'CertificateRefused';
+  /** True when the message already starts with the setting or file it is about. */
+  readonly named: boolean;
+  constructor(message: string, named = false) {
+    super(message);
+    this.named = named;
+  }
 }
 
 /** What the chain must lead to: explicit anchors, and/or Node's bundled roots. */
@@ -133,8 +140,15 @@ export function inspectMaterial(input: {
     if (CLASS_RANK[to] < CLASS_RANK[chainClass]) chainClass = to;
   };
 
+  const anchorName = input.source === 'generated' ? 'ca.crt' : 'PIPULSE_TLS_CA';
   const anchors = input.trust.anchors
-    .map((pem) => new X509Certificate(pem))
+    .map((pem, i) => {
+      try {
+        return new X509Certificate(pem);
+      } catch {
+        throw new CertificateRefused(`${anchorName}: certificate ${i + 1} can't be parsed`, true);
+      }
+    })
     .concat(input.trust.system ? loadSystemRoots() : []);
   const last = certs.at(-1)!;
   const anchor =
@@ -150,7 +164,9 @@ export function inspectMaterial(input: {
   }
 
   const missingNames = input.names.filter((name) =>
-    isIP(name) ? leaf.checkIP(name) === undefined : leaf.checkHost(name) === undefined
+    isIP(name)
+      ? leaf.checkIP(name) === undefined
+      : leaf.checkHost(name, { subject: 'never' }) === undefined
   );
   if (missingNames.length > 0) degrade('degraded-san', 'san-missing');
 
@@ -166,6 +182,18 @@ export function inspectMaterial(input: {
     reasons,
     missingNames
   };
+}
+
+/** Puts the setting in front of a refusal that doesn't already name one. */
+function named<T>(setting: string, inspect: () => T): T {
+  try {
+    return inspect();
+  } catch (error) {
+    if (error instanceof CertificateRefused && !error.named) {
+      throw new CertificateRefused(`${setting}: ${error.message}`, true);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -195,7 +223,9 @@ export function loadCertificate(
           system: false
         }
       : { anchors: [], system: true };
-    return inspectMaterial({ source: 'operator', keyPem, certPems, trust, names: options.names });
+    return named('PIPULSE_TLS_CERT/PIPULSE_TLS_KEY', () =>
+      inspectMaterial({ source: 'operator', keyPem, certPems, trust, names: options.names })
+    );
   }
   const owner = options.generatedOwner ?? {};
   const bundle = parseBundle(
@@ -206,14 +236,14 @@ export function loadCertificate(
     readSecureFile(source.caPath, { kind: 'generated', maxMode: 0o644, ...owner }, 'ca.crt'),
     'ca.crt'
   );
-  return {
-    ...inspectMaterial({
+  const inspected = named(basename(source.bundlePath), () =>
+    inspectMaterial({
       source: 'generated',
       keyPem: bundle.key,
       certPems: bundle.certs,
       trust: { anchors: ca, system: false },
       names: options.names
-    }),
-    caFingerprint: new X509Certificate(ca[0]!).fingerprint256
-  };
+    })
+  );
+  return { ...inspected, caFingerprint: new X509Certificate(ca[0]!).fingerprint256 };
 }

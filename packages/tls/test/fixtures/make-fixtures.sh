@@ -44,6 +44,10 @@ basicConstraints = critical, CA:FALSE
 keyUsage = critical, digitalSignature
 extendedKeyUsage = serverAuth
 subjectAltName = IP:127.0.0.1
+[v3_no_san]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
 EOF
 
 ec() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$1"; }
@@ -87,5 +91,7 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$WORK/rsa.key
 openssl pkey -in "$WORK/rsa.key" -traditional -out rsa-leaf.rsa.key
 sign "$WORK/rsa.key" localhost intermediate.crt intermediate.key v3_leaf "$NOW" "$LEAF_END" rsa-leaf.crt
 openssl pkcs8 -topk8 -in leaf.key -out leaf.encrypted.key -passout pass:test
+ec cn-only.key
+sign cn-only.key io.lan intermediate.crt intermediate.key v3_no_san "$NOW" "$LEAF_END" cn-only.crt
 chmod 600 ./*.key
 echo 'fixtures written'
