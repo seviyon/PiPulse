@@ -1,5 +1,8 @@
+import { chmodSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseState, readTlsConfig, TlsConfigError } from '../src/config.js';
+import { tempDir } from './helpers.js';
 
 const noState = () => undefined;
 const state = (text: string) => () => text;
@@ -91,6 +94,73 @@ describe('readTlsConfig mode resolution', () => {
       { releaseDefault: 'http', readState: state(LEGACY_STATE) }
     );
     expect(config.stateMode).toBe('legacy-http');
+  });
+});
+
+describe('readTlsConfig state.json read errors', () => {
+  const failing = (code: string) => () => {
+    throw Object.assign(new Error(`${code}: boom`), { code });
+  };
+
+  it('with PIPULSE_TLS set, an unreadable state.json warns and is ignored', () => {
+    const config = readTlsConfig(
+      { PIPULSE_TLS: 'off', PIPULSE_TLS_DIR: '/etc/pipulse/tls' },
+      { releaseDefault: 'http', readState: failing('EACCES') }
+    );
+    expect(config.mode).toBe('http');
+    expect(config.stateMode).toBeUndefined();
+    expect(config.warnings).toHaveLength(1);
+    expect(config.warnings[0]).toContain('/etc/pipulse/tls/state.json');
+    expect(config.warnings[0]).toContain('EACCES');
+  });
+
+  it('with PIPULSE_TLS unset, an unreadable state.json refuses naming the path and PIPULSE_TLS_DIR', () => {
+    const read = () =>
+      readTlsConfig(
+        { PIPULSE_TLS_DIR: '/etc/pipulse/tls' },
+        { releaseDefault: 'http', readState: failing('EACCES') }
+      );
+    expect(read).toThrow(TlsConfigError);
+    expect(read).toThrow(
+      /\/etc\/pipulse\/tls\/state\.json can't be read \(EACCES\).*PIPULSE_TLS_DIR/
+    );
+  });
+
+  it('a missing state.json is not a problem, with or without PIPULSE_TLS', () => {
+    for (const env of [{}, { PIPULSE_TLS: 'off' }]) {
+      const config = readTlsConfig(env, { releaseDefault: 'http', readState: failing('ENOENT') });
+      expect(config.warnings).toEqual([]);
+      expect(config.stateMode).toBeUndefined();
+    }
+  });
+
+  it('a readable but invalid state.json still refuses when PIPULSE_TLS is set, naming the file', () => {
+    expect(() =>
+      readTlsConfig(
+        { PIPULSE_TLS: 'off', PIPULSE_TLS_DIR: '/t' },
+        { releaseDefault: 'http', readState: state('{') }
+      )
+    ).toThrow(/\/t\/state\.json \(PIPULSE_TLS_DIR\): state\.json is not valid JSON/);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('through the real reader: chmod 000 behaves the same', () => {
+    const dir = tempDir();
+    try {
+      const file = join(dir, 'state.json');
+      writeFileSync(file, HTTPS_STATE);
+      chmodSync(file, 0o000);
+      const config = readTlsConfig(
+        { PIPULSE_TLS: 'off', PIPULSE_TLS_DIR: dir },
+        { releaseDefault: 'http' }
+      );
+      expect(config.warnings[0]).toContain('EACCES');
+      expect(config.stateMode).toBeUndefined();
+      expect(() => readTlsConfig({ PIPULSE_TLS_DIR: dir }, { releaseDefault: 'http' })).toThrow(
+        /can't be read \(EACCES\)/
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

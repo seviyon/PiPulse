@@ -25,6 +25,8 @@ export interface TlsConfig {
   clockTrust: boolean;
   dir: string;
   timesyncDir: string;
+  /** Problems that don't stop startup; the caller prints each one. */
+  warnings: string[];
 }
 
 export class TlsConfigError extends Error {
@@ -65,13 +67,7 @@ export function parseState(text: string): { mode: StateMode } {
 }
 
 function readStateFile(path: string): string | undefined {
-  try {
-    return readFileSync(path, 'utf8');
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return undefined;
-    throw new TlsConfigError(`state.json can't be read (${code ?? 'error'})`);
-  }
+  return readFileSync(path, 'utf8');
 }
 
 const setting = (env: NodeJS.ProcessEnv, name: string): string | undefined => {
@@ -89,10 +85,32 @@ export function readTlsConfig(
   options: { releaseDefault: Mode | 'refuse'; readState?: (path: string) => string | undefined }
 ): TlsConfig {
   const dir = setting(env, 'PIPULSE_TLS_DIR') ?? DEFAULT_TLS_DIR;
-  const stateText = (options.readState ?? readStateFile)(join(dir, 'state.json'));
-  const stateMode = stateText === undefined ? undefined : parseState(stateText).mode;
-
+  const statePath = join(dir, 'state.json');
   const flag = setting(env, 'PIPULSE_TLS');
+  const warnings: string[] = [];
+  let stateText: string | undefined;
+  try {
+    stateText = (options.readState ?? readStateFile)(statePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      const message = `${statePath} can't be read (${code ?? 'error'}); set PIPULSE_TLS_DIR to a readable directory`;
+      // PIPULSE_TLS already decides the mode, so the file only matters for its own record.
+      if (flag !== 'on' && flag !== 'off') throw new TlsConfigError(message);
+      warnings.push(`${message}; ignoring it because PIPULSE_TLS=${flag}`);
+    }
+  }
+  let stateMode: StateMode | undefined;
+  if (stateText !== undefined) {
+    try {
+      stateMode = parseState(stateText).mode;
+    } catch (error) {
+      throw new TlsConfigError(
+        `${statePath} (PIPULSE_TLS_DIR): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   let mode: Mode;
   let modeReason: ModeReason;
   if (flag === 'on' || flag === 'off') {
@@ -145,6 +163,7 @@ export function readTlsConfig(
     names,
     clockTrust: clockText === 'trust',
     dir,
-    timesyncDir: setting(env, 'PIPULSE_TLS_TIMESYNC_DIR') ?? DEFAULT_TIMESYNC_DIR
+    timesyncDir: setting(env, 'PIPULSE_TLS_TIMESYNC_DIR') ?? DEFAULT_TIMESYNC_DIR,
+    warnings
   };
 }

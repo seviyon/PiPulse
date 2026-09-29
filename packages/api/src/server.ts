@@ -26,6 +26,7 @@ import {
 } from '@pipulse/notify';
 import { parseDuration } from '@pipulse/storage/duration';
 import {
+  checkReplacement,
   EXPIRING_SOON_MS,
   loadCertificate,
   readClock,
@@ -125,6 +126,15 @@ function readTls(): TlsConfig {
   }
 }
 const TLS = readTls();
+for (const warning of TLS.warnings) console.warn(`[pipulse] warning: ${warning}`);
+if (
+  TLS.mode !== 'https' &&
+  (process.env['PIPULSE_TLS_CERT']?.trim() || process.env['PIPULSE_TLS_KEY']?.trim())
+) {
+  console.warn(
+    '[pipulse] warning: PIPULSE_TLS_CERT/PIPULSE_TLS_KEY are set but HTTPS is off (set PIPULSE_TLS=on)'
+  );
+}
 // Generated files are root-owned with the service's group (6b-2); operator files aren't owner-checked.
 const loadActive = (source: CertSource): LoadedCertificate =>
   loadCertificate(source, {
@@ -305,8 +315,20 @@ if (CERT && TLS.source) {
     ...(INITIAL_SIGNATURE !== undefined ? { initialSignature: INITIAL_SIGNATURE } : {}),
     load: () => loadActive(source),
     signature: () => statSignature(certPaths(source)),
+    accept: (candidate, active) =>
+      checkReplacement(candidate, active, {
+        requireValid: TLS.requireValid,
+        now: Date.now(),
+        timesyncDir: TLS.timesyncDir,
+        clockTrust: TLS.clockTrust
+      }),
     apply: (cert) =>
-      (app.server as unknown as HttpsServer).setSecureContext({ key: cert.key, cert: cert.cert }),
+      // setSecureContext replaces the whole context, so the TLS floor is passed again.
+      (app.server as unknown as HttpsServer).setSecureContext({
+        key: cert.key,
+        cert: cert.cert,
+        minVersion: 'TLSv1.2'
+      }),
     log: (message) => console.warn(`[pipulse] ${message}`)
   });
 }
@@ -359,7 +381,13 @@ app
     const { port } = app.server.address() as AddressInfo;
     const where = CERT
       ? `https://${HOST}:${port} (certificate: ${CERT.source}, valid until ${new Date(CERT.notAfter).toISOString().slice(0, 10)}, SHA-256 ${CERT.fingerprint})`
-      : `http://${HOST}:${port}`;
+      : `http://${HOST}:${port} (HTTPS off: ${
+          TLS.modeReason === 'env'
+            ? 'PIPULSE_TLS=off'
+            : TLS.modeReason === 'state'
+              ? 'state.json legacy-http'
+              : 'release default'
+        })`;
     console.log(
       `[pipulse] ${VERSION} (Node ${NODE.version}) listening on ${where}` +
         (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +

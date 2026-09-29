@@ -34,6 +34,11 @@ export function startReloader(options: {
   signature: () => string;
   apply: (cert: LoadedCertificate) => void;
   /**
+   * Extra rules a candidate must pass (throw to refuse): the caller's
+   * startup validity policy, so a reload never activates what startup would refuse.
+   */
+  accept?: (candidate: LoadedCertificate, active: LoadedCertificate) => void;
+  /**
    * The files' signature as read BEFORE the caller loaded `initial`, so a
    * change landing during startup is still seen. Omitted: read now.
    */
@@ -83,6 +88,7 @@ export function startReloader(options: {
       return;
     }
     try {
+      options.accept?.(candidate, active);
       options.apply(candidate);
     } catch (error) {
       fail(messageOf(error));

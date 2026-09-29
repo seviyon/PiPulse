@@ -19,7 +19,10 @@ const A = make('leaf.crt', 'leaf.key');
 const B = make('leaf2.crt', 'leaf2.key');
 const B_INCOMPLETE = make('leaf2.crt', 'leaf2.key', []);
 
-function setup(initial = A) {
+function setup(
+  initial = A,
+  accept?: (candidate: LoadedCertificate, active: LoadedCertificate) => void
+) {
   let sig = 's0';
   let next: () => LoadedCertificate = () => initial;
   let t = 0;
@@ -30,6 +33,7 @@ function setup(initial = A) {
     load: () => next(),
     signature: () => sig,
     apply: (cert) => applied.push(cert),
+    ...(accept ? { accept } : {}),
     now: () => t,
     log: (m) => logs.push(m),
     timer: false
@@ -49,6 +53,21 @@ function setup(initial = A) {
 }
 
 describe('startReloader', () => {
+  it('keeps the active certificate when accept refuses the candidate, and reports failing', () => {
+    const r = setup(A, () => {
+      throw new Error('PIPULSE_TLS_REQUIRE_VALID_CERT: the replacement certificate is expired');
+    });
+    r.change('s1', () => B);
+    r.provider.poll();
+    r.provider.poll();
+    expect(r.applied).toEqual([]);
+    expect(r.provider.current()).toBe(A);
+    expect(r.provider.reload()).toMatchObject({
+      state: 'failing',
+      lastError: 'PIPULSE_TLS_REQUIRE_VALID_CERT: the replacement certificate is expired'
+    });
+  });
+
   it('activates a valid replacement after the change is stable for two polls', () => {
     const r = setup();
     r.change('s1', () => B);

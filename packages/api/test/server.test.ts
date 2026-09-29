@@ -155,7 +155,39 @@ describe('api server process', () => {
     expect(err.trim()).toMatch(
       /^\[pipulse\] .*the private key does not match the first certificate$/
     );
-  });
+  }, 20000);
+
+  it('says why HTTPS is off and warns about a certificate that is set but unused', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off',
+        PIPULSE_TLS_CERT: join(dir, 'cert.pem'),
+        PIPULSE_TLS_KEY: join(dir, 'key.pem')
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    let err = '';
+    child.stderr.on('data', (chunk: Buffer) => (err += chunk.toString()));
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        if (out.includes('listening on')) resolve();
+      });
+      child.once('exit', (code) => reject(new Error(`exited ${String(code)}: ${err}`)));
+    });
+    child.kill('SIGTERM');
+    await once(child, 'exit');
+    expect(out).toMatch(/listening on http:\/\/127\.0\.0\.1:\d+ \(HTTPS off: PIPULSE_TLS=off\)/);
+    expect(err).toContain(
+      '[pipulse] warning: PIPULSE_TLS_CERT/PIPULSE_TLS_KEY are set but HTTPS is off (set PIPULSE_TLS=on)'
+    );
+  }, 20000);
 
   it('checks only rules in force against saved raw retention at startup', async () => {
     dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
