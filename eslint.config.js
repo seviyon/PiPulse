@@ -21,12 +21,5 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
       ]
     }
-  },
-  {
-    // Plain Node scripts outside the TypeScript packages (the Docker health check).
-    files: ['packaging/**/*.mjs'],
-    languageOptions: {
-      globals: { process: 'readonly', fetch: 'readonly', AbortSignal: 'readonly' }
-    }
   }
 );

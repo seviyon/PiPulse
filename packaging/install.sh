@@ -139,17 +139,45 @@ latest_version() {
 
 health_ok() {
   url=${PIPULSE_HEALTH_URL:-}
-  if [ -z "$url" ]; then
-    port=$(env_value PIPULSE_PORT)
-    host=$(env_value PIPULSE_HOST)
-    case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
-    url="http://$host:${port:-8889}/api/health"
-  fi
+  check=/opt/pipulse/app/packages/tls/dist/health-check.js
   i=0
   while [ "$i" -lt "${PIPULSE_HEALTH_WAIT:-30}" ]; do
-    # PiPulse's own answer, not just any 200: another server on the port
-    # (RPi-Monitor answers every path) must not pass for a healthy PiPulse.
-    curl -fs --max-time 3 "$url" 2>/dev/null | grep -q '"status":"ok"' && return 0
+    if [ -z "$url" ] && [ -f "$check" ]; then
+      # The installed version's own check: HTTP or verified HTTPS, as the server resolves it.
+      # Only the settings it reads, each through env_value: pipulse.env is data here,
+      # never sourced as shell code.
+      rc=0
+      env -i PATH="$PATH" \
+        PIPULSE_HOST="$(env_value PIPULSE_HOST)" \
+        PIPULSE_PORT="$(env_value PIPULSE_PORT)" \
+        PIPULSE_TLS="$(env_value PIPULSE_TLS)" \
+        PIPULSE_TLS_DIR="$(env_value PIPULSE_TLS_DIR)" \
+        PIPULSE_TLS_CERT="$(env_value PIPULSE_TLS_CERT)" \
+        PIPULSE_TLS_KEY="$(env_value PIPULSE_TLS_KEY)" \
+        PIPULSE_TLS_CA="$(env_value PIPULSE_TLS_CA)" \
+        PIPULSE_TLS_NAMES="$(env_value PIPULSE_TLS_NAMES)" \
+        /opt/pipulse/node/bin/node "$check" 2>/dev/null || rc=$?
+      [ "$rc" -eq 0 ] && return 0
+      if [ "$rc" -eq 2 ]; then
+        # The previous version would serve the same certificate: rolling back can't fix it.
+        log "warning: PiPulse is running, but its HTTPS certificate failed verification; not rolling back"
+        log "see: Settings → Certificate, and journalctl -u pipulse"
+        return 0
+      fi
+    else
+      # A pre-6b version (no shared check) or an explicit PIPULSE_HEALTH_URL.
+      if [ -z "$url" ]; then
+        port=$(env_value PIPULSE_PORT)
+        host=$(env_value PIPULSE_HOST)
+        case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
+        u="http://$host:${port:-8889}/api/health"
+      else
+        u=$url
+      fi
+      # PiPulse's own answer, not just any 200: another server on the port
+      # (RPi-Monitor answers every path) must not pass for a healthy PiPulse.
+      curl -fs --max-time 3 "$u" 2>/dev/null | grep -qE '"monitoring":"ok"|"status":"ok"' && return 0
+    fi
     i=$((i + 1)); sleep 1
   done
   return 1
