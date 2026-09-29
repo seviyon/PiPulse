@@ -137,7 +137,12 @@ export function defaultBody(
           : 'warning';
   return {
     title: '{{hostname}}: {{message}}',
-    body: '{{metricLabel}} {{value}} ({{severity}}, {{event}})',
+    // An alert keeps only the reading that raised it: on a clear, say so, or
+    // "CPU load 27.5 % (cleared)" reads as the load now.
+    body:
+      event === 'cleared'
+        ? '{{metricLabel}} {{value}} when raised, cleared after {{duration}} ({{severity}})'
+        : '{{metricLabel}} {{value}} ({{severity}}, {{event}})',
     type
   };
 }

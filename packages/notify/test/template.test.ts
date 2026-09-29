@@ -115,7 +115,17 @@ describe('templates', () => {
       type: 'failure'
     });
     expect(body('raised', 'warning').type).toBe('warning');
-    expect(body('cleared', 'critical').type).toBe('success');
+    // A clear says the value was the raising one, so it doesn't read as the current reading.
+    const cleared = {
+      ...alert,
+      clearedAt: alert.raisedAt + 12 * MIN,
+      clearedBy: 'condition' as const
+    };
+    expect(JSON.parse(renderPayload(undefined, 'cleared', cleared, context))).toEqual({
+      title: 'Io: CPU running hot',
+      body: 'CPU temperature 82.4 °C when raised, cleared after 12 min (critical)',
+      type: 'success'
+    });
     expect(body('test', 'warning').type).toBe('info');
     expect(defaultBody('raised', 'warning')).toMatchObject({ title: '{{hostname}}: {{message}}' });
   });
