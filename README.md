@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 6 (packaging: apt, tarball and Docker installs, automatic releases) is complete, and releases start at v0.6.0; 6b (HTTPS by default) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 6 (packaging: apt, tarball and Docker installs, automatic releases) is complete, and releases start at v0.6.0; 6b (HTTPS by default) is in progress: your own certificate works, the per-Pi certificate is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -94,7 +94,27 @@ sudo apt update && sudo apt install pipulse
 
 **Settings** live in `/etc/pipulse/pipulse.env` (every variable is listed there, commented out, with its default); files it points at — a password hash, a rules file, a notify file, a CA certificate — go in `/etc/pipulse/` too (`root:pipulse`, mode `640`). After a change: `sudo systemctl restart pipulse`. The database is `/var/lib/pipulse/pipulse.sqlite`. The installer warns, without changing anything, when the port is already taken or ufw would block it.
 
-**Plain HTTP, for now.** PiPulse serves plain HTTP and listens on every interface by default. On a network others can watch (shared Wi-Fi, a guest VLAN), the sign-in password and the session cookie can be captured. Keep it on a network you trust, set `PIPULSE_HOST` to a single interface if that helps, and don't expose its port to the internet. HTTPS by default (a self-signed certificate made for each Pi, or your own) is planned as Phase 6b.
+**Plain HTTP, by default.** Unless you turn on HTTPS (below), PiPulse serves plain HTTP and listens on every interface. On a network others can watch (shared Wi-Fi, a guest VLAN), the sign-in password and the session cookie can be captured. Keep it on a network you trust, set `PIPULSE_HOST` to a single interface if that helps, and don't expose its port to the internet.
+
+### HTTPS
+
+PiPulse serves plain HTTP by default in this release; HTTPS from a certificate made for each Pi arrives as the default in 0.7.0. You can serve HTTPS now with your own certificate (from a homelab CA, or a public one):
+
+1. Put the certificate (with its chain, leaf first) and its unencrypted key in `/etc/pipulse/`: `sudo chown root:pipulse …; sudo chmod 640 <key>` (the key must not be readable by everyone).
+2. In `/etc/pipulse/pipulse.env` set `PIPULSE_TLS=on`, `PIPULSE_TLS_CERT=…`, `PIPULSE_TLS_KEY=…`, and — for a private CA — `PIPULSE_TLS_CA=…`.
+3. `sudo systemctl restart pipulse`, then open `https://<pi>:8889`. The old `http://` address stops answering (there is no redirect).
+
+Replacing the files later (e.g. a renewal) is picked up within about two minutes without a restart; a replacement that is broken or worse than the current one is ignored, and Settings → Certificate says why. A broken certificate or key stops PiPulse from starting, with one line in `journalctl -u pipulse` naming the setting (for example `PIPULSE_TLS_CERT/PIPULSE_TLS_KEY: …` or `PIPULSE_TLS_CA: certificate 1 can't be parsed`); an expired one only warns (monitoring continues — but browsers will refuse the page). `PIPULSE_TLS_REQUIRE_VALID_CERT=true` refuses expired ones instead.
+
+Names you list in `PIPULSE_TLS_NAMES` are checked against the certificate's subject alternative names only (the common name is never used), so a certificate that names a host only in its CN shows a warning in Settings. A chain that doesn't reach a CA you configured, or a self-signed one nobody configured, also starts with a warning rather than a refusal.
+
+**The installer's health check** connects to `PIPULSE_HOST` (or, when it listens everywhere, to this Pi, verified for the first `PIPULSE_TLS_NAMES` entry) and verifies the certificate. It trusts `PIPULSE_TLS_CA` plus the system's roots. It runs with a clean environment, so `NODE_EXTRA_CA_CERTS` does not apply to it (that variable only helps PiPulse's own webhook deliveries); a private CA must therefore be set as `PIPULSE_TLS_CA`. If verification fails, the installer says so and does not roll back, because the previous version would serve the same certificate. Docker's health check runs inside the container and sees the same environment as the server.
+
+**HSTS is off by default.** Browsers apply it to every port of a host name, so turning it on (`PIPULSE_TLS_HSTS=1d`) would also force HTTPS for Pi-hole's admin page or RPi-Monitor on the same Pi. Turn it on only when nothing else on that name speaks plain HTTP.
+
+If the Pi uses chrony or ntpd instead of systemd-timesyncd, set `PIPULSE_TLS_CLOCK=trust` so certificate decisions trust its clock.
+
+**Docker:** mount the files read-only (e.g. into `./config`) and set the same variables in `pipulse.env`.
 
 The `pipulse` command wraps the everyday tasks, with the service's settings loaded:
 
@@ -158,7 +178,7 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite PIPULSE_PORT=8889 \
 
 Retention values are durations like `36h`, `14d`, `2w`, `1y`, or `forever`; an invalid value stops the server at startup. A minute-by-minute housekeeping job rolls raw samples up into 1-minute, hourly and daily averages (daily on the server's local calendar days) and deletes data past its retention, but only once the next level already covers it. Retention can also be changed on the Settings page, without a restart; a variable that is set wins and locks that field there. Levels must stay in order (raw ≤ 1-minute ≤ hourly ≤ daily); variables out of order stop the server at startup. A longer retention keeps data longer from then on (already-deleted data doesn't come back); a shorter one prunes the excess within a minute. After a large deletion the database compacts itself (at most once a day, only when at least a quarter of an 8 MB+ file is free and the disk has room for about twice the file). The defaults keep the database around 35 MB, sized for an SD card; with faster, larger storage (e.g. NVMe) you can keep much more raw detail.
 
-Endpoints: `GET /api/health` (public: `200` while the database answers and readings arrive, `503` naming the problem otherwise), `GET /api/config` (PiPulse `version`, the running `node` and its end of support, device, including its CPU count, plugins (each with `unavailable` when it can't run here), the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`), and `GET /api/notify` (each webhook's id, host, filters, queued count and last delivery or failure — never its full URL or headers). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP, so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
+Endpoints: `GET /api/health` (public: `200` while the database answers and readings arrive, `503` naming the problem otherwise), `GET /api/config` (PiPulse `version`, the running `node` and its end of support, device, including its CPU count, plugins (each with `unavailable` when it can't run here), the alert `rules` in force, and the server's `serverTime` and `uptimeMs`), `GET /api/metrics/latest`, `GET /api/metrics/:id/history?from=&to=` (raw samples, unix ms, default last hour), `GET /api/metrics/:id/series?from=&to=&resolution=` (avg/min/max points plus `count`, the raw samples each point stands for, default last 24 hours; `resolution` is `auto` (default), `raw`, `1m`, `1h` or `1d`, and `auto` picks the finest one that retention hasn't thinned in the range and that has at most ~1500 points there, so a new install's long ranges show the readings collected so far), `GET /api/alerts?state=&from=&to=&limit=` (`state` is `all` (default: open alerts plus any active during the window), `active`, or `cleared` (cleared during the window, newest cleared first); the window defaults to the last 30 days, newest raised first, up to `limit` (default 100, max 1000)), and `ws://…/api/live` (a `snapshot` of latest values and open `alerts` on connect, then one `sample` message per new reading and one `alert` message whenever an alert opens or clears), `GET /api/session` (`editable`, `signedIn`, `protectReads`), `POST /api/login` / `POST /api/logout`, and `GET /api/settings`, `POST /api/settings/preview`, `PUT /api/settings` (retention per level with its source, storage figures, what a change would delete, and saving it — a change that deletes data needs `confirmDeletion: true`), and `GET /api/notify` (each webhook's id, host, filters, queued count and last delivery or failure — never its full URL or headers). Every write needs a signed-in session; reads need one only with `PIPULSE_PROTECT_READS=true`. PiPulse speaks plain HTTP unless you enable HTTPS (see [HTTPS](#https)), so keep it on your LAN. If the host runs a firewall (e.g. ufw), open the port for your LAN only.
 
 On a Raspberry Pi, core voltage and throttling come from `vcgencmd`, which only works if the user running PiPulse is in the `video` group (`sudo usermod -aG video <user>`, then restart PiPulse), or, in Docker, if the container gets `--device /dev/vchiq`. Otherwise those two tiles stay on "No readings yet" and the log says why, once for each.
 
@@ -262,7 +282,7 @@ The Settings page shows each retention level, where its value comes from (defaul
 
 Set `PIPULSE_PROTECT_READS=true` to require sign-in for everything, including the live feed.
 
-PiPulse speaks plain HTTP: the password crosses the network once at sign-in. Keep it on your LAN; putting it behind a TLS reverse proxy is planned (see `docs/PLAN.md`, "Future: behind a reverse proxy").
+Over plain HTTP the password crosses the network once at sign-in, so turn on [HTTPS](#https) or keep it on your LAN; a TLS reverse proxy in front is also possible (see `docs/PLAN.md`, "Future: behind a reverse proxy").
 
 ## Configuration
 
@@ -282,7 +302,7 @@ Configuration is environment variables for now (see the table under [Develop](#d
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
 | 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (apt, tarball, Docker, releases, Renovate) | ✅ Done |
-| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ Next |
+| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ In progress (6b-1: your own certificate) |
 | 7 | Cutover from the legacy daemon |  |
 
 ## Credits

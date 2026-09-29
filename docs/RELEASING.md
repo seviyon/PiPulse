@@ -4,7 +4,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 
 ## How releases happen
 
-- **A release is a merged PR with a label.** Merging a PR into `main` with `release:patch`, `release:minor` or `release:major` makes the next version from the newest `v*` tag (the first release is `v0.6.0`). A PR without one of those labels releases nothing.
+- **A release is a merged PR with a label.** Merging a PR into `main` with `release:patch`, `release:minor` or `release:major` makes the next version from the newest `v*` tag (the first release is `v0.6.0`). A PR without one of those labels releases nothing. Phase 6b ships as two PRs: 6b-1 (TLS core, own certificate) merges with `release:patch` (→ v0.6.3) and 6b-2 (per-Pi CA, HTTPS by default) with `release:minor` (→ v0.7.0).
 - **Renovate releases only what ships.** Its PRs for runtime `dependencies`, the bundled Node (`packaging/node-versions.json`), the Docker base image, and every security alert carry `release:patch`, so they reach the Pis in a release of their own. Development tools, test libraries and action pins still update, but release nothing: they ride along with the next release. Patch and minor updates merge themselves once CI passes; majors wait for review.
 - **Or by hand:** Actions → _Release_ → _Run workflow_, with a version (e.g. to redo a release whose run failed; the version must not be tagged yet).
 - **Only plain `X.Y.Z` versions** are released: a pre-release like `0.7.0-rc.1` would sort above `0.7.0` in apt and strand the Pis that installed it.

@@ -128,7 +128,9 @@ Ordered by how clients cope:
 
 `valid` > `degraded-incomplete-chain` (a missing intermediate; browsers often fetch it) > `degraded-san` (a configured name missing from the SANs) > `degraded-untrusted` (the configured CA is absent, or the chain leads to an unexpected CA).
 
-Refused outright (never degraded): unparseable member, key mismatch, a first certificate with `basicConstraints CA:TRUE`, a duplicate leaf, a bad signature or wrong issuer inside the supplied chain (each certificate must be `checkIssued` and signed by the next), an unrelated extra certificate.
+Refused outright (never degraded): unparseable member, key mismatch, a first certificate with `basicConstraints CA:TRUE`, a duplicate leaf, a bad signature or wrong issuer inside the supplied chain (each certificate must be `checkIssued` and signed by the next), an unrelated extra certificate. A chain in the wrong order is refused for the same reason: some certificate isn't issued and signed by the next. A malformed `PIPULSE_TLS_CA` anchor is refused too.
+
+Refusal lines name the setting: chain and key refusals are prefixed `PIPULSE_TLS_CERT/PIPULSE_TLS_KEY: …` (a generated source names its bundle file instead), and a CA anchor that can't be parsed says `PIPULSE_TLS_CA: certificate N can't be parsed`. `PIPULSE_TLS_NAMES` is checked against the SANs only — the subject CN is never used, so a CN-only certificate is `degraded-san`.
 
 | Case          | Startup     | Reload                          | `/api/health`       | Docker server health            |
 | ------------- | ----------- | ------------------------------- | ------------------- | ------------------------------- |
@@ -152,7 +154,7 @@ Generated leaves are verified against the generated CA before activation. For op
 
 ### Clock
 
-- `synced`: `/run/systemd/timesync/synchronized` exists (Pi OS uses systemd-timesyncd; Docker mounts the host's directory read-only at `/host-timesync`) **and** `now` is not before the build time in `version.json` **and**, when a leaf exists, not before its `notBefore`.
+- `synced`: `/run/systemd/timesync/synchronized` exists (Pi OS uses systemd-timesyncd; Docker mounts the host's directory read-only at `/host-timesync`) **and** `now` is not before `CLOCK_FLOOR_MS` (2026-09-01) in `packages/tls/src/clock.ts` **and**, when a leaf exists, not before its `notBefore`.
 - `unsynced`: the file is absent but timesyncd is present, or `now` fails the floor.
 - `unknown`: no timesyncd at all (chrony, ntpd, or a container without the mount). **Treated as not synced everywhere** — renewal waits, certificate alerts stay undecided.
 - `PIPULSE_TLS_CLOCK=trust` (for chrony/ntpd hosts) makes `unknown` count as synced; it is shown in `pipulse tls status` and the sidecar log.
@@ -173,7 +175,7 @@ Generated leaves are verified against the generated CA before activation. For op
 
 `packages/tls/dist/health-check.js` is used by the installer, the Docker `HEALTHCHECK` and `pipulse tls enable`, so there is one implementation:
 
-- Connects to `127.0.0.1:<port>` (or `PIPULSE_HOST` when it isn't a wildcard), with `servername` = the first DNS SAN read from the active certificate file.
+- Connects to `127.0.0.1:<port>` (or `PIPULSE_HOST` when it isn't a wildcard), verifying the identity `healthTarget` picks: a concrete `PIPULSE_HOST` is verified as exactly that identity; a wildcard bind verifies the first `PIPULSE_TLS_NAMES` entry, else `localhost`, else `127.0.0.1`, else the first DNS SAN. The installer passes only the settings the check reads, via `env_value`, under `env -i`; it never sources `pipulse.env`, so `NODE_EXTRA_CA_CERTS` doesn't apply to it (trust is `PIPULSE_TLS_CA` plus the system roots; Docker's `HEALTHCHECK` inherits the container environment).
 - Trust follows the active source: generated → `<tls dir>/ca.crt`; operator → `PIPULSE_TLS_CA`, else the system store. **Verification is never disabled.**
 - Reads `/api/health` and requires `monitoring: "ok"`.
 - Exit codes: `0` healthy; `1` PiPulse unhealthy or not answering; `2` TLS verification failed (reason printed).
@@ -203,7 +205,7 @@ Off by default. RFC 6797 ignores the port: HSTS from `https://io:8889` forces ev
 
 ### `/api/health`
 
-The only health endpoint. It stays public (in `PUBLIC_READS`, unaffected by `PIPULSE_PROTECT_READS`) and returns only enums — no paths, fingerprints, SANs or configuration:
+`/health` (bare liveness since Phase 0) stays unchanged; `/api/health` is the operational one. It stays public (in `PUBLIC_READS`, unaffected by `PIPULSE_PROTECT_READS`) and returns only enums — no paths, fingerprints, SANs or configuration:
 
 ```json
 {
@@ -212,21 +214,21 @@ The only health endpoint. It stays public (in `PUBLIC_READS`, unaffected by `PIP
   "transport": "https",
   "certificate": {
     "source": "generated",
-    "parse": "ok",
-    "keyMatch": "ok",
     "validity": "expired",
     "clockSynced": "synced",
     "class": "valid",
     "reload": "ok",
-    "renewal": "ok",
-    "reasons": ["expired"]
-  }
+    "renewal": "ok"
+  },
+  "reasons": ["expired"]
 }
 ```
 
+`reasons` is top-level and lists every reason (including `http-with-sign-in`). `certificate` has no `parse`/`keyMatch`: the served pair is always ok, because refused material never serves; a refused replacement shows as `reload`, which is `ok | failing | no-valid-reload`. `renewal` is added to `certificate` in 6b-2.
+
 - `200 ok`: monitoring running, transport usable, certificate `valid` and not expired.
 - `200 degraded`: monitoring running, and any of: expired / not yet valid, a `degraded-*` class, reload `failing`, renewal `failing`, clock `unknown`/`unsynced` with a generated source, HTTP mode with sign-in configured.
-- `503 failing`: database unavailable, no reading for 5 minutes (existing), the alert engine hasn't finished a check in 2 minutes, or the notification sender has stopped. Failed deliveries don't count (a receiver being down isn't PiPulse failing). **An expired certificate alone is never `503`.**
+- `503 failing`: database unavailable, no reading for 5 minutes (existing), the alert engine hasn't finished a check in 2 minutes. Failed deliveries don't count (a receiver being down isn't PiPulse failing), and the sender never stops except on shutdown: every delivery loop catches its errors, so there is nothing to detect. **An expired certificate alone is never `503`.**
 - `transport: "http"` omits `certificate`.
 - The existing `ok`/`problems` behaviour moves under `monitoring`; the installer's check moves to `"monitoring":"ok"`, and still accepts a body with `"status":"ok"` and no `monitoring` field, so a rollback to a pre-6b version is recognised as healthy.
 
@@ -525,14 +527,15 @@ On `Io` (port 8889) unless noted. Before deleting any scratch state, capture `/a
 
 ## Settings reference
 
-| Setting                               | Default                            | Meaning                                                            |
-| ------------------------------------- | ---------------------------------- | ------------------------------------------------------------------ |
-| `PIPULSE_TLS`                         | unset                              | `on`/`off`; overrides `state.json`                                 |
-| `PIPULSE_TLS_DIR`                     | `/etc/pipulse/tls` (Docker `/tls`) | generated material and state                                       |
-| `PIPULSE_TLS_CERT`, `PIPULSE_TLS_KEY` | unset                              | operator certificate (both or neither)                             |
-| `PIPULSE_TLS_CA`                      | unset                              | trust for operator certificates (health check, chain class)        |
-| `PIPULSE_TLS_NAMES`                   | unset                              | extra DNS names (read at CA creation; leaf limited to constraints) |
-| `PIPULSE_TLS_SUBNETS`                 | unset                              | accepted subnets at CA creation (Docker: the only way)             |
-| `PIPULSE_TLS_CLOCK`                   | unset                              | `trust`: treat an `unknown` clock as synced                        |
-| `PIPULSE_TLS_HSTS`                    | unset                              | opt-in HSTS `max-age`                                              |
-| `PIPULSE_TLS_REQUIRE_VALID_CERT`      | `false`                            | refuse to start on an expired / not-yet-valid certificate          |
+| Setting                               | Default                            | Meaning                                                                 |
+| ------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------- |
+| `PIPULSE_TLS`                         | unset                              | `on`/`off`; overrides `state.json`                                      |
+| `PIPULSE_TLS_DIR`                     | `/etc/pipulse/tls` (Docker `/tls`) | generated material and state                                            |
+| `PIPULSE_TLS_CERT`, `PIPULSE_TLS_KEY` | unset                              | operator certificate (both or neither)                                  |
+| `PIPULSE_TLS_CA`                      | unset                              | trust for operator certificates (health check, chain class)             |
+| `PIPULSE_TLS_NAMES`                   | unset                              | extra DNS names (read at CA creation; leaf limited to constraints)      |
+| `PIPULSE_TLS_SUBNETS`                 | unset                              | accepted subnets at CA creation (Docker: the only way)                  |
+| `PIPULSE_TLS_CLOCK`                   | unset                              | `trust`: treat an `unknown` clock as synced                             |
+| `PIPULSE_TLS_TIMESYNC_DIR`            | `/run/systemd/timesync`            | where the clock signal is read (the Docker image sets `/host-timesync`) |
+| `PIPULSE_TLS_HSTS`                    | unset                              | opt-in HSTS `max-age`                                                   |
+| `PIPULSE_TLS_REQUIRE_VALID_CERT`      | `false`                            | refuse to start on an expired / not-yet-valid certificate               |

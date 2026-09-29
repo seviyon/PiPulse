@@ -203,7 +203,10 @@ Make "tests pass in CI" an explicit exit criterion for every phase in the build 
 The legacy daemon has no authentication and executes config-supplied strings (postprocess expressions, alert raise/cancel commands) at runtime — fine only because it sits on a trusted LAN behind no exposed port. The rewrite should keep that safety property deliberately, not by accident:
 
 - **No arbitrary eval.** Collector and alert-action logic is compiled TypeScript, not strings evaluated at runtime — this alone removes the injection class the original relies on operator trust to avoid.
-- **Add real authentication.** The original has none. Done in 5b-1: a password stored only as an scrypt hash in an operator-owned file, `HttpOnly`/`SameSite=Strict` session cookies, a sign-in rate limit, every write authenticated and reads optionally (`PIPULSE_PROTECT_READS`). TLS through a reverse proxy remains a later option (see [Future: behind a reverse proxy](#future-behind-a-reverse-proxy)).
+- **Add real authentication.** The original has none. Done in 5b-1: a password stored only as an scrypt hash in an operator-owned file, `HttpOnly`/`SameSite=Strict` session cookies, a sign-in rate limit, every write authenticated and reads optionally (`PIPULSE_PROTECT_READS`). TLS through a reverse proxy remains an option (see [Future: behind a reverse proxy](#future-behind-a-reverse-proxy)).
+
+  Phase 6b adds TLS in PiPulse itself. 6b-1 serves HTTPS from an operator-supplied certificate (`PIPULSE_TLS*`), reloading it when the files change; 6b-2 makes a per-Pi certificate authority the default. Design and reasoning: `docs/superpowers/specs/2026-09-29-https-design.md`.
+
 - **Authenticate every write.** Settings (starting with retention) become editable from the UI in Phase 5; a write that can delete history must never be open to anyone on the LAN. Reads may stay unauthenticated, writes may not.
 - **Parameterize every query.** Any endpoint taking `from`/`to`/`resolution` as input must use `node:sqlite`'s parameter binding (prepared statements), never string-built SQL.
 - **Keep alert actions operator-defined only.** Webhook/shell alert actions belong in a config file you control, never in anything an API client can register or trigger — don't reintroduce a remote way to run arbitrary commands.
@@ -243,7 +246,7 @@ The rollup table introduced earlier is the mechanism, made explicit here since u
 
 ## Future: behind a reverse proxy
 
-Today PiPulse is reached directly on its port over plain HTTP. When a TLS reverse proxy (e.g. a `.lan` Caddy/Traefik/nginx) is put in front of it, add `PIPULSE_TRUST_PROXY=true` (default `false`):
+Today PiPulse is reached directly on its port, over plain HTTP by default. With Phase 6b PiPulse can terminate TLS itself; this section still applies if a proxy fronts it. When a TLS reverse proxy (e.g. a `.lan` Caddy/Traefik/nginx) is put in front of it, add `PIPULSE_TRUST_PROXY=true` (default `false`):
 
 - **What it changes:** PiPulse then believes `X-Forwarded-Proto` (marks the session cookie `Secure` when the proxy served HTTPS) and `X-Forwarded-For` (the sign-in rate limit counts attempts per real client instead of per proxy, which would otherwise lock everyone out together).
 - **Why it's off by default and not in 5b-1:** without a proxy any client can send those headers, so trusting them would let it dodge the rate limit or fake HTTPS. It must only be turned on when PiPulse is reachable _solely_ through the proxy (bound to `127.0.0.1`, or ufw allowing only the proxy's address).
