@@ -124,6 +124,14 @@ export interface ServerOptions {
   node?: NodeSupport;
   /** Liveness at /api/health (public); default checks only the database. */
   health?: Health;
+  /** Serve HTTPS with this key and certificate chain; omitted = plain HTTP. */
+  https?: { key: string; cert: string };
+  /**
+   * HSTS max-age in seconds (PIPULSE_TLS_HSTS), sent on HTTPS responses only.
+   * Off by default: HSTS ignores the port, so it would force every service on
+   * this host name to HTTPS in the browser (Pi-hole on :80, RPi-Monitor on :8888).
+   */
+  hstsSeconds?: number;
   /** HTTPS state for /api/config and /api/health; omitted = plain HTTP. */
   tls?: () => TlsView;
   /** Webhook delivery status, served read-only at /api/notify. */
@@ -173,7 +181,18 @@ const alertsQuerySchema = {
  * routes with Fastify's `inject()`/`injectWS()`, no open port required.
  */
 export function buildServer(db: PiPulseDb, options: ServerOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: false });
+  // Typed as the HTTP instance: routes and inject() are identical, and
+  // server.ts reaches the https.Server (setSecureContext) through app.server.
+  const app = (options.https
+    ? Fastify({ logger: false, https: { ...options.https, minVersion: 'TLSv1.2' } })
+    : Fastify({ logger: false })) as unknown as FastifyInstance;
+  if (options.https && options.hstsSeconds !== undefined) {
+    const hsts = `max-age=${options.hstsSeconds}`;
+    app.addHook('onSend', async (_request, reply, payload) => {
+      reply.header('strict-transport-security', hsts);
+      return payload;
+    });
+  }
   const allowedOrigins = options.allowedOrigins ?? [];
   const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const notices = createFeed<Notice>();
