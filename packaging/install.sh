@@ -143,11 +143,13 @@ health_ok() {
     port=$(env_value PIPULSE_PORT)
     host=$(env_value PIPULSE_HOST)
     case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
-    url="http://$host:${port:-8888}/api/health"
+    url="http://$host:${port:-8889}/api/health"
   fi
   i=0
   while [ "$i" -lt "${PIPULSE_HEALTH_WAIT:-30}" ]; do
-    curl -fs --max-time 3 "$url" >/dev/null 2>&1 && return 0
+    # PiPulse's own answer, not just any 200: another server on the port
+    # (RPi-Monitor answers every path) must not pass for a healthy PiPulse.
+    curl -fs --max-time 3 "$url" 2>/dev/null | grep -q '"status":"ok"' && return 0
     i=$((i + 1)); sleep 1
   done
   return 1

@@ -53,4 +53,22 @@ sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.3.tar.gz" >/dev/null 2>
 took=$(( $(date +%s) - started ))
 [ "$took" -lt 120 ] && echo "ok - a silent version times out and rolls back (${took}s)" || { echo "not ok - installer hung (${took}s)"; fail=1; }
 grep -q '"0.0.1"' /opt/pipulse/app/version.json && echo 'ok - still on 0.0.1' || { echo 'not ok - still on 0.0.1'; fail=1; }
+# Another server holds the port and answers 200 to every path (as RPi-Monitor does on 8888):
+# the new version can't listen, and that server's answer must not pass for PiPulse's health.
+"$repo/packaging/build-tarball.sh" 0.0.4 "$out" >/dev/null
+fake-stop
+cat > /tmp/squatter.mjs <<'JS'
+import { createServer } from 'node:http';
+createServer((q, s) => s.end('<html>another server</html>')).listen(18889);
+JS
+nohup /opt/pipulse/node/bin/node /tmp/squatter.mjs >/dev/null 2>&1 &
+squatter=$!
+for _ in $(seq 1 20); do curl -fs http://127.0.0.1:18889/ >/dev/null 2>&1 && break; sleep 1; done
+if sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.4.tar.gz" >/dev/null 2>&1; then
+  echo 'not ok - another server on the port passed for PiPulse'; fail=1
+else
+  echo 'ok - another server on the port is not taken for PiPulse'
+fi
+grep -q '"0.0.1"' /opt/pipulse/app/version.json && echo 'ok - rolled back past the port clash' || { echo 'not ok - rolled back past the port clash'; fail=1; }
+kill "$squatter"
 exit $fail
