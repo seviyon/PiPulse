@@ -155,7 +155,7 @@ function readWebhooks(): WebhookConfig[] {
   try {
     const file = readNotifyFile(path);
     if (file.worldReadable)
-      console.warn('[pipulse] PIPULSE_NOTIFY_FILE is readable by other users; chmod 600 it');
+      console.warn('[pipulse] PIPULSE_NOTIFY_FILE is readable by other users; chmod o-r it');
     return parseNotifyConfig(file);
   } catch (error) {
     fail(error);

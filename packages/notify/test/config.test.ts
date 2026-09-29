@@ -169,6 +169,8 @@ describe('readNotifyFile and urlHost', () => {
       text: '{"webhooks":[]}',
       worldReadable: false
     });
+    chmodSync(path, 0o640);
+    expect(readNotifyFile(path).worldReadable).toBe(false);
     chmodSync(path, 0o644);
     expect(readNotifyFile(path).worldReadable).toBe(true);
     expect(() => readNotifyFile(join(dir, 'missing.json'))).toThrow(

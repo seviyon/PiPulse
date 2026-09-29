@@ -234,7 +234,7 @@ Each webhook needs an `id` and an `http(s)` `url`; `method` (`POST` or `PUT`), `
 
 A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail.
 
-The file usually holds secrets: `chmod 600` it (PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
+The file usually holds secrets: keep other users out of it (`sudo chown root:pipulse /etc/pipulse/notify.json && sudo chmod 640 /etc/pipulse/notify.json` on an installed PiPulse, `chmod 600` when you run it as yourself; PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
 
 Messages are queued in the database and sent in order per webhook, retried with backoff (5 s, doubling, up to every 5 minutes) for up to 6 hours, and survive restarts. Removing or disabling a rule closes its alert without a message, and editing a rule so its alert closes and reopens unchanged sends nothing. To check a webhook without waiting for an alert:
 
