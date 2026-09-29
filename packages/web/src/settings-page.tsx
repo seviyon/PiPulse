@@ -153,9 +153,10 @@ export function SettingsPage({
           <div class="note">
             <p>
               Editing is off: no admin password is configured. To turn it on, run{' '}
-              <code>node packages/api/dist/hash-password.js</code>, save its output to a file only
-              PiPulse can read, set <code>PIPULSE_ADMIN_PASSWORD_HASH_FILE</code> to that file and
-              restart PiPulse.
+              <code>pipulse hash-password</code> (from a source checkout,{' '}
+              <code>node packages/api/dist/hash-password.js</code>), save its output to a file only
+              PiPulse can read, set <code>PIPULSE_ADMIN_PASSWORD_HASH_FILE</code> to that file in{' '}
+              <code>/etc/pipulse/pipulse.env</code> and restart PiPulse.
             </p>
           </div>
         )}
