@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { CertificateSection } from '../src/certificate.js';
 import type { Session } from '../src/api.js';
+import { formatDateTime } from '../src/format.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2027, 0, 1);
@@ -59,8 +60,9 @@ describe('CertificateSection', () => {
     await show(https);
     expect(root.querySelector('h2')?.textContent).toBe('Certificate');
     expect(root.textContent).toContain('Your certificate (PIPULSE_TLS_CERT)');
-    expect(root.textContent).toContain('Valid');
-    expect(root.textContent).toContain('80 days left');
+    expect(root.textContent).toContain(
+      `Valid until ${formatDateTime(NOW + 80 * DAY)} (80 days left)`
+    );
     expect(root.textContent).toContain('io.lan, 192.168.1.20');
     expect(root.textContent).toContain('AB:CD');
     expect(root.textContent).toContain('Complete and trusted');
@@ -69,9 +71,35 @@ describe('CertificateSection', () => {
 
   it('flags an expired certificate with an icon and words', async () => {
     await show({ ...https, validity: 'expired', notAfter: NOW - DAY });
-    expect(root.textContent).toContain('Expired');
+    expect(root.textContent).toContain(`Expired on ${formatDateTime(NOW - DAY)}`);
     expect(root.textContent).not.toContain('days left');
     expect(root.querySelector('svg')).not.toBeNull();
+  });
+
+  it('says when a certificate is not valid yet, using its start date', async () => {
+    await show({
+      ...https,
+      validity: 'not-yet-valid',
+      notBefore: NOW + 3 * DAY,
+      notAfter: NOW + 90 * DAY
+    });
+    expect(root.textContent).toContain(`Not valid until ${formatDateTime(NOW + 3 * DAY)}`);
+    expect(root.textContent).not.toContain('days left');
+    expect(root.querySelector('svg')).not.toBeNull();
+  });
+
+  it('counts the last days: singular, and today', async () => {
+    await show({ ...https, validity: 'expiring-soon', notAfter: NOW + DAY + 3600_000 });
+    expect(root.textContent).toContain('(1 day left)');
+    expect(root.textContent).not.toContain('1 days');
+    await show({ ...https, validity: 'expiring-soon', notAfter: NOW + 3600_000 });
+    expect(root.textContent).toContain('expires today');
+    expect(root.textContent).not.toContain('0 days');
+  });
+
+  it('describes an untrusted chain without naming a configured authority', async () => {
+    await show({ ...https, class: 'degraded-untrusted', reasons: ['untrusted'] });
+    expect(root.textContent).toContain('Not issued by a trusted certificate authority');
   });
 
   it('names a degraded chain and the names it misses', async () => {

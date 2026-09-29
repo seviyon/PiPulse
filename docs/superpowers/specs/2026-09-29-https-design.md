@@ -175,8 +175,8 @@ Generated leaves are verified against the generated CA before activation. For op
 
 `packages/tls/dist/health-check.js` is used by the installer, the Docker `HEALTHCHECK` and `pipulse tls enable`, so there is one implementation:
 
-- Connects to `127.0.0.1:<port>` (or `PIPULSE_HOST` when it isn't a wildcard), verifying the identity `healthTarget` picks: a concrete `PIPULSE_HOST` is verified as exactly that identity; a wildcard bind verifies the first `PIPULSE_TLS_NAMES` entry, else `localhost`, else `127.0.0.1`, else the first DNS SAN. The installer passes only the settings the check reads, via `env_value`, under `env -i`; it never sources `pipulse.env`, so `NODE_EXTRA_CA_CERTS` doesn't apply to it (trust is `PIPULSE_TLS_CA` plus the system roots; Docker's `HEALTHCHECK` inherits the container environment).
-- Trust follows the active source: generated → `<tls dir>/ca.crt`; operator → `PIPULSE_TLS_CA`, else the system store. **Verification is never disabled.**
+- Connects to `127.0.0.1:<port>` (or `PIPULSE_HOST` when it isn't a wildcard), verifying the identity `healthTarget` picks: a concrete `PIPULSE_HOST` is verified as exactly that identity; a wildcard bind verifies the first `PIPULSE_TLS_NAMES` entry, else `localhost`, else `127.0.0.1`, else the first DNS SAN. The installer passes only the settings the check reads, via `env_value`, under `env -i`; it never sources `pipulse.env`, so `NODE_EXTRA_CA_CERTS` doesn't apply to it (trust is `PIPULSE_TLS_CA` alone when set, which replaces Node's roots, else Node's bundled Mozilla roots, not `/etc/ssl/certs`; Docker's `HEALTHCHECK` inherits the container environment).
+- Trust follows the active source: generated → `<tls dir>/ca.crt`; operator → `PIPULSE_TLS_CA` alone, else Node's bundled roots. **Verification is never disabled.**
 - Reads `/api/health` and requires `monitoring: "ok"`.
 - Exit codes: `0` healthy; `1` PiPulse unhealthy or not answering; `2` TLS verification failed (reason printed).
 - HTTP mode keeps the existing `curl` check.

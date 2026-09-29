@@ -9,18 +9,20 @@ const DAY_MS = 86_400_000;
 type Https = Extract<TlsView, { mode: 'https' }>;
 type Http = Extract<TlsView, { mode: 'http' }>;
 
-const VALIDITY_TEXT: Record<Https['validity'], string> = {
-  valid: 'Valid',
-  'expiring-soon': 'Expiring soon',
-  expired: 'Expired',
-  'not-yet-valid': 'Not yet valid'
-};
+/** The validity line: what matters for each state (an early clock needs the start date). */
+function validityText(tls: Https, daysLeft: number): string {
+  if (tls.validity === 'expired') return `Expired on ${formatDateTime(tls.notAfter)}`;
+  if (tls.validity === 'not-yet-valid') return `Not valid until ${formatDateTime(tls.notBefore)}`;
+  const left =
+    daysLeft <= 0 ? 'expires today' : `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`;
+  return `Valid until ${formatDateTime(tls.notAfter)} (${left})`;
+}
 
 const CLASS_TEXT: Record<Https['class'], string> = {
   valid: 'Complete and trusted',
   'degraded-incomplete-chain': 'Chain incomplete: an intermediate certificate is missing',
   'degraded-san': 'Missing a configured name',
-  'degraded-untrusted': 'Not trusted by the configured certificate authority'
+  'degraded-untrusted': 'Not issued by a trusted certificate authority'
 };
 
 function HttpBody({ tls, signIn }: { tls: Http | undefined; signIn: boolean }) {
@@ -56,8 +58,7 @@ function HttpsBody({ tls, now }: { tls: Https; now: number }) {
       </p>
       <p class={bad || soon ? 'alert-severity' : undefined}>
         {(bad || soon) && <StatusIcon level={bad ? 'critical' : 'warning'} />}
-        {VALIDITY_TEXT[tls.validity]}: valid until {formatDateTime(tls.notAfter)}
-        {!bad && ` (${daysLeft} days left)`}
+        {validityText(tls, daysLeft)}
       </p>
       <p class={tls.class === 'valid' ? undefined : 'alert-severity'}>
         {tls.class !== 'valid' && <StatusIcon level="warning" />}
