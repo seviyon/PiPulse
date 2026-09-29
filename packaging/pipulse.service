@@ -27,6 +27,29 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+# Other users' processes stay hidden; /proc/stat, meminfo and vmstat (the
+# collector's) stay readable, so no ProcSubset=pid.
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RemoveIPC=yes
+UMask=0027
+CapabilityBoundingSet=
+# Sockets for the server and webhooks, plus netlink for the network counters.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Refused, not killed: Node tries to raise its open-files limit at startup.
+SystemCallErrorNumber=EPERM
+# The firmware interface for vcgencmd (vchiq; vcio on newer firmware), no other hardware.
+# PrivateDevices= would hide it; MemoryDenyWriteExecute= would break V8's JIT.
+DevicePolicy=closed
+DeviceAllow=/dev/vchiq rw
+DeviceAllow=/dev/vcio rw
 
 [Install]
 WantedBy=multi-user.target
