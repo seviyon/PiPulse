@@ -2,7 +2,7 @@
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
-> **Status: pre-alpha; Phase 5b-3 (notifications) is complete; 6 (packaging: apt, tarball and Docker installs, automatic releases) is in progress.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha; Phase 6 (packaging: apt, tarball and Docker installs, automatic releases) is complete, and releases start at v0.6.0; 6b (HTTPS by default) is next.** One server process collects 12 metrics (CPU load, load average, temperature, frequency, core voltage, throttling, memory, swap, `/` and `/boot` usage, network throughput) into SQLite, checks them against alert rules, sends webhook notifications (e.g. to Apprise) when alerts open and clear, and serves a live web dashboard with open alerts, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page for data retention, a REST API and a WebSocket feed — verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -281,7 +281,7 @@ Configuration is environment variables for now (see the table under [Develop](#d
 | 5b-1 | Sign-in, settings, retention editor | ✅ Done |
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
 | 5b-3 | Notifications (webhook) | ✅ Done |
-| 6 | Packaging (apt, tarball, Docker, releases, Renovate) | 🚧 In progress |
+| 6 | Packaging (apt, tarball, Docker, releases, Renovate) | ✅ Done |
 | 6b | HTTPS by default (self-signed or your own certificate) | ⏳ Next |
 | 7 | Cutover from the legacy daemon |  |
 
