@@ -23,5 +23,5 @@ USER pipulse
 VOLUME /data
 EXPOSE 8889
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
-  CMD ["node", "/opt/pipulse/app/packages/tls/dist/health-check.js"]
+  CMD node /opt/pipulse/app/packages/tls/dist/health-check.js || exit 1
 CMD ["node", "/opt/pipulse/app/packages/api/dist/server.js"]

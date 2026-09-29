@@ -14,8 +14,8 @@ export interface CheckResult {
   message: string;
 }
 
-// Node's codes for a certificate the client refuses (as opposed to a server that isn't there).
-const VERIFY_CODES = new Set([
+// Node's (OpenSSL X509_V_ERR) codes for a certificate the client refuses (as opposed to a server that isn't there).
+export const VERIFY_CODES = new Set([
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
   'UNABLE_TO_GET_ISSUER_CERT',
   'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
@@ -26,7 +26,12 @@ const VERIFY_CODES = new Set([
   'CERT_SIGNATURE_FAILURE',
   'CERT_UNTRUSTED',
   'CERT_REJECTED',
-  'ERR_TLS_CERT_ALTNAME_INVALID'
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'INVALID_CA',
+  'INVALID_PURPOSE',
+  'CERT_CHAIN_TOO_LONG',
+  'PATH_LENGTH_EXCEEDED',
+  'UNABLE_TO_DECRYPT_CERT_SIGNATURE'
 ]);
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -109,6 +114,7 @@ export async function checkHealth(
   const source = config.source;
   let certs: string[];
   let ca: string | undefined;
+  let target: { connect: string; identity: string };
   try {
     if (source.kind === 'operator') {
       certs = parseCertificateFile(readFileSync(source.certPath, 'utf8'), 'PIPULSE_TLS_CERT');
@@ -117,14 +123,15 @@ export async function checkHealth(
       certs = parseBundle(readFileSync(source.bundlePath, 'utf8'), 'leaf.pem').certs;
       ca = readFileSync(source.caPath, 'utf8');
     }
+    target = healthTarget(
+      env,
+      parseSans(new X509Certificate(certs[0]!).subjectAltName),
+      config.names
+    );
   } catch (error) {
     return { code: 1, message: `can't read the certificate: ${messageOf(error)}` };
   }
-  const { connect, identity } = healthTarget(
-    env,
-    parseSans(new X509Certificate(certs[0]!).subjectAltName),
-    config.names
-  );
+  const { connect, identity } = target;
   // SNI carries names only (never IPs); the identity check is explicit either way.
   const byName = isIP(identity) === 0;
 

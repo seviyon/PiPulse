@@ -4,7 +4,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkHealth, healthTarget, healthy } from '../src/health-check.js';
+import { checkHealth, healthTarget, healthy, VERIFY_CODES } from '../src/health-check.js';
 import { fixture, tempDir } from './helpers.js';
 
 let dir: string;
@@ -88,6 +88,29 @@ describe('checkHealth over HTTPS', () => {
       });
     });
     expect((await checkHealth(tlsEnv(closed), { readState: noState })).code).toBe(1);
+  });
+});
+
+describe('VERIFY_CODES', () => {
+  it.each([
+    'INVALID_CA',
+    'INVALID_PURPOSE',
+    'CERT_CHAIN_TOO_LONG',
+    'PATH_LENGTH_EXCEEDED',
+    'UNABLE_TO_DECRYPT_CERT_SIGNATURE'
+  ])('treats %s as a verification failure (exit 2, no rollback)', (code) => {
+    expect(VERIFY_CODES.has(code)).toBe(true);
+  });
+});
+
+describe('checkHealth with an unusable certificate file', () => {
+  it('returns one line (1) for a certificate body that parses as PEM but not as a certificate', async () => {
+    const garbage = '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n';
+    const env = tlsEnv(1, { PIPULSE_TLS_CERT: put('bad.pem', garbage, 0o644) });
+    const result = await checkHealth(env, { readState: noState });
+    expect(result.code).toBe(1);
+    expect(result.message).toMatch(/^can't read the certificate: /);
+    expect(result.message).not.toContain('\n');
   });
 });
 
