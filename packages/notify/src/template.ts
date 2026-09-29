@@ -125,7 +125,8 @@ export function fieldsFor(
 /** The Apprise-shaped default body: a title, a body line, and a type per event/severity. */
 export function defaultBody(
   event: 'raised' | 'cleared' | 'test',
-  severity: 'warning' | 'critical'
+  severity: 'warning' | 'critical',
+  hasValue = true
 ): unknown {
   const type =
     event === 'test'
@@ -137,7 +138,17 @@ export function defaultBody(
           : 'warning';
   return {
     title: '{{hostname}}: {{message}}',
-    body: '{{metricLabel}} {{value}} ({{severity}}, {{event}})',
+    // An alert keeps only the reading that raised it: on a clear, say so, or
+    // "CPU load 27.5 % (cleared)" reads as the load now. Silence rules
+    // (noReadingFor) raise without a reading, so their text has no value.
+    body:
+      event === 'cleared'
+        ? hasValue
+          ? '{{metricLabel}} {{value}} when raised, cleared after {{duration}} ({{severity}})'
+          : '{{metricLabel}} cleared after {{duration}} ({{severity}})'
+        : hasValue
+          ? '{{metricLabel}} {{value}} ({{severity}}, {{event}})'
+          : '{{metricLabel}} ({{severity}}, {{event}})',
     type
   };
 }
@@ -149,6 +160,9 @@ export function renderPayload(
   context: { hostname: string; metrics: MetricLabel[] }
 ): string {
   return JSON.stringify(
-    renderTemplate(body ?? defaultBody(event, alert.severity), fieldsFor(event, alert, context))
+    renderTemplate(
+      body ?? defaultBody(event, alert.severity, alert.value !== null),
+      fieldsFor(event, alert, context)
+    )
   );
 }

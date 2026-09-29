@@ -18,8 +18,12 @@ id -nG pipulse | grep -qw video && ok 'in video group' || bad 'in video group'
 [ "$(stat -c '%U:%G %a' /etc/pipulse/pipulse.env)" = 'root:pipulse 640' ] && ok 'env mode' || bad 'env mode'
 [ "$(stat -c '%U %a' /var/lib/pipulse)" = 'pipulse 700' ] && ok '/var/lib/pipulse mode' || bad '/var/lib/pipulse mode'
 grep -q 'no systemd' /tmp/setup.log && ok 'says it skipped the service' || bad 'says it skipped the service'
+# adduser noise (a missing home folder on a first install, "already a member" on
+# every upgrade) looks like a failure to whoever runs the installer.
+! grep -q '^adduser' /tmp/setup.log && ok 'first install: no adduser warnings' || bad "first install: no adduser warnings ($(grep '^adduser' /tmp/setup.log))"
 echo 'PIPULSE_PORT="8889"' >> /etc/pipulse/pipulse.env # quoted, as systemd allows
-sh "$here/setup.sh" --no-start >/dev/null 2>&1
+sh "$here/setup.sh" --no-start > /tmp/setup.log 2>&1
+! grep -q '^adduser' /tmp/setup.log && ok 'upgrade: no adduser warnings' || bad "upgrade: no adduser warnings ($(grep '^adduser' /tmp/setup.log))"
 grep -q '^PIPULSE_PORT="8889"$' /etc/pipulse/pipulse.env && ok 'keeps an existing env' || bad 'keeps an existing env'
 # A process on the configured port produces a warning naming it.
 python3 -m http.server 8889 >/dev/null 2>&1 & srv=$!

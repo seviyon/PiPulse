@@ -21,9 +21,11 @@ done
 
 # 1. User
 if ! getent passwd pipulse >/dev/null; then
+  # The home folder exists first, or adduser warns it can't be accessed (owner set below).
+  install -d -m 700 /var/lib/pipulse
   adduser --system --group --home /var/lib/pipulse --no-create-home --shell /usr/sbin/nologin pipulse >/dev/null
 fi
-if getent group video >/dev/null; then adduser pipulse video >/dev/null; fi
+if getent group video >/dev/null && ! id -nG pipulse | grep -qw video; then adduser pipulse video >/dev/null; fi
 
 # 2. Folders
 install -d -o root -g pipulse -m 750 /etc/pipulse

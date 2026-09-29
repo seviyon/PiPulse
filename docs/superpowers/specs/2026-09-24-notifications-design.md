@@ -99,6 +99,8 @@ A webhook without `body` gets:
 }
 ```
 
+A clear's `body` is `{{metricLabel}} {{value}} when raised, cleared after {{duration}} ({{severity}})`, since an alert keeps only the reading that raised it (changed in v0.6.2). An alert with no value (a `noReadingFor` rule) leaves `{{value}}` out: `{{metricLabel}} ({{severity}}, {{event}})` on a raise, `{{metricLabel}} cleared after {{duration}} ({{severity}})` on a clear.
+
 with `type` set per event for Apprise: `warning` for a warning raise, `failure` for a critical raise, `success` for a clear, `info` for a test. Pointing a webhook at Apprise's `/notify/<key>` needs nothing else.
 
 ## Which events notify

@@ -115,8 +115,33 @@ describe('templates', () => {
       type: 'failure'
     });
     expect(body('raised', 'warning').type).toBe('warning');
-    expect(body('cleared', 'critical').type).toBe('success');
+    // A clear says the value was the raising one, so it doesn't read as the current reading.
+    const cleared = {
+      ...alert,
+      clearedAt: alert.raisedAt + 12 * MIN,
+      clearedBy: 'condition' as const
+    };
+    expect(JSON.parse(renderPayload(undefined, 'cleared', cleared, context))).toEqual({
+      title: 'Io: CPU running hot',
+      body: 'CPU temperature 82.4 °C when raised, cleared after 12 min (critical)',
+      type: 'success'
+    });
     expect(body('test', 'warning').type).toBe('info');
     expect(defaultBody('raised', 'warning')).toMatchObject({ title: '{{hostname}}: {{message}}' });
+  });
+
+  it('leaves the value out of the default body when the alert has none', () => {
+    // Silence rules (noReadingFor, e.g. not_collecting) raise without a reading.
+    const silent = { ...alert, value: null, severity: 'warning' as const };
+    const payload = (event: 'raised' | 'cleared', a: Alert) =>
+      JSON.parse(renderPayload(undefined, event, a, context)).body;
+    expect(payload('raised', silent)).toBe('CPU temperature (warning, raised)');
+    expect(
+      payload('cleared', {
+        ...silent,
+        clearedAt: silent.raisedAt + 3 * MIN,
+        clearedBy: 'condition'
+      })
+    ).toBe('CPU temperature cleared after 3 min (warning)');
   });
 });
