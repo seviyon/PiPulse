@@ -16,6 +16,9 @@ fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
 lint "$out/pipulse_0.0.1_$arch.deb" && ok 'lintian clean' || bad 'lintian clean'
+# Members compressed with xz, which dpkg on Raspberry Pi OS 11 can read (it has no zstd).
+members=$(ar t "$out/pipulse_0.0.1_$arch.deb" | tr '\n' ' ')
+[ "$members" = 'debian-binary control.tar.xz data.tar.xz ' ] && ok 'xz members, readable by older dpkg' || bad "xz members, readable by older dpkg (got: $members)"
 # A hyphenated version (a pre-release, the CI dry run) is a non-native package to Debian.
 "$repo/packaging/build-tarball.sh" 0.0.3-rc.1 "$out" >/dev/null
 "$repo/packaging/build-deb.sh" 0.0.3-rc.1 "$arch" "$out/pipulse-0.0.3-rc.1.tar.gz" "$out" >/dev/null

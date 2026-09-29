@@ -33,5 +33,7 @@ echo "Installed-Size: $(du -sk "$root" | cut -f1)" >> "$root/DEBIAN/control"
 install -m 644 "$here/deb/conffiles" "$root/DEBIAN/conffiles"
 for s in preinst postinst prerm postrm; do install -m 755 "$here/deb/$s" "$root/DEBIAN/$s"; done
 mkdir -p "$out"
-dpkg-deb --root-owner-group --build "$root" "$out/pipulse_${version}_${arch}.deb" >/dev/null
+# xz, not the zstd Ubuntu's dpkg-deb defaults to: dpkg before 1.21.18 (Raspberry Pi OS 11
+# "bullseye" and older) can't unpack zstd, and every dpkg reads xz.
+dpkg-deb -Zxz --root-owner-group --build "$root" "$out/pipulse_${version}_${arch}.deb" >/dev/null
 log "built $out/pipulse_${version}_${arch}.deb"
