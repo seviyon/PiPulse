@@ -11,8 +11,21 @@
       "platformAutomerge": true
     },
     {
+      "description": "Majors wait for approval on the Dependency Dashboard instead of opening PRs.",
       "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
       "automerge": false
+    },
+    {
+      "description": "The workflows and their containers run the Node that ships on the Pi (armhf stays on 22).",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "allowedVersions": "<23"
+    },
+    {
+      "description": "Types for the oldest supported Node (engines >=22.13), so nothing newer than Node 22 typechecks.",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<23"
     },
     {
       "matchFileNames": ["packaging/node-versions.json"],
