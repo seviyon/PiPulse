@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -155,6 +155,43 @@ describe('api server process', () => {
     expect(err.trim()).toMatch(
       /^\[pipulse\] .*the private key does not match the first certificate$/
     );
+  }, 20000);
+
+  it('starts with a SEVERE line, not a refusal, when an intermediate has expired', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const cert = join(dir, 'cert.pem');
+    const key = join(dir, 'key.pem');
+    const timesync = join(dir, 'timesync');
+    writeFileSync(cert, fixture('under-expired.crt') + fixture('expired-intermediate.crt'));
+    writeFileSync(key, fixture('under-expired.key'), { mode: 0o600 });
+    mkdirSync(timesync);
+    writeFileSync(join(timesync, 'synchronized'), '');
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'on',
+        PIPULSE_TLS_CERT: cert,
+        PIPULSE_TLS_KEY: key,
+        PIPULSE_TLS_TIMESYNC_DIR: timesync
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    let err = '';
+    child.stderr.on('data', (chunk: Buffer) => (err += chunk.toString()));
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        if (out.includes('listening on https://')) resolve();
+      });
+      child.once('exit', (code) => reject(new Error(`exited ${String(code)}: ${err}`)));
+    });
+    child.kill('SIGTERM');
+    await once(child, 'exit');
+    expect(err).toContain('[pipulse] SEVERE: the HTTPS certificate is expired');
   }, 20000);
 
   it('says why HTTPS is off and warns about a certificate that is set but unused', async () => {

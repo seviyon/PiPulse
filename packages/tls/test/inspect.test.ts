@@ -40,6 +40,23 @@ describe('inspectMaterial, accepted material', () => {
     });
   });
 
+  it('narrows the validity window to an expired intermediate instead of refusing', () => {
+    const cert = inspect(
+      [fixture('under-expired.crt'), fixture('expired-intermediate.crt')],
+      fixture('under-expired.key')
+    );
+    expect(cert.class).toBe('valid');
+    expect(cert.notBefore).toBe(Date.UTC(2026, 0, 1));
+    expect(cert.notAfter).toBe(Date.UTC(2021, 0, 1));
+    expect(validityOf(cert, Date.UTC(2026, 8, 30), 0)).toBe('expired');
+  });
+
+  it('does not narrow the window to a root supplied at the end of the chain', () => {
+    const cert = inspect([leaf, intermediate, fixture('root-ca.crt')]);
+    expect(cert.notBefore).toBe(Date.UTC(2026, 0, 1));
+    expect(cert.notAfter).toBe(Date.UTC(2125, 0, 1));
+  });
+
   it('classes a chain to an unexpected root as degraded-untrusted', () => {
     const cert = inspect(
       [fixture('other-leaf.crt'), fixture('other-ca.crt')],

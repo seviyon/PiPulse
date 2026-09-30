@@ -93,5 +93,10 @@ sign "$WORK/rsa.key" localhost intermediate.crt intermediate.key v3_leaf "$NOW" 
 openssl pkcs8 -topk8 -in leaf.key -out leaf.encrypted.key -passout pass:test
 ec cn-only.key
 sign cn-only.key io.lan intermediate.crt intermediate.key v3_no_san "$NOW" "$LEAF_END" cn-only.crt
+# A valid leaf under an intermediate that expired long ago.
+ec expired-intermediate.key
+sign expired-intermediate.key 'PiPulse Test Expired Intermediate' root-ca.crt root-ca.key v3_ca 20200101000000Z 20210101000000Z expired-intermediate.crt
+ec under-expired.key
+sign under-expired.key localhost expired-intermediate.crt expired-intermediate.key v3_leaf "$NOW" "$LEAF_END" under-expired.crt
 chmod 600 ./*.key
 echo 'fixtures written'

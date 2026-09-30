@@ -5,7 +5,6 @@ import { rootCertificates } from 'node:tls';
 import type { CertSource } from './config.js';
 import { readSecureFile } from './files.js';
 import { parseBundle, parseCertificateFile, parseKeyFile } from './pem.js';
-import type { ClockReading } from './clock.js';
 
 export type Validity = 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
 export type ChainClass =
@@ -48,7 +47,10 @@ export interface LoadedCertificate {
   fingerprint: string;
   /** SHA-256 of the complete key and certificate chain served to clients. */
   contextFingerprint: string;
-  /** Unix ms. */
+  /**
+   * Unix ms: when the served chain is valid — the latest start and earliest
+   * end among the leaf and its intermediates (a trusted root is left out).
+   */
   notBefore: number;
   notAfter: number;
   sans: { dns: string[]; ip: string[] };
@@ -99,7 +101,6 @@ export function inspectMaterial(input: {
   certPems: string[];
   trust: Trust;
   names: string[];
-  clock?: ClockReading;
 }): LoadedCertificate {
   const certs = input.certPems.map((pem, i) => {
     try {
@@ -167,20 +168,12 @@ export function inspectMaterial(input: {
     else degrade('degraded-incomplete-chain', 'incomplete-chain');
   }
 
-  // A client validates every non-root certificate in the supplied chain. Keep
-  // an unusable intermediate from being reported as a healthy certificate.
-  if (input.clock?.synced ?? true) {
-    const now = Date.now();
-    for (let i = 1; i < certs.length; i++) {
-      const cert = certs[i]!;
-      if (anchor?.fingerprint256 === cert.fingerprint256) continue;
-      if (now < cert.validFromDate.getTime() || now >= cert.validToDate.getTime()) {
-        throw new CertificateRefused(
-          `certificate ${i + 1} is ${now < cert.validFromDate.getTime() ? 'not yet valid' : 'expired'}`
-        );
-      }
-    }
-  }
+  // A client checks the dates of every certificate it is sent except a trusted
+  // root, so the chain is valid only where all of them are. Reported as the
+  // window rather than refused: validity is startup's and the reloader's call.
+  const dated = certs.filter((cert) => cert.fingerprint256 !== anchor?.fingerprint256);
+  const notBefore = Math.max(...dated.map((cert) => cert.validFromDate.getTime()));
+  const notAfter = Math.min(...dated.map((cert) => cert.validToDate.getTime()));
 
   const missingNames = input.names.filter((name) =>
     isIP(name)
@@ -199,8 +192,8 @@ export function inspectMaterial(input: {
       .update('\0')
       .update(input.certPems.join(''))
       .digest('hex'),
-    notBefore: leaf.validFromDate.getTime(),
-    notAfter: leaf.validToDate.getTime(),
+    notBefore,
+    notAfter,
     sans: parseSans(leaf.subjectAltName),
     class: chainClass,
     reasons,
@@ -227,11 +220,7 @@ function named<T>(setting: string, inspect: () => T): T {
  */
 export function loadCertificate(
   source: CertSource,
-  options: {
-    names: string[];
-    generatedOwner?: { uid?: number; gid?: number };
-    clock?: ClockReading;
-  }
+  options: { names: string[]; generatedOwner?: { uid?: number; gid?: number } }
 ): LoadedCertificate {
   if (source.kind === 'operator') {
     const certPems = parseCertificateFile(
@@ -252,14 +241,7 @@ export function loadCertificate(
         }
       : { anchors: [], system: true };
     return named('PIPULSE_TLS_CERT/PIPULSE_TLS_KEY', () =>
-      inspectMaterial({
-        source: 'operator',
-        keyPem,
-        certPems,
-        trust,
-        names: options.names,
-        ...(options.clock !== undefined ? { clock: options.clock } : {})
-      })
+      inspectMaterial({ source: 'operator', keyPem, certPems, trust, names: options.names })
     );
   }
   const owner = options.generatedOwner ?? {};
@@ -277,8 +259,7 @@ export function loadCertificate(
       keyPem: bundle.key,
       certPems: bundle.certs,
       trust: { anchors: ca, system: false },
-      names: options.names,
-      ...(options.clock !== undefined ? { clock: options.clock } : {})
+      names: options.names
     })
   );
   return { ...inspected, caFingerprint: new X509Certificate(ca[0]!).fingerprint256 };
