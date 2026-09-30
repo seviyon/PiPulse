@@ -311,6 +311,9 @@ Critical `nameConstraints` on the CA, fixed for its lifetime:
 - **Always permitted IP:** `127.0.0.1/32`, `::1/128`.
 - **Subnets:** only by explicit operator choice — the interactive prompt, `--subnet`, or `PIPULSE_TLS_SUBNETS` (Docker: the only way). At most what the operator accepted.
 - **Names-only default:** every other IPv4 and IPv6 address is excluded (`excludedSubtrees` `0.0.0.0/0` and `::/0` after the permits; RFC 5280 applies constraints per name type, so leaving IPs out would leave them unconstrained).
+
+  > **Correction (found while planning 6b-2):** do not add the `0.0.0.0/0` and `::/0` exclusions. An excluded subtree beats every permit, so they reject `127.0.0.1` and every accepted subnet (verified with OpenSSL 1.1.1w and 3.6.4). The permitted list always holds `127.0.0.1/32` and `::1/128`, so IP SANs are already confined to it; there are no IP exclusions. Likewise `permitted;DNS:io` permits all of `*.io` (RFC 5280 suffix matching); whether to exclude names below a single-label host is decision D2, off until a browser check is recorded. The 6b-2 plan's "Spec corrections needed" section (21 items) lists every departure from this spec and is applied here in full by its Task 26; until then the plan wins where they differ.
+
 - **Rejected subnets:** broader than `/16` (IPv4) or `/48` (IPv6), `/0`, unspecified, multicast, broadcast, loopback beyond the fixed entries, link-local, IPv4-mapped or unusual IPv6 forms (checked after canonicalising). Container bridges (`docker*`, `br-*`, `veth*`), VPNs (`tun*`, `wg*`) are skipped by detection; an explicit override naming one is accepted with a warning.
 - **Candidate detection:** the interface holding the default route (`/proc/net/route`, `/proc/net/ipv6_route`); its IPv4 network (normally `/24`).
 - **The consequence text**, shown before any subnet is accepted and in `status`:
