@@ -1,0 +1,126 @@
+# CodeRabbit config for PiPulse — https://docs.coderabbit.ai/reference/configuration
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+reviews:
+  profile: chill # "assertive" once the noise level is known
+  high_level_summary: true
+  poem: false
+  request_changes_workflow: false # CI is the merge gate, not the bot
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Renovate PRs automerge on green CI; reviewing digest bumps is noise.
+    ignore_usernames: ['renovate[bot]']
+
+  # Generated, vendored or committed-binary content: nothing to review.
+  path_filters:
+    - '!package-lock.json'
+    - '!packages/tls/test/fixtures/**/*.crt'
+    - '!packages/tls/test/fixtures/**/*.key'
+    - '!packaging/node-keys/**'
+    - '!**/dist/**'
+
+  path_instructions:
+    - path: 'packages/*/src/**/*.ts'
+      instructions: >
+        Node >=22.13, ESM, strict TypeScript. Flag `any`, unchecked type
+        assertions, floating promises and unhandled async errors. Core logic
+        must stay behind small interfaces, not import Fastify, Preact or
+        node:sqlite directly.
+
+    - path: 'packages/api/src/**'
+      instructions: >
+        Every request is authorised by the single onRequest hook in
+        auth-routes.ts, decided on the matched route, never the raw URL.
+        Flag any auth check inside a route handler, and any write route that
+        would skip the session + same-host Origin check. /health and
+        /api/health are distinct and /api/health returns enums only.
+        PIPULSE_TRUST_PROXY must not be introduced.
+
+    - path: 'packages/storage/src/migrations.ts'
+      instructions: >
+        Migrations are keyed by PRAGMA user_version. A migration already on
+        main must never be edited; changes must append a new migration.
+        Flag any edit to an existing migration.
+
+    - path: 'packages/storage/src/**'
+      instructions: >
+        Saved settings are read live (retentionSource), never cached at
+        startup. Durations go through the shared parser; a bare "m" must stay
+        rejected.
+
+    - path: 'packages/alerts/src/**'
+      instructions: >
+        Rules are data validated by parseRuleEntry, never code. A bad saved
+        rule is skipped (not in force), a bad file stops startup.
+
+    - path: 'packages/notify/src/**'
+      instructions: >
+        Webhook URLs beyond the host, and all headers, must never be logged,
+        served or shown. Webhooks come only from PIPULSE_NOTIFY_FILE.
+
+    - path: 'packages/tls/src/**'
+      instructions: >
+        Must not depend on any @pipulse/* package. Never disable certificate
+        verification. Names are checked against SANs only, never subject CN.
+
+    - path: 'packages/web/src/**/*.{ts,tsx}'
+      instructions: >
+        Preact dashboard. Status must never be conveyed by colour alone
+        (icon + words). API calls go through apiFetch in api.ts, except the
+        sign-in POST. Check keyboard access and labels on forms.
+
+    - path: 'packages/*/test/**'
+      instructions: >
+        Vitest. Prefer behaviour over implementation details; flag real
+        timers or wall-clock dependence where fake timers are needed, and
+        tests that can pass without asserting anything.
+
+    - path: 'packaging/**'
+      instructions: >
+        POSIX sh only (no bashisms), must pass shellcheck with the repo's
+        .shellcheckrc. Scripts run as root on Raspberry Pi OS (armhf, Node 22)
+        and Debian: check quoting, set -eu handling and idempotent
+        install/upgrade/rollback.
+
+    - path: '**/package.json'
+      instructions: >
+        Versions stay 0.0.0 (releases stamp version.json). No pre*/post*
+        lifecycle hooks: the dev machine runs with ignore-scripts=true.
+
+    - path: '.github/workflows/**'
+      instructions: >
+        Actions pinned by commit digest. Node in workflows stays on 22 for
+        the packaging job (armhf ships Node 22).
+
+    - path: 'docs/superpowers/**'
+      instructions: >
+        Design specs and plans: review for consistency with docs/PLAN.md and
+        CLAUDE.md, not for prose style.
+
+  tools:
+    eslint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    biome:
+      enabled: false # project uses ESLint + Prettier; Biome would contradict it
+
+  pre_merge_checks:
+    docstrings:
+      mode: 'off' # the codebase doesn't use docstring coverage as a rule
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - 'CLAUDE.md'
+      - 'AGENTS.md'
+      - 'docs/PLAN.md'
