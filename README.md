@@ -113,7 +113,7 @@ PiPulse serves plain HTTP by default in this release; HTTPS from a certificate m
 
 3. `sudo systemctl restart pipulse`, then open `https://<pi>:8889`. The old `http://` address stops answering (there is no redirect).
 
-Replacing the files later (e.g. a renewal) is picked up within about two minutes without a restart; a replacement that is broken or worse than the current one is ignored, and Settings → Certificate says why. A broken certificate or key stops PiPulse from starting, with one line in `journalctl -u pipulse` naming the setting (for example `PIPULSE_TLS_CERT/PIPULSE_TLS_KEY: …` or `PIPULSE_TLS_CA: certificate 1 can't be parsed`); an expired one only warns (monitoring continues — but browsers will refuse the page). `PIPULSE_TLS_REQUIRE_VALID_CERT=true` refuses expired ones instead.
+Replacing the files later (e.g. a renewal) is picked up within about two minutes without a restart; a replacement that is broken or worse than the current one is ignored, and Settings → Certificate says why. A broken certificate or key stops PiPulse from starting, with one line in `journalctl -u pipulse` naming the setting (for example `PIPULSE_TLS_CERT/PIPULSE_TLS_KEY: …` or `PIPULSE_TLS_CA: certificate 1 can't be parsed`); an expired one only warns (monitoring continues — but browsers will refuse the page). Expiry counts for the whole chain: an expired intermediate in `fullchain.pem` makes the certificate expired even if the leaf is not. `PIPULSE_TLS_REQUIRE_VALID_CERT=true` refuses expired ones instead. A replacement that is refused only because of its dates (not valid yet, say) is tried again every 10 minutes, so it goes live once it is valid.
 
 Names you list in `PIPULSE_TLS_NAMES` are checked against the certificate's subject alternative names only (the common name is never used), so a certificate that names a host only in its CN shows a warning in Settings. A chain that doesn't reach a CA you configured, or a self-signed one nobody configured, also starts with a warning rather than a refusal.
 
@@ -121,7 +121,7 @@ Names you list in `PIPULSE_TLS_NAMES` are checked against the certificate's subj
 
 **HSTS is off by default.** Browsers apply it to every port of a host name, so turning it on (`PIPULSE_TLS_HSTS=1d`) would also force HTTPS for Pi-hole's admin page or RPi-Monitor on the same Pi. Turn it on only when nothing else on that name speaks plain HTTP.
 
-If the Pi uses chrony or ntpd instead of systemd-timesyncd, set `PIPULSE_TLS_CLOCK=trust` so certificate decisions trust its clock. Until the clock is trusted, PiPulse still checks the certificate structure, key match, chain signatures and names, but defers wall-clock validity checks so a reboot without an RTC cannot prevent HTTPS from starting.
+If the Pi uses chrony or ntpd instead of systemd-timesyncd, set `PIPULSE_TLS_CLOCK=trust` so certificate decisions trust its clock. Until the clock is trusted, a certificate that looks not yet valid never stops PiPulse from starting, even with `PIPULSE_TLS_REQUIRE_VALID_CERT=true`, so a reboot without an RTC cannot keep HTTPS down.
 
 **Docker:** mount the files read-only (e.g. into `./config`) and set the same variables in `pipulse.env`.
 

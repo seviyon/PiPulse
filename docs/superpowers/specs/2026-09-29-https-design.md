@@ -116,7 +116,7 @@ No Fastify or SQLite types; no internal dependencies, so it builds any time befo
 
 - `parse`: ok / failed (which block).
 - `keyMatch`: ok / mismatch (against the first certificate).
-- `validity`: `valid` / `expiring-soon` (≤ 30 days generated, ≤ 14 days operator) / `expired` / `not-yet-valid`, computed against `now` and reported with the clock state.
+- `validity`: `valid` / `expiring-soon` (≤ 30 days generated, ≤ 14 days operator) / `expired` / `not-yet-valid`, computed against `now` and reported with the clock state. `notBefore`/`notAfter` are the served chain's window — the latest start and earliest end among the leaf and its intermediates (a trusted root at the end is left out) — so an expired intermediate makes the certificate `expired` (clarified in 6b-1: reported, never a refusal by itself).
 - `clockSynced`: `synced` / `unsynced` / `unknown`.
 - `chain`: the class below, plus reason codes.
 - For generated material: CA fingerprint and constraints (from `ca-meta.json`).
@@ -144,6 +144,7 @@ Generated leaves are verified against the generated CA before activation. For op
 
 - `expired` or `not-yet-valid`: start, with a `SEVERE` log line on every start and health `degraded`.
 - `PIPULSE_TLS_REQUIRE_VALID_CERT=true` refuses them instead — except `not-yet-valid` while the clock isn't `synced`, which starts anyway (an unsynced clock must not brick the Pi).
+- Reload applies the same rule to a replacement, and never swaps an expired replacement in over a certificate that isn't expired. A replacement refused while its files stay unchanged is tried again every 10 minutes, so a time-based refusal clears on its own (clarified in 6b-1).
 
 ### Files
 

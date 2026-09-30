@@ -188,6 +188,37 @@ describe('startReloader', () => {
     expect(r.logs.filter((m) => m.includes('bad'))).toHaveLength(2);
   });
 
+  it('retries a refused replacement every 10 minutes while its files stay the same', () => {
+    let validYet = false;
+    const r = setup(A, () => {
+      if (!validYet) throw new Error('the replacement certificate is not yet valid');
+    });
+    r.change('s1', () => B);
+    r.provider.poll();
+    r.provider.poll();
+    expect(r.applied).toEqual([]);
+    r.advance(10 * 60_000 - 1);
+    r.provider.poll();
+    expect(r.applied).toEqual([]);
+    validYet = true;
+    r.advance(1);
+    r.provider.poll();
+    expect(r.applied).toEqual([B]);
+    expect(r.provider.reload()).toMatchObject({ state: 'ok', lastError: null });
+  });
+
+  it('does not retry once the active files are loaded', () => {
+    const load = vi.fn(() => B);
+    const r = setup();
+    r.change('s1', load);
+    r.provider.poll();
+    r.provider.poll();
+    expect(load).toHaveBeenCalledTimes(1);
+    r.advance(60 * 60_000);
+    r.provider.poll();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
   it('stops polling on stop() and never holds the process open', () => {
     vi.useFakeTimers();
     try {

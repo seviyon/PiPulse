@@ -17,6 +17,8 @@ export interface CertificateProvider {
 }
 
 const HOUR_MS = 60 * 60_000;
+/** A refused replacement whose files stay the same is tried again this often. */
+export const RETRY_MS = 10 * 60_000;
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
@@ -108,13 +110,16 @@ export function startReloader(options: {
     const signature = options.signature();
     if (signature === activeSignature) {
       pending = undefined;
+      // A refusal can be about time (not yet valid, the clock not synced yet)
+      // and stop applying without the files changing: try them again now and then.
+      if (state.state === 'failing' && now() - (state.lastAttempt ?? 0) >= RETRY_MS) attempt();
       return;
     }
     if (signature !== pending) {
       pending = signature;
       return;
     }
-    // Seen unchanged twice: try it once, whatever the outcome.
+    // Seen unchanged twice: try it now (and every RETRY_MS while it's refused).
     activeSignature = signature;
     pending = undefined;
     attempt();
