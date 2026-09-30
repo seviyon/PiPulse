@@ -85,3 +85,29 @@ Load averages and network totals (deferred from Phase 3) were resolved after Pha
 - Vitest 5 ignores `vitest.workspace.ts`; the root `vitest.config.ts` uses `test.projects: ['packages/*']` so each package's own config applies.
 - Renovate (`renovate.json`): majors never open PRs by themselves — they wait on the Dependency Dashboard (issue #27) for approval; Node in the workflows/containers and `@types/node` stay on 22 (armhf ships Node 22; the Dockerfile's Node 24 is 64-bit only and is not pinned); patch/minor/digest updates automerge, runtime ones carry `release:patch`. Mend's Renovate app was in silent mode at first and its first real scan opened four major PRs that were closed unmerged (2026-09-30).
 - Commit messages here have included a `Co-Authored-By`/`Claude-Session` trailer from whichever Claude surface made the change — keep doing that if your environment sets one.
+
+## For any coding agent (Claude Code, OpenCode, others)
+
+`AGENTS.md` is a symlink to this file, so every agent that reads either name sees the same rules. Nothing below depends on Claude-only features.
+
+**Building from a plan**
+
+- Plans live in `docs/superpowers/plans/`, specs in `docs/superpowers/specs/`. Where a plan and its spec differ, the plan wins for the parts it lists under "Spec corrections needed" (6b-2: `docs/superpowers/plans/2026-09-30-https-6b2.md`). Ignore its "REQUIRED SUB-SKILL" line if your tool has no such skills; the steps stand alone.
+- Do one task at a time, in order. Read the task's own steps, `Global Constraints`, `Review Focus` and `File Structure` first, plus any earlier task whose names it uses (types, file names, constants); don't load the whole plan. Tasks are test-first: write the failing test, see it fail, make it pass, commit.
+- The code inside a plan is a reviewed draft, never run. If a test or the compiler disagrees with it, the test wins: fix the code, keep the task's intent, and note the change in the commit message.
+- 6b-2 gates: Task 1 (the `openssl` spike) decides whether later tasks stand or the DER-encoder fallback (D4) is needed; don't start Task 2 before it is recorded in the plan. D2 stays off until a person records a Chrome/Firefox/Safari result. Tasks 13, 20 and 27 are manual exit criteria on the Pi (`Io`) or a Docker host; an agent writes the checklist and stops.
+- Before a PR: `npm test` (it builds first), `npm run lint`, `npm run format`; for `packaging/` also `shellcheck` and the `packaging/test/*.test.sh` suite. Every PR needs green CI, and a release label (`release:patch|minor`) only when it should ship.
+
+**Working with the Pi and the user's machines**
+
+- The Pi (`Io`) uses password SSH only, so an agent can't log in. Give the person exact commands to run, and read results back through `curl` or a browser against `http://<pi>:8889`.
+- Every command handed to the person uses absolute paths, never `./`: an `rsync ./ …` run from the wrong directory once copied a whole home folder to the Pi.
+- Give Pi start commands as separate `export VAR=…` lines followed by one short `node …` line: a long one-line `VAR=… node …` got split when pasted over SSH, and PiPulse fell back to port 8888.
+- Put built artifacts (tarballs, `.deb`s, test builds) in `~/Repositories/tarballs/<Project>/` on the Mac and `~/tarballs/<Project>/` on the Pi, outside any git repo.
+- Before a scratch database is deleted after an exit-criterion run, capture its API state (e.g. `/api/alerts?state=all`); two Pi-only oddities once couldn't be explained because it was gone.
+- The operator's Apprise sits behind a homelab HTTPS proxy with a private CA, so a Node process that sends to it needs `NODE_EXTRA_CA_CERTS`.
+
+**Cost and review**
+
+- Use the strongest available model for planning and for the risky 6b-2 code (the CA journal, certificate issuance and constraints, CA rotation) and for the final whole-branch review; a cheaper model is fine for the rest. Give reviews a fresh context that didn't write the change.
+- Don't use Codex in this repo (broken, dropped by the operator).
