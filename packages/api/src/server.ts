@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import type { Server as HttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
 import { cpus, hostname } from 'node:os';
 import {
@@ -23,9 +24,25 @@ import {
   startNotifications,
   type WebhookConfig
 } from '@pipulse/notify';
+import { parseDuration } from '@pipulse/storage/duration';
+import {
+  checkReplacement,
+  EXPIRING_SOON_MS,
+  loadCertificate,
+  readClock,
+  readTlsConfig,
+  startReloader,
+  statSignature,
+  validityOf,
+  type CertSource,
+  type CertificateProvider,
+  type LoadedCertificate,
+  type TlsConfig
+} from '@pipulse/tls';
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
+import { tlsView } from './tls-status.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
@@ -94,6 +111,92 @@ function readAuth(): AuthConfig {
 const AUTH = readAuth();
 const PASSWORD_HASH = AUTH.passwordHash;
 const PROTECT_READS = AUTH.protectReads;
+
+/**
+ * HTTPS: resolved and checked before anything else starts, so a refusal is
+ * immediate. Refused material stops startup with one line; an expired or
+ * not-yet-valid certificate only warns (monitoring must keep running) unless
+ * PIPULSE_TLS_REQUIRE_VALID_CERT=true.
+ */
+function readTls(): TlsConfig {
+  try {
+    return readTlsConfig(process.env, { releaseDefault: 'http' });
+  } catch (error) {
+    fail(error);
+  }
+}
+const TLS = readTls();
+for (const warning of TLS.warnings) console.warn(`[pipulse] warning: ${warning}`);
+if (
+  TLS.mode !== 'https' &&
+  (process.env['PIPULSE_TLS_CERT']?.trim() || process.env['PIPULSE_TLS_KEY']?.trim())
+) {
+  console.warn(
+    '[pipulse] warning: PIPULSE_TLS_CERT/PIPULSE_TLS_KEY are set but HTTPS is off (set PIPULSE_TLS=on)'
+  );
+}
+// Generated files are root-owned with the service's group (6b-2); operator files aren't owner-checked.
+const loadActive = (source: CertSource): LoadedCertificate =>
+  loadCertificate(source, {
+    names: TLS.names,
+    generatedOwner: { uid: 0, ...(process.getgid ? { gid: process.getgid() } : {}) }
+  });
+const certPaths = (source: CertSource): string[] =>
+  source.kind === 'operator'
+    ? [source.certPath, source.keyPath, ...(source.caPath ? [source.caPath] : [])]
+    : [source.bundlePath, source.caPath];
+// Read before the startup load, so a renewal landing in between is still picked up by the reloader.
+const INITIAL_SIGNATURE =
+  TLS.mode === 'https' && TLS.source ? statSignature(certPaths(TLS.source)) : undefined;
+function readCertificate(): LoadedCertificate | undefined {
+  if (TLS.mode !== 'https' || !TLS.source) return undefined;
+  let cert: LoadedCertificate;
+  try {
+    cert = loadActive(TLS.source);
+  } catch (error) {
+    fail(error);
+  }
+  const validity = validityOf(cert, Date.now(), EXPIRING_SOON_MS[cert.source]);
+  if (validity === 'expired' || validity === 'not-yet-valid') {
+    const clock = readClock({
+      timesyncDir: TLS.timesyncDir,
+      now: Date.now(),
+      trust: TLS.clockTrust
+    });
+    const excused = validity === 'not-yet-valid' && !clock.synced;
+    if (TLS.requireValid && !excused) {
+      fail(`the HTTPS certificate is ${validity} and PIPULSE_TLS_REQUIRE_VALID_CERT=true`);
+    }
+    console.error(
+      `[pipulse] SEVERE: the HTTPS certificate is ${validity} (valid ${new Date(cert.notBefore).toISOString()} to ${new Date(cert.notAfter).toISOString()}); browsers will refuse it. Monitoring continues.`
+    );
+  }
+  for (const reason of cert.reasons) {
+    console.warn(
+      `[pipulse] warning: the HTTPS certificate is ${cert.class} (${reason}${reason === 'san-missing' ? `: ${cert.missingNames.join(', ')}` : ''})`
+    );
+  }
+  return cert;
+}
+const CERT = readCertificate();
+
+function readHsts(): number | undefined {
+  const text = process.env['PIPULSE_TLS_HSTS']?.trim();
+  if (!text) return undefined;
+  if (TLS.mode !== 'https') {
+    console.warn('[pipulse] PIPULSE_TLS_HSTS is ignored: HTTPS is off');
+    return undefined;
+  }
+  try {
+    const ms = parseDuration('PIPULSE_TLS_HSTS', text);
+    if (!Number.isFinite(ms))
+      throw new Error('PIPULSE_TLS_HSTS must be a finite duration, not forever');
+    return Math.floor(ms / 1000);
+  } catch (error) {
+    fail(error);
+  }
+}
+const HSTS_SECONDS = readHsts();
 
 const db = openDb(DB_PATH);
 
@@ -171,13 +274,14 @@ const notifications = startNotifications(db, {
 });
 
 // Liveness for /api/health: the database answers and readings keep arriving.
-const health = createHealth(db, { trackReadings: true });
+const health = createHealth(db, { trackReadings: true, trackAlertChecks: true });
 
 const live = createLiveFeed();
 const alertFeed = createFeed<AlertEvent>();
 // buildServer runs before the alert engine starts (below), but its recheck
 // hook needs to reach the engine once it exists; held in a property assigned
 // later instead of a reassigned `let`.
+const tls: { provider?: CertificateProvider } = {};
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
@@ -197,9 +301,37 @@ const app = buildServer(db, {
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
   notify: notifications,
   health,
+  ...(CERT ? { https: { key: CERT.key, cert: CERT.cert } } : {}),
+  ...(HSTS_SECONDS !== undefined ? { hstsSeconds: HSTS_SECONDS } : {}),
+  tls: () => tlsView(TLS, tls.provider, Date.now()),
   version: VERSION,
   node: NODE
 });
+if (CERT && TLS.source) {
+  const source = TLS.source;
+  // Picks up a replaced certificate within about two minutes, without a restart.
+  tls.provider = startReloader({
+    initial: CERT,
+    ...(INITIAL_SIGNATURE !== undefined ? { initialSignature: INITIAL_SIGNATURE } : {}),
+    load: () => loadActive(source),
+    signature: () => statSignature(certPaths(source)),
+    accept: (candidate, active) =>
+      checkReplacement(candidate, active, {
+        requireValid: TLS.requireValid,
+        now: Date.now(),
+        timesyncDir: TLS.timesyncDir,
+        clockTrust: TLS.clockTrust
+      }),
+    apply: (cert) =>
+      // setSecureContext replaces the whole context, so the TLS floor is passed again.
+      (app.server as unknown as HttpsServer).setSecureContext({
+        key: cert.key,
+        cert: cert.cert,
+        minVersion: 'TLSv1.2'
+      }),
+    log: (message) => console.warn(`[pipulse] ${message}`)
+  });
+}
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
 // minute, re-reading saved retention each run; compacts the file after big deletes.
 const housekeeping = startHousekeeping(db, {
@@ -230,6 +362,7 @@ const scheduler = startScheduler(db, RUN_PLUGINS, {
 engine.alerts = startAlerts(db, {
   rules: rulesInForce,
   metrics: RUN_METRICS,
+  onCheck: () => health.markAlertCheck(),
   onChange: (event) => {
     alertFeed.publish(event);
     notifications.enqueue(event);
@@ -246,11 +379,25 @@ app
   .listen({ port: PORT, host: HOST })
   .then(() => {
     const { port } = app.server.address() as AddressInfo;
+    const where = CERT
+      ? `https://${HOST}:${port} (certificate: ${CERT.source}, valid until ${new Date(CERT.notAfter).toISOString().slice(0, 10)}, SHA-256 ${CERT.fingerprint})`
+      : `http://${HOST}:${port} (HTTPS off: ${
+          TLS.modeReason === 'env'
+            ? 'PIPULSE_TLS=off'
+            : TLS.modeReason === 'state'
+              ? 'state.json legacy-http'
+              : 'release default'
+        })`;
     console.log(
-      `[pipulse] ${VERSION} (Node ${NODE.version}) listening on http://${HOST}:${port}` +
+      `[pipulse] ${VERSION} (Node ${NODE.version}) listening on ${where}` +
         (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +
         (PROTECT_READS ? ' (reads need sign-in)' : '')
     );
+    if (!CERT && PASSWORD_HASH) {
+      console.warn(
+        '[pipulse] warning: sign-in is on but HTTPS is off; the password and the session cookie cross the network unencrypted'
+      );
+    }
     if (NODE.ended)
       console.warn(
         `[pipulse] Node ${NODE.line} no longer gets security fixes (since ${NODE.supportEnds})`
@@ -271,6 +418,7 @@ async function shutdown(): Promise<void> {
     process.exit(1);
   }
   shuttingDown = true;
+  tls.provider?.stop();
   housekeeping.stop();
   engine.alerts?.stop();
   const [, drained] = await Promise.all([

@@ -64,6 +64,8 @@ export function startAlerts(
     now?: () => number;
     onChange?: (event: AlertEvent) => void;
     onError?: (error: unknown, rule?: Rule) => void;
+    /** After every check that read its rules and open alerts (the health check's freshness). */
+    onCheck?: () => void;
   }
 ): { check(): void; stop(): void } {
   const now = options.now ?? Date.now;
@@ -143,6 +145,7 @@ export function startAlerts(
           }
         }
       }
+      options.onCheck?.();
     } catch (error) {
       options.onError?.(error);
     }

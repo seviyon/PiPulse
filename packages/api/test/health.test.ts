@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
-import { createHealth, READING_STALE_MS } from '../src/health.js';
+import { ALERT_CHECK_STALE_MS, createHealth, READING_STALE_MS } from '../src/health.js';
 import { buildServer } from '../src/index.js';
 import { hashPassword, parsePasswordHash, type PasswordHash } from '../src/auth.js';
 
@@ -65,19 +65,40 @@ describe('createHealth', () => {
 });
 
 describe('GET /api/health', () => {
-  it('answers 200 when healthy and 503 naming the problem when not', async () => {
+  it('reports monitoring and transport, 503 naming the problem when monitoring fails', async () => {
     const health = createHealth(db, { monotonic: () => mono, trackReadings: true });
     const app = buildServer(db, { health });
-    expect((await app.inject('/api/health')).json()).toEqual({
-      status: 'unhealthy',
+    let res = await app.inject('/api/health');
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({
+      status: 'failing',
+      monitoring: 'failing',
+      transport: 'http',
       problems: ['no readings yet']
     });
     health.markReading();
-    expect((await app.inject('/api/health')).json()).toEqual({ status: 'ok' });
+    expect((await app.inject('/api/health')).json()).toEqual({
+      status: 'ok',
+      monitoring: 'ok',
+      transport: 'http'
+    });
     mono += READING_STALE_MS;
-    const res = await app.inject('/api/health');
+    res = await app.inject('/api/health');
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toEqual({ status: 'unhealthy', problems: ['no readings for 5 min'] });
+    expect(res.json()).toMatchObject({ status: 'failing', problems: ['no readings for 5 min'] });
+    await app.close();
+  });
+
+  it('is degraded, not failing, over HTTP with sign-in configured', async () => {
+    const app = buildServer(db, { auth: { passwordHash } });
+    const res = await app.inject('/api/health');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      status: 'degraded',
+      monitoring: 'ok',
+      transport: 'http',
+      reasons: ['http-with-sign-in']
+    });
     await app.close();
   });
 
@@ -86,5 +107,24 @@ describe('GET /api/health', () => {
     expect((await app.inject('/api/config')).statusCode).toBe(401);
     expect((await app.inject('/api/health')).statusCode).toBe(200);
     await app.close();
+  });
+
+  it('leaves the bare /health liveness route as it was', async () => {
+    const app = buildServer(db);
+    expect((await app.inject('/health')).json()).toEqual({ status: 'ok' });
+    await app.close();
+  });
+});
+
+describe('createHealth alert checks', () => {
+  it('fails once no alert check has finished for 2 minutes', () => {
+    const health = createHealth(db, { monotonic: () => mono, trackAlertChecks: true });
+    expect(health.check().ok).toBe(true);
+    mono += ALERT_CHECK_STALE_MS - 1;
+    health.markAlertCheck();
+    mono += ALERT_CHECK_STALE_MS - 1;
+    expect(health.check().ok).toBe(true);
+    mono += 1;
+    expect(health.check()).toEqual({ ok: false, problems: ['alert checks stopped'] });
   });
 });

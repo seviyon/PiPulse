@@ -17,6 +17,7 @@
     "@pipulse/collector": "*",
     "@pipulse/notify": "*",
     "@pipulse/storage": "*",
+    "@pipulse/tls": "*",
     "fastify": "^5.12.5"
   },
   "devDependencies": {

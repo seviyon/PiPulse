@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { insertSample, openDb, type PiPulseDb } from '@pipulse/storage';
 import {
   acknowledgeAlert,
@@ -311,5 +311,30 @@ describe('startAlerts with a rule source', () => {
     broken = false;
     engine.check();
     expect(openAlerts(db)).toHaveLength(1);
+  });
+});
+
+describe('startAlerts onCheck', () => {
+  it('calls onCheck after each check that read its rules, not when reading them fails', () => {
+    const onCheck = vi.fn();
+    let broken = false;
+    const engine = startAlerts(db, {
+      rules: () => {
+        if (broken) throw new Error('settings unreadable');
+        return [];
+      },
+      metrics: [],
+      intervalMs: 1e9,
+      onCheck,
+      onError: () => {}
+    });
+    expect(onCheck).toHaveBeenCalledTimes(1);
+    broken = true;
+    engine.check();
+    expect(onCheck).toHaveBeenCalledTimes(1);
+    broken = false;
+    engine.check();
+    expect(onCheck).toHaveBeenCalledTimes(2);
+    engine.stop();
   });
 });

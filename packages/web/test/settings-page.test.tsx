@@ -131,7 +131,13 @@ describe('SettingsPage', () => {
     render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
     await settle();
     const headings = [...root.querySelectorAll('h2')].map((h) => h.textContent);
-    expect(headings).toEqual(['Data retention', 'Storage', 'Notifications', 'About']);
+    expect(headings).toEqual([
+      'Data retention',
+      'Storage',
+      'Certificate',
+      'Notifications',
+      'About'
+    ]);
     await vi.waitFor(() =>
       expect(root.textContent).toContain('No webhooks configured — set PIPULSE_NOTIFY_FILE.')
     );

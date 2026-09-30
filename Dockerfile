@@ -14,7 +14,6 @@ FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35
 RUN groupadd --system pipulse && useradd --system --gid pipulse --home /data --shell /usr/sbin/nologin pipulse \
  && mkdir /data && chown pipulse:pipulse /data
 COPY --from=build /app /opt/pipulse/app
-COPY packaging/healthcheck.mjs /opt/pipulse/healthcheck.mjs
 ENV PIPULSE_DB_PATH=/data/pipulse.sqlite \
     PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist \
     PIPULSE_HOST_ROOT=/host \
@@ -24,5 +23,5 @@ USER pipulse
 VOLUME /data
 EXPOSE 8889
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
-  CMD ["node", "/opt/pipulse/healthcheck.mjs"]
+  CMD node /opt/pipulse/app/packages/tls/dist/health-check.js || exit 1
 CMD ["node", "/opt/pipulse/app/packages/api/dist/server.js"]

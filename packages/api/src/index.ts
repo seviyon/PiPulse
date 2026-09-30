@@ -18,11 +18,13 @@ import type { WebhookStatus } from '@pipulse/notify';
 import { registerAlertRoutes, type AlertRulesOptions, type Notice } from './alert-routes.js';
 import { registerAuth, type AuthOptions } from './auth-routes.js';
 import { createHealth, type Health } from './health.js';
+import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
+export { healthBody, tlsView, type TlsView } from './tls-status.js';
 export type { AuthOptions } from './auth-routes.js';
 export type { AlertRulesOptions } from './alert-routes.js';
 export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
@@ -122,6 +124,16 @@ export interface ServerOptions {
   node?: NodeSupport;
   /** Liveness at /api/health (public); default checks only the database. */
   health?: Health;
+  /** Serve HTTPS with this key and certificate chain; omitted = plain HTTP. */
+  https?: { key: string; cert: string };
+  /**
+   * HSTS max-age in seconds (PIPULSE_TLS_HSTS), sent on HTTPS responses only.
+   * Off by default: HSTS ignores the port, so it would force every service on
+   * this host name to HTTPS in the browser (Pi-hole on :80, RPi-Monitor on :8888).
+   */
+  hstsSeconds?: number;
+  /** HTTPS state for /api/config and /api/health; omitted = plain HTTP. */
+  tls?: () => TlsView;
   /** Webhook delivery status, served read-only at /api/notify. */
   notify?: { status(): WebhookStatus[] };
 }
@@ -169,7 +181,18 @@ const alertsQuerySchema = {
  * routes with Fastify's `inject()`/`injectWS()`, no open port required.
  */
 export function buildServer(db: PiPulseDb, options: ServerOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: false });
+  // Typed as the HTTP instance: routes and inject() are identical, and
+  // server.ts reaches the https.Server (setSecureContext) through app.server.
+  const app = (options.https
+    ? Fastify({ logger: false, https: { ...options.https, minVersion: 'TLSv1.2' } })
+    : Fastify({ logger: false })) as unknown as FastifyInstance;
+  if (options.https && options.hstsSeconds !== undefined) {
+    const hsts = `max-age=${options.hstsSeconds}`;
+    app.addHook('onSend', async (_request, reply, payload) => {
+      reply.header('strict-transport-security', hsts);
+      return payload;
+    });
+  }
   const allowedOrigins = options.allowedOrigins ?? [];
   const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const notices = createFeed<Notice>();
@@ -190,11 +213,10 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
   // however far the clock later jumps.
   const health = options.health ?? createHealth(db);
+  const readTls = options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default' }));
   app.get('/api/health', async (_request, reply) => {
-    const result = health.check();
-    return result.ok
-      ? { status: 'ok' }
-      : reply.status(503).send({ status: 'unhealthy', problems: result.problems });
+    const body = healthBody(health.check(), readTls(), options.auth?.passwordHash !== undefined);
+    return body.status === 'failing' ? reply.status(503).send(body) : body;
   });
 
   const node = options.node ?? nodeSupport();
@@ -205,7 +227,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     plugins,
     serverTime: Date.now(),
     uptimeMs: readUptimeMs(),
-    rules: options.alertRules ? options.alertRules.source.read().rules : (options.rules ?? [])
+    rules: options.alertRules ? options.alertRules.source.read().rules : (options.rules ?? []),
+    tls: readTls()
   }));
 
   app.get('/api/metrics/latest', async () => getLatest(db));

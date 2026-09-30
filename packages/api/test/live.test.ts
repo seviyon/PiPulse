@@ -98,7 +98,8 @@ describe('GET /api/config', () => {
       plugins: [{ id: 'cpu_load', label: 'CPU load', unit: '%', intervalMs: 5000 }],
       serverTime: expect.any(Number),
       uptimeMs: expect.any(Number),
-      rules: []
+      rules: [],
+      tls: { mode: 'http', reason: 'default' }
     });
   });
 

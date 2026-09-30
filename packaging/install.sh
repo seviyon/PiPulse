@@ -137,19 +137,53 @@ latest_version() {
   curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | sed 's|.*/v||'
 }
 
+# HEALTH_MSG keeps the shared check's last reason (its stderr) for the messages below.
+HEALTH_MSG=
 health_ok() {
+  HEALTH_MSG=
   url=${PIPULSE_HEALTH_URL:-}
-  if [ -z "$url" ]; then
-    port=$(env_value PIPULSE_PORT)
-    host=$(env_value PIPULSE_HOST)
-    case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
-    url="http://$host:${port:-8889}/api/health"
-  fi
+  check=/opt/pipulse/app/packages/tls/dist/health-check.js
   i=0
   while [ "$i" -lt "${PIPULSE_HEALTH_WAIT:-30}" ]; do
-    # PiPulse's own answer, not just any 200: another server on the port
-    # (RPi-Monitor answers every path) must not pass for a healthy PiPulse.
-    curl -fs --max-time 3 "$url" 2>/dev/null | grep -q '"status":"ok"' && return 0
+    if [ -z "$url" ] && [ -f "$check" ]; then
+      # The installed version's own check: HTTP or verified HTTPS, as the server resolves it.
+      # Only the settings it reads, each through env_value: pipulse.env is data here,
+      # never sourced as shell code.
+      rc=0
+      msg=$(env -i PATH="$PATH" \
+        PIPULSE_HOST="$(env_value PIPULSE_HOST)" \
+        PIPULSE_PORT="$(env_value PIPULSE_PORT)" \
+        PIPULSE_TLS="$(env_value PIPULSE_TLS)" \
+        PIPULSE_TLS_DIR="$(env_value PIPULSE_TLS_DIR)" \
+        PIPULSE_TLS_CERT="$(env_value PIPULSE_TLS_CERT)" \
+        PIPULSE_TLS_KEY="$(env_value PIPULSE_TLS_KEY)" \
+        PIPULSE_TLS_CA="$(env_value PIPULSE_TLS_CA)" \
+        PIPULSE_TLS_NAMES="$(env_value PIPULSE_TLS_NAMES)" \
+        /opt/pipulse/node/bin/node "$check" 2>&1 >/dev/null) || rc=$?
+      [ "$rc" -eq 0 ] && return 0
+      msg=${msg#'[pipulse] health check: '}
+      HEALTH_MSG=$msg
+      if [ "$rc" -eq 2 ]; then
+        # The previous version would serve the same certificate: rolling back can't fix it.
+        log "warning: PiPulse is running, but its HTTPS certificate failed verification; not rolling back"
+        [ -z "$msg" ] || log "reason: $msg"
+        log "see: Settings → Certificate, and journalctl -u pipulse"
+        return 0
+      fi
+    else
+      # A pre-6b version (no shared check) or an explicit PIPULSE_HEALTH_URL.
+      if [ -z "$url" ]; then
+        port=$(env_value PIPULSE_PORT)
+        host=$(env_value PIPULSE_HOST)
+        case ${host:-0.0.0.0} in 0.0.0.0 | '::' | '[::]') host=127.0.0.1 ;; esac
+        u="http://$host:${port:-8889}/api/health"
+      else
+        u=$url
+      fi
+      # PiPulse's own answer, not just any 200: another server on the port
+      # (RPi-Monitor answers every path) must not pass for a healthy PiPulse.
+      curl -fs --max-time 3 "$u" 2>/dev/null | grep -qE '"monitoring":"ok"|"status":"ok"' && return 0
+    fi
     i=$((i + 1)); sleep 1
   done
   return 1
@@ -257,8 +291,9 @@ install_tarball() { # install_tarball FILE NO_START
     log "running $(installed)"
     return 0
   fi
-  [ "$had_previous" = yes ] || die 'PiPulse did not become healthy; see: journalctl -u pipulse'
+  [ "$had_previous" = yes ] || die "PiPulse did not become healthy${HEALTH_MSG:+ ($HEALTH_MSG)}; see: journalctl -u pipulse"
   failed=$(installed)
+  reason=${HEALTH_MSG:+ ($HEALTH_MSG)}
   log "$failed did not become healthy: rolling back"
   stop_service
   restore_db
@@ -268,8 +303,8 @@ install_tarball() { # install_tarball FILE NO_START
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
   # The previous version's own setup puts its unit file back too.
   start_service no
-  if health_ok; then die "$failed did not become healthy; rolled back to $(installed), which is running"; fi
-  die "$failed did not become healthy; rolled back to $(installed), but that is not healthy either: see journalctl -u pipulse"
+  if health_ok; then die "$failed did not become healthy$reason; rolled back to $(installed), which is running"; fi
+  die "$failed did not become healthy$reason; rolled back to $(installed), but that is not healthy either: see journalctl -u pipulse"
 }
 
 # The tarball commands must not touch an install apt manages.

@@ -85,6 +85,8 @@ export interface Config {
   version?: string;
   /** The running Node and its end of security support; absent from older servers. */
   node?: NodeSupport;
+  /** HTTPS state; absent from older servers (plain HTTP). */
+  tls?: TlsView;
 }
 
 export interface NodeSupport {
@@ -130,3 +132,24 @@ export interface WebhookStatus {
   lastSuccessAt: number | null;
   lastFailure: { at: number; reason: string } | null;
 }
+
+/** /api/config `tls`; mirrors packages/api/src/tls-status.ts. */
+export type TlsView =
+  | { mode: 'http'; reason: 'env' | 'state' | 'default'; stateMode?: 'https' | 'legacy-http' }
+  | {
+      mode: 'https';
+      source: 'operator' | 'generated';
+      validity: 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
+      notBefore: number;
+      notAfter: number;
+      fingerprint: string;
+      caFingerprint?: string;
+      sans: { dns: string[]; ip: string[] };
+      class: 'valid' | 'degraded-incomplete-chain' | 'degraded-san' | 'degraded-untrusted';
+      reasons: string[];
+      missingNames: string[];
+      certificateAgeMs: number;
+      clock: 'synced' | 'unsynced' | 'unknown';
+      clockSynced: boolean;
+      reload: { state: 'ok' | 'failing'; lastAttempt: number | null; lastError: string | null };
+    };
