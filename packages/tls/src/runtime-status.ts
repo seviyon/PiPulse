@@ -23,6 +23,10 @@ export interface RuntimeStatus {
   /** /proc/<pid>/stat field 22 (start time in clock ticks since boot): tells a reused pid apart. */
   startTime: string;
   bootId: string;
+  /**
+   * When the file was last rewritten: at startup and after each reload attempt only, so it
+   * can be old while the server is healthy. Never a heartbeat or a liveness signal.
+   */
   writtenAt: number;
 }
 

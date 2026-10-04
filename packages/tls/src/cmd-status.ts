@@ -326,8 +326,12 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
     c.leaf &&
     report.active.status.certificate.fingerprint !== c.leaf.fingerprint
   ) {
+    // 'failing' means the replacement was refused (the reload line above says why); it is
+    // retried only every RETRY_MS while its files stay the same, so no "two minutes" promise.
     lines.push(
-      '  (a newer certificate is on disk; the server picks it up within about two minutes)'
+      report.active.status.certificate.reload.state === 'ok'
+        ? '  (a newer certificate is on disk; the server picks it up within about two minutes)'
+        : '  (a newer certificate is on disk but was not applied: see the reload line above; it is retried every 10 minutes while the files stay the same)'
     );
   }
   lines.push('Last renewal', `  ${report.renewal ? renewalLine(report.renewal) : 'none recorded'}`);

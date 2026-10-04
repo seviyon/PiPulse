@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cli, ignoreClosedPipe, lockFor, main } from '../src/cli.js';
+import { collectStatus, formatStatus } from '../src/cmd-status.js';
 import { buildConstraints } from '../src/constraints.js';
 import { runTransaction } from '../src/journal.js';
 import { paths, pub, writeState } from '../src/layout.js';
@@ -124,6 +125,44 @@ describe('cli entry', () => {
 });
 
 describe('status', () => {
+  describe('a newer certificate on disk than the one served', () => {
+    const served = (reload: { state: 'ok' | 'failing'; lastError: string | null }) => {
+      const report = collectStatus(ctx);
+      report.active = {
+        state: 'running',
+        status: {
+          version: 1,
+          transport: 'https',
+          certificate: {
+            source: 'generated',
+            fingerprint: 'AA:BB',
+            class: 'valid',
+            notAfter: ctx.now() + 1e9,
+            reload: { ...reload, lastAttempt: ctx.now() }
+          },
+          pid: 1,
+          startTime: '1',
+          bootId: 'b',
+          writtenAt: ctx.now()
+        }
+      };
+      return formatStatus(report, ctx).join('\n');
+    };
+    it('promises pickup within two minutes only while the reload is ok', async () => {
+      await makeCa();
+      expect(served({ state: 'ok', lastError: null })).toContain(
+        'the server picks it up within about two minutes'
+      );
+    });
+    it('says it was not applied, and why to look above, when the reload is failing', async () => {
+      await makeCa();
+      const text = served({ state: 'failing', lastError: 'the replacement is expired' });
+      expect(text).toContain('reload: failing: the replacement is expired');
+      expect(text).toContain('was not applied');
+      expect(text).toContain('retried every 10 minutes');
+      expect(text).not.toContain('within about two minutes');
+    });
+  });
   it('shows the running server from the status file, and "not running" without one', async () => {
     ctx.env['PIPULSE_RUNTIME_DIR'] = join(dir, 'run');
     await main(['status'], ctx);
