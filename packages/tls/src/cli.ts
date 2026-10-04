@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli-common.js';
 import { readClock } from './clock.js';
 import { exportCa } from './cmd-export.js';
+import { init } from './cmd-init.js';
+import { renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
 import { DEFAULT_TIMESYNC_DIR, DEFAULT_TLS_DIR } from './config.js';
 import { candidateSubnet, defaultRouteAddresses, defaultRouteInterfaces } from './constraints.js';
@@ -60,7 +62,11 @@ async function dispatch(
       return await status(ctx, args);
     case 'export-ca':
       return exportCa(ctx, args);
-    // Tasks 8–10 and 24 add: init, renew, new-ca, restore-ca, enable, disable, sidecar-init, sidecar, sidecar-health.
+    case 'init':
+      return await init(ctx, args);
+    case 'renew':
+      return await renew(ctx, args);
+    // Tasks 9, 10 and 24 add: new-ca, restore-ca, enable, disable, sidecar-init, sidecar, sidecar-health.
     default:
       throw new UsageError(
         command === undefined ? 'no command given' : `unknown command: ${command}`

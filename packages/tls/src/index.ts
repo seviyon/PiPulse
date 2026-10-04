@@ -16,3 +16,5 @@ export * from './proc.js';
 export * from './lock.js';
 export * from './cli-common.js';
 export { collectStatus, formatStatus, type StatusReport } from './cmd-status.js';
+export * from './clock-gate.js';
+export { renewDue, RENEW_BEFORE_MS } from './cmd-renew.js';

@@ -1,0 +1,260 @@
+import { X509Certificate } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { main } from '../src/cli.js';
+import { CLOCK_FLOOR_MS } from '../src/clock.js';
+import { paths, readMeta, readRenewStatus } from '../src/layout.js';
+import { NOW, testContext, type TestContext } from './cli-context.js';
+import { tempDir } from './helpers.js';
+
+const DAY = 86_400_000;
+let dir: string;
+let ctx: TestContext;
+beforeEach(() => {
+  dir = tempDir();
+  ctx = testContext(dir);
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const leafCert = () => new X509Certificate(readFileSync(paths(ctx.layout).leafCrt));
+const mode = (path: string) => statSync(path).mode & 0o7777;
+
+describe('init', () => {
+  it('makes a names-only CA and a leaf with the spec’s modes, and prints the fingerprint', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    const p = paths(ctx.layout);
+    expect(mode(p.caKey)).toBe(0o600);
+    expect(mode(p.caDir)).toBe(0o700);
+    expect(mode(p.bundle)).toBe(0o640);
+    expect(mode(p.publicCa)).toBe(0o644);
+    expect(mode(dir)).toBe(0o2750);
+    expect(existsSync(p.state)).toBe(false);
+    const meta = readMeta(ctx.layout)!;
+    expect(meta.constraints.subnets).toEqual([]);
+    expect(ctx.lines).toContain(`CA SHA-256 fingerprint: ${meta.fingerprint}`);
+    expect(ctx.lines.join('\n')).toContain('IP access (https://<address>:8889) is not covered');
+    expect(leafCert().subjectAltName).not.toContain('192.168.1.35');
+  });
+
+  it('is idempotent: a second run keeps the CA and says there is nothing to do', async () => {
+    await main(['init'], ctx);
+    const first = readMeta(ctx.layout)!.fingerprint;
+    const leaf = leafCert().fingerprint256;
+    const again = testContext(dir);
+    expect(await main(['init'], again)).toBe(0);
+    expect(readMeta(ctx.layout)!.fingerprint).toBe(first);
+    expect(leafCert().fingerprint256).toBe(leaf);
+    expect(again.lines.join('\n')).toContain('nothing to do');
+  });
+
+  it('never regenerates a partial CA', async () => {
+    await main(['init'], ctx);
+    unlinkSync(paths(ctx.layout).caKey);
+    const again = testContext(dir);
+    expect(await main(['init'], again)).toBe(1);
+    expect(again.errors.join('\n')).toMatch(/incomplete[\s\S]*restore-ca/);
+    expect(existsSync(paths(ctx.layout).caCert)).toBe(true);
+  });
+
+  it('asks before accepting a subnet: --yes or a terminal', async () => {
+    expect(await main(['init', '--subnet', '192.168.1.0/24'], ctx)).toBe(2);
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+    const asked: string[] = [];
+    const tty = testContext(dir, { tty: true, ask: async (q) => (asked.push(q), false) });
+    expect(await main(['init', '--subnet', '192.168.1.0/24'], tty)).toBe(1);
+    expect(tty.lines.join('\n')).toContain('Accepting 192.168.1.0/24 allows this CA');
+    expect(asked).toEqual(['Create this CA?']);
+    expect(await main(['init', '--subnet', '192.168.1.0/24', '--yes'], testContext(dir))).toBe(0);
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+    expect(leafCert().subjectAltName).toContain('192.168.1.35');
+  });
+
+  it('refuses a bad subnet without creating anything', async () => {
+    expect(await main(['init', '--subnet', '10.0.0.0/8', '--yes'], ctx)).toBe(1);
+    expect(ctx.errors.join('\n')).toContain('broader than /16');
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('does nothing when an operator certificate is configured', async () => {
+    ctx.env['PIPULSE_TLS_CERT'] = '/x/cert.pem';
+    ctx.env['PIPULSE_TLS_KEY'] = '/x/key.pem';
+    expect(await main(['init'], ctx)).toBe(0);
+    expect(ctx.lines).toContain(
+      'operator certificate in use (PIPULSE_TLS_CERT/PIPULSE_TLS_KEY); managed CA not created'
+    );
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('waits for an unsynced clock, then refuses without issuing', async () => {
+    const early = testContext(dir, { clock: () => ({ state: 'unsynced', synced: false }) });
+    expect(await main(['init'], early)).toBe(1);
+    expect(early.errors.join('\n')).toContain('the clock is not synchronized yet');
+    expect(early.now() - NOW).toBeGreaterThanOrEqual(60_000);
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('issues with an unknown clock past the floor, with a warning (chrony hosts, containers)', async () => {
+    const chrony = testContext(dir, { clock: () => ({ state: 'unknown', synced: false }) });
+    expect(NOW).toBeGreaterThan(CLOCK_FLOOR_MS);
+    expect(await main(['init'], chrony)).toBe(0);
+    expect(chrony.errors.join('\n')).toContain('PIPULSE_TLS_CLOCK=trust');
+  });
+
+  it('replaces a leaf that does not verify', async () => {
+    await main(['init'], ctx);
+    const before = leafCert().fingerprint256;
+    writeFileSync(paths(ctx.layout).bundle, 'garbage', { mode: 0o640 });
+    const again = testContext(dir);
+    expect(await main(['init'], again)).toBe(0);
+    expect(leafCert().fingerprint256).not.toBe(before);
+  });
+});
+
+describe('renew', () => {
+  const status = () => readRenewStatus(paths(ctx.layout).renewStatus);
+
+  it('without a CA says how to make one and records nothing', async () => {
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(ctx.lines.join('\n')).toContain('sudo pipulse tls init');
+    expect(status()).toBeUndefined();
+  });
+
+  it('is not due on a fresh leaf, and records that', async () => {
+    await main(['init'], ctx);
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(status()?.result).toBe('not-due');
+  });
+
+  it('waits for the clock and records waiting-clock, even with --force', async () => {
+    await main(['init'], ctx);
+    const before = leafCert().fingerprint256;
+    const unsynced = testContext(dir, { clock: () => ({ state: 'unsynced', synced: false }) });
+    expect(await main(['renew', '--force'], unsynced)).toBe(0);
+    expect(status()?.result).toBe('waiting-clock');
+    expect(leafCert().fingerprint256).toBe(before);
+  });
+
+  it('renews 30 days before expiry', async () => {
+    await main(['init'], ctx);
+    const notAfter = leafCert().validToDate.getTime();
+    const later = testContext(dir);
+    later.setNow(notAfter - 30 * DAY);
+    expect(await main(['renew'], later)).toBe(0);
+    expect(status()?.result).toBe('renewed');
+    expect(leafCert().validToDate.getTime()).toBeGreaterThan(notAfter);
+  });
+
+  it('renews early for a new default-route address the CA covers, never for one it does not', async () => {
+    await main(['init', '--subnet', '192.168.1.0/24', '--yes'], ctx);
+    const moved = testContext(dir, { addresses: () => ['192.168.1.36'] });
+    expect(await main(['renew'], moved)).toBe(0);
+    expect(status()?.reason).toContain('192.168.1.36');
+    expect(leafCert().subjectAltName).toContain('192.168.1.36');
+    const away = testContext(dir, { addresses: () => ['10.0.0.7'] });
+    expect(await main(['renew'], away)).toBe(0);
+    expect(status()?.result).toBe('not-due');
+  });
+
+  it('a failed renewal is recorded and keeps the old leaf', async () => {
+    await main(['init'], ctx);
+    const before = leafCert().fingerprint256;
+    const broken = testContext(dir, { openssl: join(dir, 'no-such-openssl') });
+    expect(await main(['renew', '--force'], broken)).toBe(1);
+    expect(status()?.result).toBe('failed');
+    expect(leafCert().fingerprint256).toBe(before);
+  });
+
+  it('never renews an operator certificate', async () => {
+    ctx.env['PIPULSE_TLS_CERT'] = '/x/cert.pem';
+    ctx.env['PIPULSE_TLS_KEY'] = '/x/key.pem';
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(status()).toMatchObject({ result: 'not-due', reason: 'operator certificate' });
+  });
+});
+
+describe('a missing or wrong openssl', () => {
+  it('init says so by name and makes nothing', async () => {
+    const run = testContext(dir, { openssl: '/nonexistent/openssl' });
+    expect(await main(['init'], run)).toBe(1);
+    expect(run.errors.join('\n')).toMatch(/openssl not found: sudo apt install openssl/);
+    expect(existsSync(paths(run.layout).caDir)).toBe(false);
+  });
+  it('renew records the failure by name and keeps the certificate', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    const before = readFileSync(paths(ctx.layout).bundle, 'utf8');
+    const broken = testContext(dir, { openssl: '/nonexistent/openssl' });
+    expect(await main(['renew', '--force'], broken)).toBe(1);
+    expect(readRenewStatus(paths(ctx.layout).renewStatus)).toMatchObject({
+      result: 'failed',
+      reason: expect.stringContaining('openssl not found')
+    });
+    expect(readFileSync(paths(ctx.layout).bundle, 'utf8')).toBe(before);
+  });
+});
+
+describe('the TLS folder on a native install (ruling R15)', () => {
+  // The temp folder stands in for a non-default PIPULSE_TLS_DIR: the default is /etc/pipulse/tls.
+  // A second temp folder plays the default one (/etc/pipulse/tls).
+  const native = (overrides = {}) => {
+    mkdirSync(join(dir, 'default'), { recursive: true });
+    return testContext(dir, { defaultTlsDir: join(dir, 'default'), ...overrides });
+  };
+
+  // new-ca, restore-ca and enable arrive in Tasks 9 and 10: add them to this list there.
+  it('refuses init, naming the setting and the reason', async () => {
+    for (const command of [['init']]) {
+      const run = native();
+      expect(await main(command, run)).toBe(1);
+      expect(run.errors.join('\n')).toMatch(
+        /PIPULSE_TLS_DIR=.*the one folder the renewal service may write/
+      );
+    }
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('renew records the refusal in the default folder, and exits non-zero even when it can’t', async () => {
+    const renewal = native();
+    expect(await main(['renew'], renewal)).toBe(1);
+    expect(readRenewStatus(join(dir, 'default', 'renew-status.json'))).toMatchObject({
+      result: 'failed',
+      reason: expect.stringContaining('PIPULSE_TLS_DIR')
+    });
+    expect(readRenewStatus(paths(ctx.layout).renewStatus)).toBeUndefined();
+    const nowhere = testContext(dir, { defaultTlsDir: join(dir, 'no-such-folder') });
+    expect(await main(['renew'], nowhere)).toBe(1);
+    expect(nowhere.errors.join('\n')).toMatch(
+      /could not record the failure[\s\S]*renewal failed: PIPULSE_TLS_DIR=/
+    );
+  });
+
+  it('refuses a separate CA folder natively', async () => {
+    const run = native({ defaultTlsDir: dir });
+    run.layout = { ...run.layout, caRoot: join(dir, 'elsewhere') };
+    expect(await main(['init'], run)).toBe(1);
+    expect(run.errors.join('\n')).toContain('PIPULSE_TLS_CA_DIR');
+  });
+
+  it('allows any folder in a container, and never cares with an operator certificate', async () => {
+    expect(await main(['init'], native({ inContainer: true }))).toBe(0);
+    const operator = native();
+    operator.env['PIPULSE_TLS_CERT'] = '/x/cert.pem';
+    operator.env['PIPULSE_TLS_KEY'] = '/x/key.pem';
+    expect(await main(['renew'], operator)).toBe(0);
+    expect(await main(['init'], operator)).toBe(0);
+  });
+
+  it('status names the problem', async () => {
+    const run = native();
+    await main(['status'], run);
+    expect(run.lines.join('\n')).toMatch(/problem: PIPULSE_TLS_DIR=/);
+  });
+});
