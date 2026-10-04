@@ -1,5 +1,14 @@
 import { X509Certificate } from 'node:crypto';
-import { chownSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fchownSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { paths } from './layout.js';
@@ -35,18 +44,32 @@ export function exportCa(ctx: Context, args: string[]): number {
   }
   const fingerprint = new X509Certificate(pem).fingerprint256;
   if (values.out) {
+    // The file is made O_EXCL|O_NOFOLLOW and everything else goes through its descriptor:
+    // the CLI runs under umask 077, so the mode must be set explicitly (the CA certificate
+    // is public and meant to be copied to other devices), and a chown by path could follow
+    // a symlink swapped in meanwhile.
+    let fd: number | undefined;
     try {
-      writeFileSync(values.out, pem, { mode: 0o644, flag: 'wx' });
+      fd = openSync(
+        values.out,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o644
+      );
+      fchmodSync(fd, 0o644);
+      // Written as root through sudo: hand the file to the user who asked for it.
+      const uid = Number(ctx.env['SUDO_UID']);
+      const gid = Number(ctx.env['SUDO_GID']);
+      if (Number.isInteger(uid) && Number.isInteger(gid) && uid > 0) fchownSync(fd, uid, gid);
+      writeFileSync(fd, pem);
     } catch (error) {
+      if (fd !== undefined) rmSync(values.out, { force: true });
       ctx.err(
         `can't write ${values.out}: ${(error as NodeJS.ErrnoException).code === 'EEXIST' ? 'it already exists' : (error as Error).message}`
       );
       return 1;
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
-    // Written as root through sudo: hand the file to the user who asked for it.
-    const uid = Number(ctx.env['SUDO_UID']);
-    const gid = Number(ctx.env['SUDO_GID']);
-    if (Number.isInteger(uid) && Number.isInteger(gid) && uid > 0) chownSync(values.out, uid, gid);
     ctx.err(`wrote ${values.out}`);
   } else {
     ctx.out(pem.trimEnd());

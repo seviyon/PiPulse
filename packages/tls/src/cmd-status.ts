@@ -48,6 +48,8 @@ export interface StatusReport {
     problem: string | null;
     source: 'generated' | 'operator';
     ca: CaMeta | null;
+    /** SHA-256 of the bytes of the public ca.crt (what export-ca fingerprints), null if unreadable. */
+    caCertFingerprint: string | null;
     caProblem: string | null;
     leaf: LeafInfo | null;
     leafProblem: string | null;
@@ -142,6 +144,15 @@ export function collectStatus(ctx: Context): StatusReport {
   } catch (error) {
     caProblem = messageOf(error);
   }
+  let caCertFingerprint: string | null = null;
+  if (source === 'generated') {
+    try {
+      caCertFingerprint = new X509Certificate(readFileSync(paths(ctx.layout).publicCa))
+        .fingerprint256;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') caProblem ??= messageOf(error);
+    }
+  }
   const { leaf, leafProblem } = leafInfo(ctx, source, now);
   let journal: 'none' | 'pending' = 'none';
   try {
@@ -165,6 +176,7 @@ export function collectStatus(ctx: Context): StatusReport {
       problem,
       source,
       ca,
+      caCertFingerprint,
       caProblem,
       leaf,
       leafProblem,
@@ -237,7 +249,17 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   if (folderProblem) lines.push(`             problem: ${folderProblem}`);
   if (c.source === 'generated') {
     if (c.ca) {
-      lines.push(`  CA:        SHA-256 ${c.ca.fingerprint}`);
+      // The fingerprint operators compare out of band is the one of ca.crt's own bytes,
+      // the same value export-ca prints; ca-meta.json is only a description.
+      lines.push(
+        c.caCertFingerprint
+          ? `  CA:        SHA-256 ${c.caCertFingerprint}`
+          : `  CA:        SHA-256 ${c.ca.fingerprint} (from ca-meta.json: ca.crt can't be read)`
+      );
+      if (c.caCertFingerprint && c.caCertFingerprint !== c.ca.fingerprint)
+        lines.push(
+          `             problem: ca-meta.json describes a different CA (SHA-256 ${c.ca.fingerprint}) than ca.crt`
+        );
       lines.push(
         `             ${c.ca.subject}, made ${isoDate(c.ca.createdAt)}, valid until ${isoDate(c.ca.notAfter)}`
       );
@@ -252,6 +274,8 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   }
   if (c.leaf) {
     lines.push(`  Certificate: SHA-256 ${c.leaf.fingerprint}`);
+    if (c.source === 'generated')
+      lines.push('             read from leaf.crt; the served bundle is leaf.pem and may differ');
     lines.push(
       `             ${validityLine(c.leaf, ctx.now())}${c.leaf.verifies === false ? '; does NOT verify against ca.crt' : ''}`
     );

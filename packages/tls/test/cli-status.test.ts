@@ -1,8 +1,8 @@
 import { X509Certificate } from 'node:crypto';
-import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { main } from '../src/cli.js';
+import { cli, lockFor, main } from '../src/cli.js';
 import { buildConstraints } from '../src/constraints.js';
 import { runTransaction } from '../src/journal.js';
 import { paths, pub, writeState } from '../src/layout.js';
@@ -46,6 +46,66 @@ describe('main', () => {
   });
 });
 
+describe('lockFor', () => {
+  it('knows only real commands: prototype keys are not commands', () => {
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf'])
+      expect(lockFor(name, ctx)).toBeUndefined();
+    expect(lockFor(undefined, ctx)).toBeUndefined();
+    expect(lockFor('status', ctx)).toBeUndefined();
+    expect(lockFor('init', ctx)).toEqual({ create: true });
+    expect(lockFor('renew', ctx)).toEqual({ create: false });
+  });
+  it('locks enable and disable even with an operator certificate; the CA commands then need none', () => {
+    const operator = testContext(dir, {
+      env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_CERT: '/c.pem', PIPULSE_TLS_KEY: '/k.pem' }
+    });
+    expect(lockFor('enable', operator)).toEqual({ create: false });
+    expect(lockFor('disable', operator)).toEqual({ create: false });
+    expect(lockFor('init', operator)).toBeUndefined();
+    expect(lockFor('renew', operator)).toBeUndefined();
+  });
+  it('a command like "constructor" never creates the TLS folder', async () => {
+    const missing = join(dir, 'tls');
+    const c = testContext(dir, {
+      layout: { ...ctx.layout, tlsDir: missing, caRoot: missing },
+      defaultTlsDir: missing
+    });
+    expect(await main(['constructor'], c)).toBe(2);
+    expect(await main(['toString'], c)).toBe(2);
+    expect(() => statSync(missing)).toThrow(/ENOENT/);
+  });
+});
+
+describe('cli entry', () => {
+  it('prints help without building a context, and a settings failure as one line', async () => {
+    const boom = () => {
+      throw new Error("can't read /etc/pipulse/pipulse.env (EIO): fix it");
+    };
+    const errors: string[] = [];
+    const out: string[] = [];
+    expect(
+      await cli(
+        ['help'],
+        boom,
+        (l) => errors.push(l),
+        (l) => out.push(l)
+      )
+    ).toBe(0);
+    expect(
+      await cli(
+        ['--help'],
+        boom,
+        (l) => errors.push(l),
+        (l) => out.push(l)
+      )
+    ).toBe(0);
+    expect(errors).toEqual([]);
+    expect(out).toHaveLength(2);
+    expect(await cli(['status'], boom, (l) => errors.push(l))).toBe(1);
+    expect(errors).toEqual(["pipulse tls: can't read /etc/pipulse/pipulse.env (EIO): fix it"]);
+  });
+});
+
 describe('status', () => {
   it('describes an install with nothing generated yet', async () => {
     expect(await main(['status'], ctx)).toBe(0);
@@ -69,6 +129,19 @@ describe('status', () => {
     expect(text).toContain('How to change scope: sudo pipulse tls new-ca --subnet 192.168.1.0/24');
     expect(text).toMatch(/names: io, io\.local, localhost, 127\.0\.0\.1, ::1/);
     expect(text).toMatch(/valid \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d \(89 days left\)/);
+  });
+
+  it('prints the fingerprint of ca.crt’s own bytes, and flags ca-meta.json describing another CA', async () => {
+    await makeCa();
+    const meta = JSON.parse(readFileSync(paths(ctx.layout).meta, 'utf8'));
+    const real = new X509Certificate(readFileSync(paths(ctx.layout).publicCa)).fingerprint256;
+    const wrong = real.replace(/^../, real.startsWith('AA') ? 'BB' : 'AA');
+    writeFileSync(paths(ctx.layout).meta, JSON.stringify({ ...meta, fingerprint: wrong }));
+    await main(['status'], ctx);
+    const text = ctx.lines.join('\n');
+    expect(text).toContain(`CA:        SHA-256 ${real}`);
+    expect(text).toContain(`ca-meta.json describes a different CA (SHA-256 ${wrong}) than ca.crt`);
+    expect(text).toContain('the served bundle is leaf.pem and may differ');
   });
 
   it('says when PIPULSE_TLS overrides state.json', async () => {
@@ -122,6 +195,22 @@ describe('export-ca', () => {
     expect(await main(['export-ca', '--out', out], ctx)).toBe(0);
     expect(statSync(out).mode & 0o777).toBe(0o644);
     expect(await main(['export-ca', '--out', out], ctx)).toBe(1);
+  });
+  it('--out is 0644 even under the CLI umask 077, and never follows a symlink', async () => {
+    await makeCa();
+    const out = join(dir, 'under-umask.crt');
+    const old = process.umask(0o077);
+    try {
+      expect(await main(['export-ca', '--out', out], ctx)).toBe(0);
+      const target = join(dir, 'victim');
+      writeFileSync(target, 'keep');
+      symlinkSync(target, join(dir, 'link.crt'));
+      expect(await main(['export-ca', '--out', join(dir, 'link.crt')], ctx)).toBe(1);
+      expect(readFileSync(target, 'utf8')).toBe('keep');
+    } finally {
+      process.umask(old);
+    }
+    expect(statSync(out).mode & 0o777).toBe(0o644);
   });
   it('explains that there is no CA yet', async () => {
     expect(await main(['export-ca'], ctx)).toBe(1);

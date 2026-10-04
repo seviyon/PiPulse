@@ -41,7 +41,7 @@ const ROOT_ONLY = new Set([
  * Commands that change material or mode take the one interprocess lock before
  * anything else (recover() included); `true` = may create the CA folder for it.
  */
-const LOCKED: Record<string, boolean> = {
+const LOCKED: Readonly<Record<string, boolean>> = {
   init: true,
   'new-ca': true,
   'restore-ca': true,
@@ -136,6 +136,24 @@ export function defaultContext(): Context {
   };
 }
 
+/**
+ * Whether `command` runs under the interprocess lock. Own keys only: "constructor" or
+ * "toString" are not commands. A refused native layout or an operator certificate never
+ * writes generated material, so init/renew/new-ca/restore-ca need no lock then (and the
+ * renew unit couldn't take one there); enable and disable always lock, since both write
+ * state.json and must not race with setup or the sidecar.
+ */
+export function lockFor(
+  command: string | undefined,
+  ctx: Context
+): { create: boolean } | undefined {
+  if (command === undefined || !Object.hasOwn(LOCKED, command)) return undefined;
+  const modeSwitch = command === 'enable' || command === 'disable';
+  if (!modeSwitch && (operatorConfigured(ctx.env) || nativeLayoutProblem(ctx) !== undefined))
+    return undefined;
+  return { create: LOCKED[command] === true };
+}
+
 export async function main(argv: string[], ctx: Context): Promise<number> {
   const [command, ...args] = argv;
   try {
@@ -148,17 +166,11 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
       return 1;
     }
     const run = () => dispatch(command, args, ctx);
-    // One command at a time (the hourly timer, a manual new-ca, setup). A refused
-    // native layout or an operator certificate never writes under the TLS
-    // folders, so it needs no lock (and the renew unit couldn't take one there).
-    if (
-      command !== undefined &&
-      command in LOCKED &&
-      !operatorConfigured(ctx.env) &&
-      nativeLayoutProblem(ctx) === undefined
-    ) {
+    // One command at a time (the hourly timer, a manual new-ca, setup).
+    const lock = lockFor(command, ctx);
+    if (lock) {
       return await withLock(ctx.layout, run, {
-        create: LOCKED[command]!,
+        create: lock.create,
         waitMs: ctx.lockWaitMs,
         now: ctx.now,
         sleep: ctx.sleep
@@ -176,7 +188,31 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
   }
 }
 
+/**
+ * The entry point: help needs no settings, and a settings file that can't be read
+ * (settingsEnv throws) ends as one line, not a stack trace.
+ */
+export async function cli(
+  argv: string[],
+  makeContext: () => Context,
+  stderr: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+  stdout: (line: string) => void = (line) => process.stdout.write(`${line}\n`)
+): Promise<number> {
+  if (argv[0] === 'help' || argv[0] === '--help') {
+    stdout(USAGE);
+    return 0;
+  }
+  let ctx: Context;
+  try {
+    ctx = makeContext();
+  } catch (error) {
+    stderr(`pipulse tls: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  return main(argv, ctx);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.umask(0o077);
-  process.exitCode = await main(process.argv.slice(2), defaultContext());
+  process.exitCode = await cli(process.argv.slice(2), defaultContext);
 }
