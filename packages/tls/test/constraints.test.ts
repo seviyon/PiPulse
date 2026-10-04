@@ -172,11 +172,15 @@ describe('buildConstraints', () => {
     expect(constraints.excludedDns).toEqual(['.io', '.localhost']);
   });
 
-  it('defaults to the switch, which stays off until the D2 gate is recorded (Task 1 Step 7b)', () => {
-    expect(EXCLUDE_BELOW_SINGLE_LABEL).toBe(false);
+  it('defaults to the switch, which is on since the D2 browser gate passed (Task 1 Step 7b)', () => {
+    expect(EXCLUDE_BELOW_SINGLE_LABEL).toBe(true);
     expect(
       buildConstraints({ hostname: 'io', names: [], subnets: [] }).constraints.excludedDns
-    ).toEqual([]);
+    ).toEqual(['.io', '.localhost']);
+    // A dotted host name has no single-label subtree to exclude except localhost.
+    expect(
+      buildConstraints({ hostname: 'pi.example', names: [], subnets: [] }).constraints.excludedDns
+    ).toEqual(['.localhost']);
   });
 
   it('adds PIPULSE_TLS_NAMES and accepted subnets, and leaves IP names out with a warning', () => {

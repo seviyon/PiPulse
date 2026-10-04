@@ -192,11 +192,11 @@ export function checkSubnet(text: string): Cidr {
 /**
  * D2: whether a new CA excludes the names below single-label names
  * (`excluded;DNS:.io`), so a host called "io" can't vouch for evil.io. It
- * changes every new CA's scope for good, so it stays off until the browser
- * results in the plan's Task 1 Step 7b show Chrome, Firefox and Safari
- * accept `io` and refuse `x.io` under such a CA.
+ * changes every new CA's scope for good. On (2026-10-04): the browser check in the
+ * plan's Task 1 Step 7b showed Safari, Chrome and Firefox load `io` and refuse `x.io`
+ * (and the other out-of-scope names) under such a CA.
  */
-export const EXCLUDE_BELOW_SINGLE_LABEL = false;
+export const EXCLUDE_BELOW_SINGLE_LABEL = true;
 
 export function buildConstraints(
   input: { hostname: string; names: string[]; subnets: string[] },

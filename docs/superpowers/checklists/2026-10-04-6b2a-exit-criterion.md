@@ -15,7 +15,9 @@ Everything here is manual: browser trust lives in the OS keychain, so no test ca
 
 ---
 
-## Part 0 — D2 gate (do this BEFORE `init` on Io)
+## Part 0 — D2 gate (DONE 2026-10-04: all three browsers passed; D2 is on)
+
+_Kept for the record and for the browser versions, which were not captured: if you can, note them in the table below. You do not need to repeat the experiment._
 
 `Io`'s host name is `io`, which is also a real top-level domain. With D2 off (today) the CA is permitted for `io` and therefore for every `*.io` name. Whether browsers enforce an exclusion of `.io` decides if D2 can be turned on, and **a CA's constraints never change after it is made**, so this comes first.
 
