@@ -3,7 +3,7 @@ import { opensslVersion } from './issue.js';
 import { leafNames } from './constraints.js';
 import { pathExists, removeTree } from './files.js';
 import { recover } from './journal.js';
-import { paths, pub, writeRenewStatus, type RenewStatus } from './layout.js';
+import { paths, pub, readState, writeRenewStatus, type RenewStatus } from './layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -67,6 +67,23 @@ export function renewDue(input: {
   return undefined;
 }
 
+/**
+ * A renewal that could not even start (another command holds the lock past the wait:
+ * a new-ca left at its prompt) is still recorded, or renew-status.json would keep its
+ * last good result while every hourly run fails.
+ */
+export function recordRenewLockFailure(ctx: Context, reason: string): void {
+  const folder = nativeLayoutProblem(ctx) ? ctx.defaultTlsDir : ctx.layout.tlsDir;
+  try {
+    writeRenewStatus(
+      { ...ctx.layout, tlsDir: folder, caRoot: folder },
+      { version: 1, lastAttempt: ctx.now(), result: 'failed', reason: reason.slice(0, 300) }
+    );
+  } catch (error) {
+    ctx.err(`warning: could not write renew-status.json: ${(error as Error).message}`);
+  }
+}
+
 export async function renew(ctx: Context, args: string[]): Promise<number> {
   const { values } = usage(() =>
     parseArgs({ args, options: { force: { type: 'boolean' } }, strict: true })
@@ -121,9 +138,12 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
   if (check.kind === 'none') {
     // Nothing generated at all is simply "not set up". But a served leaf or a chosen mode with
     // no CA behind it is a failure the hourly run must not hide behind its last good result.
+    // Only a served leaf, or a state that chose HTTPS, means a CA should be there. A
+    // legacy-http state (disable, or an upgrade) with no CA is simply "not set up": the
+    // hourly timer must not call that a failure. An unreadable state counts as orphaned.
     let orphaned: boolean;
     try {
-      orphaned = pathExists(paths(layout).bundle) || pathExists(paths(layout).state);
+      orphaned = pathExists(paths(layout).bundle) || readState(layout) === 'https';
     } catch {
       orphaned = true; // can't tell: don't claim all is well
     }

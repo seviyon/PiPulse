@@ -9,13 +9,13 @@ import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
 import { disable, enable } from './cmd-mode.js';
 import { init } from './cmd-init.js';
-import { renew } from './cmd-renew.js';
+import { recordRenewLockFailure, renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
 import { DEFAULT_TIMESYNC_DIR, DEFAULT_TLS_DIR } from './config.js';
 import { candidateSubnet, defaultRouteAddresses, defaultRouteInterfaces } from './constraints.js';
 import { settingsEnv } from './envfile.js';
 import { OPENSSL } from './issue.js';
-import { LOCK_WAIT_MS, withLock } from './lock.js';
+import { LOCK_WAIT_MS, LockError, withLock } from './lock.js';
 import { layoutFrom, type Layout } from './layout.js';
 
 export const USAGE = `usage: pipulse tls <command>
@@ -203,6 +203,8 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
       return 2;
     }
     ctx.err(`pipulse tls: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof LockError && command === 'renew')
+      recordRenewLockFailure(ctx, (error as Error).message);
     return 1;
   }
 }

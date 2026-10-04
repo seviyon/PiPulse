@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cmd-renew.js';
 import { CLOCK_FLOOR_MS } from '../src/clock.js';
-import { paths, readMeta, readRenewStatus } from '../src/layout.js';
+import { paths, readMeta, readRenewStatus, writeState } from '../src/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -217,6 +217,22 @@ describe('renew', () => {
     expect(await main(['renew'], ctx)).toBe(1);
     expect(status()).toMatchObject({ result: 'failed' });
     expect(status()?.reason).toContain('there is no CA');
+  });
+
+  it('a legacy-http install with no CA is "not set up", never a failure (the hourly timer runs everywhere)', async () => {
+    writeState(ctx.layout, 'legacy-http');
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(ctx.lines.join('\n')).toContain('sudo pipulse tls init');
+    expect(status()).toBeUndefined();
+  });
+
+  it('a state that chose https with no CA is a failure, and so is an unreadable state', async () => {
+    writeState(ctx.layout, 'https');
+    expect(await main(['renew'], ctx)).toBe(1);
+    expect(status()).toMatchObject({ result: 'failed' });
+    writeFileSync(paths(ctx.layout).state, 'garbage', { mode: 0o640 });
+    expect(await main(['renew'], ctx)).toBe(1);
+    expect(status()).toMatchObject({ result: 'failed' });
   });
 
   it('records a corrupt journal as a failure instead of leaving the last good result', async () => {

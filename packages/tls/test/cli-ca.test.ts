@@ -2,7 +2,7 @@ import { cpSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { listBackups, readMeta } from '../src/layout.js';
+import { listBackups, paths, readMeta, readRenewStatus } from '../src/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -168,6 +168,29 @@ describe('the lock across a confirmation prompt', () => {
     expect(readMeta(ctx.layout)!.backups.map((b) => b.fingerprint)).toEqual(
       listBackups(ctx.layout).map((b) => b.fingerprint)
     );
+  });
+});
+
+describe('the hourly renew while another command holds the lock', () => {
+  it('records the failure, so renew-status.json does not keep its last good result', async () => {
+    expect(await main(['renew'], later())).toBe(0); // a good result is on record
+    let answer!: (yes: boolean) => void;
+    const holder = testContext(dir, {
+      tty: true,
+      ask: () => new Promise<boolean>((resolve) => (answer = resolve)),
+      lockAlive: () => true
+    });
+    holder.setNow(NOW + 5000);
+    const held = main(['new-ca'], holder); // left at its confirmation prompt
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const timer = testContext(dir, { lockAlive: () => true });
+    timer.setNow(NOW + 3_600_000);
+    expect(await main(['renew'], timer)).toBe(1);
+    const recorded = readRenewStatus(paths(ctx.layout).renewStatus);
+    expect(recorded).toMatchObject({ result: 'failed', lastAttempt: NOW + 3_600_000 });
+    expect(recorded?.reason).toContain('another pipulse tls command is running');
+    answer(false);
+    expect(await held).toBe(1);
   });
 });
 
