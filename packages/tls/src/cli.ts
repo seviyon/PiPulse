@@ -26,7 +26,8 @@ export const USAGE = `usage: pipulse tls <command>
   new-ca [--subnet CIDR]... [--name NAME]... [--prune-oldest ca.old-…] [--yes]
                                replace the CA (every device must trust the new one)
   restore-ca ca.old-… [--yes]  bring a backed-up CA back
-  enable [--yes]               serve HTTPS (checks it works, else goes back)
+  enable [--yes] [--allow-expired]
+                               serve HTTPS (checks it works, else goes back)
   disable [--allow-insecure] [--yes]
                                serve plain HTTP again (the certificates stay)
   export-ca [--out FILE]       the CA certificate, its fingerprint and how to trust it`;

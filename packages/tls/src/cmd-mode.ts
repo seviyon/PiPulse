@@ -4,8 +4,8 @@ import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from './config.js';
 import type { CheckResult } from './health-check.js';
 import { loadCertificate, validityOf } from './inspect.js';
 import { recover } from './journal.js';
-import { paths, pub, readMeta, readState, writeState, type Layout } from './layout.js';
-import { checkCa, checkLeaf, repairPublic } from './material.js';
+import { paths, pub, readState, writeState, type Layout } from './layout.js';
+import { checkCa, checkLeaf, repairPublic, type CaFiles } from './material.js';
 import {
   confirm,
   isoDate,
@@ -33,6 +33,17 @@ function putBack(layout: Layout, previous: StateMode | undefined): void {
   else rmSync(paths(layout).state, { force: true });
 }
 
+/** putBack that reports instead of throwing (a full disk must not hide why we were backing out). */
+function tryPutBack(ctx: Context, previous: StateMode | undefined): void {
+  try {
+    putBack(ctx.layout, previous);
+  } catch (error) {
+    ctx.err(
+      `could NOT put state.json back (${(error as Error).message}): it still says what this command wrote; fix it by hand (${paths(ctx.layout).state}) or run sudo pipulse tls ${previous === 'https' ? 'enable' : 'disable'} again`
+    );
+  }
+}
+
 /** Restart with the new mode; if the shared check fails, restore the old mode and restart again. */
 async function switchMode(
   ctx: Context,
@@ -45,8 +56,8 @@ async function switchMode(
     if (mode !== (to === 'https' ? 'https' : 'http'))
       throw new Error(`the settings still resolve to ${mode}`);
   } catch (error) {
-    putBack(ctx.layout, previous);
     ctx.err(`not switching: ${(error as Error).message}`);
+    tryPutBack(ctx, previous);
     return false;
   }
   if (ctx.inContainer) {
@@ -67,7 +78,7 @@ async function switchMode(
   ctx.err(
     `PiPulse did not come up healthy as ${to} (${result.message}); putting ${previous ?? 'the previous mode'} back`
   );
-  putBack(ctx.layout, previous);
+  tryPutBack(ctx, previous);
   try {
     await ctx.restart();
   } catch (error) {
@@ -84,7 +95,11 @@ async function switchMode(
 
 export async function enable(ctx: Context, args: string[]): Promise<number> {
   const { values } = usage(() =>
-    parseArgs({ args, options: { yes: { type: 'boolean' } }, strict: true })
+    parseArgs({
+      args,
+      options: { yes: { type: 'boolean' }, 'allow-expired': { type: 'boolean' } },
+      strict: true
+    })
   );
   const layout = ctx.layout;
   if (ctx.env['PIPULSE_TLS']?.trim() === 'off') {
@@ -94,6 +109,7 @@ export async function enable(ctx: Context, args: string[]): Promise<number> {
     return 1;
   }
   const summary: string[] = [];
+  let toRepair: CaFiles | undefined;
   let caFingerprint: string | undefined;
   let leafFingerprint: string;
   if (operatorConfigured(ctx.env)) {
@@ -104,10 +120,12 @@ export async function enable(ctx: Context, args: string[]): Promise<number> {
       );
       const cert = loadCertificate(config.source!, { names: config.names });
       leafFingerprint = cert.fingerprint;
-      if (validityOf(cert, ctx.now(), 0) === 'expired')
+      if (validityOf(cert, ctx.now(), 0) === 'expired' && !values['allow-expired']) {
         ctx.err(
-          `warning: your certificate expired on ${isoDate(cert.notAfter)}; browsers will refuse it until you replace it`
+          `your certificate expired on ${isoDate(cert.notAfter)}: browsers would refuse it. Replace it first, or pass --allow-expired to switch anyway`
         );
+        return 1;
+      }
       summary.push(
         'Serving your certificate (PIPULSE_TLS_CERT)',
         `  names: ${[...cert.sans.dns, ...cert.sans.ip].join(', ')}`
@@ -153,22 +171,36 @@ export async function enable(ctx: Context, args: string[]): Promise<number> {
       );
       return 1;
     }
-    repairPublic(ctx, check.ca);
+    toRepair = check.ca; // the public copies are repaired after the confirmation, never before
     caFingerprint = check.ca.fingerprint;
     leafFingerprint = leaf.fingerprint;
-    const ip = readMeta(layout)?.constraints.subnets ?? [];
+    const ip = check.ca.constraints.subnets;
     summary.push(
       `Serving names: ${[...leaf.sans.dns, ...leaf.sans.ip].join(', ')}`,
       `IP scope: ${ip.length ? ip.join(', ') : 'none (IP addresses will show a warning)'}`,
       `CA SHA-256: ${caFingerprint}`
     );
   }
+  const previous = readState(layout);
+  if (previous === 'https') {
+    // Already on: a restart would only cause an outage for nothing.
+    let mode: string | undefined;
+    try {
+      mode = readTlsConfig(ctx.env, { releaseDefault: RELEASE_DEFAULT }).mode;
+    } catch {
+      mode = undefined;
+    }
+    if (mode === 'https' && (await ctx.health(ctx.env)).code === 0) {
+      ctx.out('HTTPS is already on and healthy: nothing to do');
+      return 0;
+    }
+  }
   for (const line of summary) ctx.out(line);
   if (!(await confirm(ctx, values.yes, 'Switch PiPulse to HTTPS?'))) {
     ctx.err('nothing changed');
     return 1;
   }
-  const previous = readState(layout);
+  if (toRepair) for (const file of repairPublic(ctx, toRepair)) ctx.out(`repaired ${file}`);
   if (!(await switchMode(ctx, 'https', previous))) return 1;
   if (ctx.inContainer) return 0;
   const host = ctx.hostname().toLowerCase();

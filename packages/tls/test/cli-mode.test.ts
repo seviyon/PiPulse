@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { paths, readState, writeState } from '../src/layout.js';
 import { testContext, type TestContext } from './cli-context.js';
-import { tempDir } from './helpers.js';
+import { fixture, tempDir } from './helpers.js';
 
 let dir: string;
 let ctx: TestContext;
@@ -89,6 +89,90 @@ describe('enable', () => {
     expect(await main(['enable', '--yes'], run)).toBe(0);
     expect(run.restarts).toBe(0);
     expect(run.lines.join('\n')).toContain('docker compose restart pipulse');
+  });
+});
+
+describe('enable leaves things alone until confirmed, and when nothing is to do', () => {
+  it('declining a repair-needing enable repairs nothing; confirming repairs and says so', async () => {
+    await main(['init'], ctx);
+    unlinkSync(paths(ctx.layout).publicCa);
+    const declined = testContext(dir, { tty: true, ask: async () => false }); // answers no
+    expect(await main(['enable'], declined)).toBe(1);
+    expect(declined.errors.join('\n')).toContain('nothing changed');
+    expect(existsSync(paths(ctx.layout).publicCa)).toBe(false);
+    const confirmed = testContext(dir);
+    expect(await main(['enable', '--yes'], confirmed)).toBe(0);
+    expect(confirmed.lines.join('\n')).toContain('repaired ca.crt');
+    expect(existsSync(paths(ctx.layout).publicCa)).toBe(true);
+  });
+
+  it('says it is already on, without a restart, when HTTPS is on and healthy', async () => {
+    await main(['init'], ctx);
+    writeState(ctx.layout, 'https');
+    const run = testContext(dir);
+    expect(await main(['enable', '--yes'], run)).toBe(0);
+    expect(run.restarts).toBe(0);
+    expect(run.lines.join('\n')).toContain('already on and healthy');
+  });
+
+  it('still switches (restarts) when state says https but the server is not healthy', async () => {
+    await main(['init'], ctx);
+    writeState(ctx.layout, 'https');
+    let calls = 0;
+    const run = testContext(dir, {
+      health: async () =>
+        calls++ === 0 ? { code: 1, message: 'not answering' } : { code: 0, message: 'healthy' }
+    });
+    expect(await main(['enable', '--yes'], run)).toBe(0);
+    expect(run.restarts).toBe(1);
+  });
+
+  it('reports a failed put-back instead of losing the reason', async () => {
+    if (process.getuid?.() === 0) return;
+    await main(['init'], ctx);
+    const run = testContext(dir, {
+      health: async () => ({ code: 1, message: 'not answering' }),
+      restart: async () => {
+        chmodSync(dir, 0o500); // the folder can't be written: putBack fails
+      }
+    });
+    try {
+      expect(await main(['enable', '--yes'], run)).toBe(1);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    const errors = run.errors.join('\n');
+    expect(errors).toMatch(/did not come up healthy as https \(not answering\)/);
+    expect(errors).toMatch(/could NOT put state\.json back/);
+  });
+});
+
+describe('enable over an operator certificate that has expired', () => {
+  const operator = () => {
+    const cert = join(dir, 'op.crt');
+    const key = join(dir, 'op.key');
+    const ca = join(dir, 'op-ca.crt');
+    writeFileSync(cert, fixture('expired.crt') + fixture('intermediate.crt'), { mode: 0o644 });
+    writeFileSync(key, fixture('expired.key'), { mode: 0o600 });
+    writeFileSync(ca, fixture('root-ca.crt'), { mode: 0o644 });
+    return testContext(dir, {
+      env: {
+        PIPULSE_TLS_DIR: dir,
+        PIPULSE_TLS_CERT: cert,
+        PIPULSE_TLS_KEY: key,
+        PIPULSE_TLS_CA: ca
+      }
+    });
+  };
+
+  it('is refused like a generated one, unless --allow-expired', async () => {
+    const refused = operator();
+    expect(await main(['enable', '--yes'], refused)).toBe(1);
+    expect(refused.errors.join('\n')).toMatch(/your certificate expired on .*--allow-expired/);
+    expect(readState(refused.layout)).toBeUndefined();
+    const allowed = operator();
+    expect(await main(['enable', '--yes', '--allow-expired'], allowed)).toBe(0);
+    expect(readState(allowed.layout)).toBe('https');
   });
 });
 
