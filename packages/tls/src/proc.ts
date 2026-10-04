@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readlinkSync } from 'node:fs';
 
 const readText = (path: string) => readFileSync(path, 'utf8');
 
@@ -30,5 +30,20 @@ export function pidAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * The PID namespace this process lives in (e.g. "pid:[4026531836]"), or
+ * undefined where /proc has none. Two containers sharing a volume have different
+ * ones, so a pid read from a lock they share means nothing to the other.
+ */
+export function pidNamespace(
+  read: (path: string) => string = (path) => readlinkSync(path)
+): string | undefined {
+  try {
+    return read('/proc/self/ns/pid') || undefined;
+  } catch {
+    return undefined;
   }
 }

@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { TlsConfigError } from './config.js';
 import {
   SimulatedCrash,
   cleanTemp,
   ensureDir,
+  pathExists,
   removeTree,
   renameDurable,
   syncDir,
@@ -97,13 +98,19 @@ function writeTxn(layout: Layout, txn: Txn, hook?: FsHook): void {
   });
 }
 
+/**
+ * Throws a transaction away. The journal goes FIRST: a crash half-way must never leave a
+ * `validated` journal beside a half-deleted stage, which recover() would take for a
+ * transaction to finish and install a public CA whose key was just deleted. With no
+ * journal, whatever stage folders remain are orphans that recover() sweeps.
+ */
 function discard(layout: Layout, txn: Txn, hook?: FsHook): void {
   const dirs = stageDirs(layout, txn.id);
-  removeTree(dirs.ca, hook);
-  removeTree(dirs.pub, hook);
   hook?.('remove', paths(layout).txn);
   rmSync(paths(layout).txn, { force: true });
   syncDir(layout.caRoot);
+  removeTree(dirs.ca, hook);
+  removeTree(dirs.pub, hook);
 }
 
 /** Finishes a validated transaction from whatever is on disk; every step is safe to repeat. */
@@ -118,13 +125,13 @@ function complete(layout: Layout, start: Txn, hook?: FsHook): void {
   };
   // 1. The active CA becomes a backup — only while a staged CA still waits, so
   //    a rerun never moves the newly installed CA away.
-  if (txn.backup && existsSync(p.caDir) && existsSync(stagedCa)) {
+  if (txn.backup && pathExists(p.caDir) && pathExists(stagedCa)) {
     renameDurable(p.caDir, join(layout.caRoot, txn.backup), hook);
   }
   advance('active-ca-moved');
   // 2. The staged CA becomes the active one.
-  if (existsSync(stagedCa)) {
-    if (existsSync(p.caDir))
+  if (pathExists(stagedCa)) {
+    if (pathExists(p.caDir))
       throw new JournalError(`both ${p.caDir} and a staged CA exist; move one aside by hand`);
     renameDurable(stagedCa, p.caDir, hook);
   }
@@ -132,7 +139,7 @@ function complete(layout: Layout, start: Txn, hook?: FsHook): void {
   // 3. Public copies, the serving bundle last (the reloader waits for two stable polls anyway).
   for (const name of PUBLIC_FILES) {
     const from = join(dirs.pub, name);
-    if (existsSync(from)) renameDurable(from, join(layout.tlsDir, name), hook);
+    if (pathExists(from)) renameDurable(from, join(layout.tlsDir, name), hook);
   }
   advance('leaf-installed');
   // 4. A restored backup is the active CA now; then the stage and the journal go.
@@ -168,8 +175,8 @@ export async function runTransaction(
   const id = randomBytes(4).toString('hex');
   const dirs = stageDirs(layout, id);
   // One-second names: a second backup in the same second takes the next free second.
-  const backup = existsSync(paths(layout).caDir)
-    ? backupName(options.now, (name) => existsSync(join(layout.caRoot, name)))
+  const backup = pathExists(paths(layout).caDir)
+    ? backupName(options.now, (name) => pathExists(join(layout.caRoot, name)))
     : null;
   const txn: Txn = {
     version: 1,
@@ -231,8 +238,8 @@ export function recover(layout: Layout, hook?: FsHook): 'none' | 'discarded' | '
     removeStrayStages(layout, hook);
     return 'none';
   }
-  const staged = existsSync(join(stageDirs(layout, txn.id).ca, 'ca'));
-  const activeUntouched = existsSync(paths(layout).caDir);
+  const staged = pathExists(join(stageDirs(layout, txn.id).ca, 'ca'));
+  const activeUntouched = pathExists(paths(layout).caDir);
   if (txn.step === 'staged' || (txn.step === 'validated' && staged && activeUntouched)) {
     discard(layout, txn, hook);
     return 'discarded';

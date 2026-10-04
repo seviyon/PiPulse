@@ -226,6 +226,63 @@ describe('recover after a crash at every hook point', () => {
     }
   }, 240_000);
 
+  /**
+   * Crashes inside recover() itself, at each of its own hook points in turn, then
+   * runs it again: a half-finished recovery must never be taken for a transaction
+   * to finish (the new CA's key already deleted, its public files about to be installed).
+   */
+  const crashInsideRecover = async (build: () => Promise<void>, check: () => void) => {
+    for (let j = 0; ; j++) {
+      ctx = freshContext();
+      await build();
+      expect(readTxn(ctx.layout)?.step).toBe('validated');
+      let calls = 0;
+      let crashed = false;
+      try {
+        recover(ctx.layout, () => {
+          if (calls++ === j) throw new SimulatedCrash(`recover crash at ${j}`);
+        });
+      } catch (error) {
+        if (!(error instanceof SimulatedCrash)) throw error;
+        crashed = true;
+      }
+      recover(ctx.layout);
+      check();
+      rmSync(dir, { recursive: true, force: true });
+      if (!crashed) return j;
+    }
+  };
+  /** Stops a transaction right after `validated` is written, before its first rename. */
+  const stopAfterValidated: FsHook = (point) => {
+    if (point === 'rename' && readTxn(ctx.layout)?.step === 'validated')
+      throw new SimulatedCrash('after validated');
+  };
+
+  it('new-ca: a crash inside the recovery that discards it still ends on the old CA', async () => {
+    let old = '';
+    const points = await crashInsideRecover(
+      async () => {
+        await init(ctx);
+        old = activeFingerprint(ctx);
+        await expect(newCa(ctx, stopAfterValidated)).rejects.toThrow(SimulatedCrash);
+      },
+      () => {
+        expect(consistent(ctx)).toBe(old);
+        expect(listBackups(ctx.layout)).toEqual([]);
+      }
+    );
+    expect(points).toBeGreaterThan(0);
+  }, 180_000);
+
+  it('init: a crash inside the recovery that completes it still ends on one complete CA', async () => {
+    await crashInsideRecover(
+      async () => {
+        await expect(init(ctx, stopAfterValidated)).rejects.toThrow(SimulatedCrash);
+      },
+      () => expect(consistent(ctx)).not.toBe('nothing')
+    );
+  }, 180_000);
+
   it('sweeps an issue-* folder a killed issuance left in the work folder', async () => {
     const stale = join(paths(ctx.layout).work, 'issue-abc123');
     mkdirSync(stale, { recursive: true });

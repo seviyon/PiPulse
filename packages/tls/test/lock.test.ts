@@ -1,8 +1,23 @@
-import { existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Layout } from '../src/layout.js';
-import { LOCK_FILE, LockError, withLock } from '../src/lock.js';
+import {
+  LOCK_FILE,
+  LockError,
+  breakLock,
+  localIdentity,
+  withLock,
+  type LockHolder
+} from '../src/lock.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;
@@ -19,6 +34,21 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const lockPath = () => join(dir, LOCK_FILE);
+/** A lock file as a holder on this very process's side of the PID namespace would write it. */
+const writeHolder = (over: Partial<LockHolder> = {}) =>
+  writeFileSync(
+    lockPath(),
+    JSON.stringify({
+      pid: 999_999,
+      ...localIdentity(),
+      startTime: null,
+      token: 'other',
+      startedAt: Date.now(),
+      ...over
+    }),
+    { mode: 0o600 }
+  );
+const other = { pidNs: 'pid:[4026539999]', host: 'container-b' } as const;
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 describe('withLock', () => {
@@ -33,6 +63,10 @@ describe('withLock', () => {
     );
     expect(seen.holder.pid).toBe(process.pid);
     expect(seen.holder).toHaveProperty('startTime');
+    expect(seen.holder.token).toMatch(/^[0-9a-f]{32}$/);
+    expect(seen.holder).toHaveProperty('bootId');
+    expect(seen.holder).toHaveProperty('pidNs');
+    expect(seen.holder.host).toBe(localIdentity().host);
     expect(seen.mode).toBe(0o600);
     expect(existsSync(lockPath())).toBe(false);
   });
@@ -75,11 +109,7 @@ describe('withLock', () => {
   });
 
   it('clears the lock of a process that died holding it (a crash)', async () => {
-    writeFileSync(
-      lockPath(),
-      JSON.stringify({ pid: 999_999, startTime: null, startedAt: Date.now() }),
-      { mode: 0o600 }
-    );
+    writeHolder();
     expect(
       await withLock(layout, async () => 'ran', { create: true, waitMs: 0, alive: () => false })
     ).toBe('ran');
@@ -87,10 +117,7 @@ describe('withLock', () => {
   });
 
   it('clears a lock older than the bound even if its pid runs (pid reuse)', async () => {
-    writeFileSync(
-      lockPath(),
-      JSON.stringify({ pid: process.pid, startTime: null, startedAt: Date.now() - 16 * 60_000 })
-    );
+    writeHolder({ pid: process.pid, startedAt: Date.now() - 16 * 60_000 });
     expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0 })).toBe('ran');
   });
 
@@ -102,6 +129,72 @@ describe('withLock', () => {
     const old = new Date(Date.now() - 10_000);
     utimesSync(lockPath(), old, old);
     expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0 })).toBe('ran');
+  });
+
+  it('does not judge a holder in another container by its pid: a fresh heartbeat keeps the lock', async () => {
+    // pid 1 exists here too, but it is not the other container's pid 1.
+    writeHolder({ ...other, pid: process.pid });
+    await expect(
+      withLock(layout, async () => 'no', { create: true, waitMs: 0, alive: () => false })
+    ).rejects.toThrow(/on container-b/);
+    expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('other');
+  });
+
+  it('clears a lock from another container once its heartbeat is gone', async () => {
+    writeHolder({ ...other });
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lockPath(), old, old);
+    expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0 })).toBe('ran');
+  });
+
+  it('keeps the lock fresh with a heartbeat while the command runs', async () => {
+    let first = 0;
+    let second = 0;
+    await withLock(
+      layout,
+      async () => {
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(lockPath(), old, old);
+        first = statSync(lockPath()).mtimeMs;
+        await pause(120);
+        second = statSync(lockPath()).mtimeMs;
+      },
+      { create: true, heartbeatMs: 20 }
+    );
+    expect(second).toBeGreaterThan(first + 30_000);
+  });
+
+  it('clears a lock from before a reboot, whatever its pid and namespace say', async () => {
+    writeHolder({ pid: process.pid, bootId: 'an-older-boot' });
+    const me = localIdentity();
+    if (me.bootId === null) return; // no /proc boot id here: nothing to compare
+    expect(
+      await withLock(layout, async () => 'ran', { create: true, waitMs: 0, identity: me })
+    ).toBe('ran');
+  });
+
+  it('does not remove a lock somebody else holds when the command ends', async () => {
+    await withLock(
+      layout,
+      async () => {
+        writeHolder({ token: 'taken-over' }); // broken and retaken meanwhile
+      },
+      { create: true }
+    );
+    expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('taken-over');
+  });
+
+  it('breaks a stale lock only if it is still the one judged stale', () => {
+    writeHolder({ token: 'dead' });
+    const dead = JSON.parse(readFileSync(lockPath(), 'utf8')) as LockHolder;
+    breakLock(lockPath(), dead);
+    expect(existsSync(lockPath())).toBe(false);
+
+    // Meanwhile a fresh holder took the lock: the break must put it back.
+    writeHolder({ token: 'fresh' });
+    breakLock(lockPath(), dead);
+    expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('fresh');
+    expect(readdirSync(dir).filter((n) => n.includes('.stale-'))).toEqual([]);
   });
 
   it('releases the lock when the command throws', async () => {

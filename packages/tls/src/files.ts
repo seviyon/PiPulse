@@ -245,3 +245,18 @@ export function ensureDir(
   }
   chmodSync(path, options.mode);
 }
+
+/**
+ * Whether `path` exists (lstat, so a dangling symlink does). False only for ENOENT: any
+ * other failure (EACCES, EIO, a missing volume) is thrown, never read as "absent". Used
+ * where "absent" would let a step be skipped or a second CA be made.
+ */
+export function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}

@@ -12,7 +12,14 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SimulatedCrash, cleanTemp, ensureDir, writeAtomic, type FsPoint } from '../src/files.js';
+import {
+  SimulatedCrash,
+  cleanTemp,
+  ensureDir,
+  pathExists,
+  writeAtomic,
+  type FsPoint
+} from '../src/files.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;
@@ -117,5 +124,23 @@ describe('ensureDir', () => {
     writeFileSync(join(dir, 'file'), '');
     expect(() => ensureDir(join(dir, 'file'), { mode: 0o700 })).toThrow(/not a directory/);
     expect(lstatSync(join(dir, 'link')).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe('pathExists', () => {
+  it('is false only for ENOENT, true for a dangling symlink, and throws on anything else', () => {
+    expect(pathExists(join(dir, 'nope'))).toBe(false);
+    symlinkSync(join(dir, 'nope'), join(dir, 'dangling'));
+    expect(pathExists(join(dir, 'dangling'))).toBe(true);
+    if (process.getuid?.() === 0) return;
+    const locked = join(dir, 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'f'), 'x');
+    chmodSync(locked, 0o000);
+    try {
+      expect(() => pathExists(join(locked, 'f'))).toThrow(/EACCES/);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
   });
 });
