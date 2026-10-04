@@ -125,6 +125,31 @@ If the Pi uses chrony or ntpd instead of systemd-timesyncd, set `PIPULSE_TLS_CLO
 
 **Docker:** mount the files read-only (e.g. into `./config`) and set the same variables in `pipulse.env`.
 
+**A certificate made on the Pi (0.6.4 and later).** Instead of your own certificate, PiPulse can make a certificate authority (CA) for this Pi and a certificate from it. This is opt-in: nothing changes on upgrade until you run `sudo pipulse tls …`, and the release default is still plain HTTP until 0.7.0.
+
+```bash
+sudo pipulse tls init                 # makes the CA and certificate; prints the CA fingerprint and what it covers
+sudo pipulse tls status               # the same fingerprint, again: run it over SSH or at the Pi's console
+sudo pipulse tls export-ca --out /home/<you>/pipulse-ca.crt   # then scp it to each device
+sudo pipulse tls enable               # serve HTTPS (checks it works, else goes back on its own)
+sudo pipulse tls disable --allow-insecure   # serve plain HTTP again; the certificates stay
+```
+
+1. **Check the fingerprint before you trust anything.** Compare the one `export-ca` prints with the one `sudo pipulse tls status` shows on the Pi itself, over a channel you already trust (SSH, the console), never with one a web page shows.
+2. **Trust the certificate authority** (not a single certificate) on each device. `export-ca` prints the steps: on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain pipulse-ca.crt`; Windows, Linux and phones have their own certificate stores. **Firefox** ignores the macOS keychain unless `security.enterprise_roots.enabled` is `true` in `about:config`.
+3. `sudo pipulse tls enable`, then open `https://<pi>:8889`. Old `http://` bookmarks stop answering. If HTTPS does not come up healthy, `enable` puts the previous mode back by itself. If the command itself is ever killed half-way, `sudo pipulse tls disable --yes` (or deleting `/etc/pipulse/tls/state.json`) returns to the previous behaviour.
+
+**What the CA may cover.** It is name-constrained: it can only vouch for this Pi's host name, `<host>.local`, `localhost`, any `PIPULSE_TLS_NAMES` you list, and the IP ranges you accept. By default it covers no LAN IP range, so `https://192.168.1.35:8889` shows a warning; to cover it, accept the range explicitly: `sudo pipulse tls init --subnet 192.168.1.0/24` (or, to change a CA that exists, `sudo pipulse tls new-ca --subnet …`). Accepting a range lets a stolen CA key impersonate any device in it, and `init` says so before it asks. Extra names must be dotted (`pi.local`, not `pi`): a single-label name would let the CA vouch for everything below it, so only the host's own name and `localhost` may be single-label. `new-ca` keeps the current ranges unless you say otherwise (`--subnet none` drops them).
+
+> A CA for a host whose single-label name is also a real top-level domain (a Pi called `io`, say) is permitted for every name below that domain by the standard's matching rules, so a stolen CA key could vouch for any `*.io` name for devices that trust it. If your Pi's name is a real TLD, give it another host name before you trust the CA.
+
+**Renewal.** A timer (`pipulse-tls-renew.timer`) checks every hour and renews the 90-day certificate 30 days before it ends. It waits until the clock is synchronized (a Pi has no clock of its own), and also renews early when this Pi gets a new address inside an accepted range (a new IPv6 address waits a day, because privacy addresses rotate). `sudo pipulse tls status` shows the last result. A `new-ca` left waiting at its confirmation prompt holds the lock, so the hourly renewal fails (and says so) until you answer it. The upgrade re-enables the timer if you had disabled it; mask it to stop renewals (`systemctl mask pipulse-tls-renew.timer`).
+
+**Backups.** `/etc/pipulse/tls` is a secret: it holds the CA key. Back it up like one, and never copy `ca/` to a device. `new-ca` keeps the old CA as `ca.old-<time>`, at most two (a third change needs `--prune-oldest <oldest>`), and `sudo pipulse tls restore-ca ca.old-<time>` brings one back. On a Pi install generated certificates live only in `/etc/pipulse/tls`: a custom `PIPULSE_TLS_DIR` is refused for them, because the renewal service's sandbox can write nowhere else (your own certificate can live anywhere).
+
+**Recovering the CA.** An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next `sudo pipulse tls` command; nothing else is needed. An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
+
+
 The `pipulse` command wraps the everyday tasks, with the service's settings loaded:
 
 ```bash
@@ -132,6 +157,7 @@ pipulse version                               # PiPulse and Node versions, and N
 pipulse hash-password | sudo tee /etc/pipulse/admin.hash >/dev/null
 sudo chown root:pipulse /etc/pipulse/admin.hash && sudo chmod 640 /etc/pipulse/admin.hash
 sudo pipulse notify-test [webhook-id]         # send a test message through PIPULSE_NOTIFY_FILE
+sudo pipulse tls status                       # the generated certificate: fingerprint, scope, renewal (see HTTPS)
 ```
 
 **Remove:** `sudo apt remove pipulse` keeps your settings and data; `sudo apt purge pipulse` deletes them.

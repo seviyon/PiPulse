@@ -235,5 +235,12 @@ export async function cli(
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.umask(0o077);
+  // `pipulse tls status | grep -q …` closes the pipe early: that is not an error worth a stack trace.
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0);
+      throw error;
+    });
+  }
   process.exitCode = await cli(process.argv.slice(2), defaultContext);
 }
