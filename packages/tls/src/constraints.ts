@@ -212,7 +212,7 @@ export function buildConstraints(
   for (const name of input.names) {
     if (isIP(name.trim()) !== 0) {
       warnings.push(
-        `PIPULSE_TLS_NAMES: ${name.trim()} is an address, not a name; allow IP access with --subnet instead`
+        `PIPULSE_TLS_NAMES: ${name.trim()} is an address, not a name, so the CA ignores it; allow IP access with --subnet (a certificate names an address only when an accepted subnet covers it)`
       );
     } else extra.push(canonicalName(name));
   }
@@ -341,11 +341,13 @@ export function defaultRouteAddresses(
   interfaces: Interfaces
 ): string[] {
   const found: string[] = [];
-  for (const info of route.v4 ? (interfaces[route.v4] ?? []) : []) {
+  const usable = (iface?: string) => (iface && !SKIPPED_INTERFACE.test(iface) ? iface : undefined);
+  const [v4, v6] = [usable(route.v4), usable(route.v6)];
+  for (const info of v4 ? (interfaces[v4] ?? []) : []) {
     if (info.family === 'IPv4' && !info.internal)
       found.push(formatAddress(parseAddress(info.address)));
   }
-  for (const info of route.v6 ? (interfaces[route.v6] ?? []) : []) {
+  for (const info of v6 ? (interfaces[v6] ?? []) : []) {
     if (info.family !== 'IPv6' || info.internal) continue;
     const address = parseAddress(info.address.split('%')[0]!);
     if (!contains(LINK_LOCAL_6, address)) found.push(formatAddress(address));

@@ -188,7 +188,7 @@ describe('buildConstraints', () => {
     expect(constraints.dns).toEqual(['io', 'io.local', 'localhost', 'io.lan']);
     expect(constraints.subnets).toEqual(['192.168.1.0/24']);
     expect(warnings).toEqual([
-      'PIPULSE_TLS_NAMES: 192.168.1.35 is an address, not a name; allow IP access with --subnet instead'
+      'PIPULSE_TLS_NAMES: 192.168.1.35 is an address, not a name, so the CA ignores it; allow IP access with --subnet (a certificate names an address only when an accepted subnet covers it)'
     ]);
   });
 
@@ -289,6 +289,14 @@ describe('the default route', () => {
     ]);
     // Default route on wlan0, addresses on eth0 too: only wlan0 counts.
     expect(defaultRouteAddresses({ v4: 'wlan0' }, PI)).toEqual(['10.0.0.7']);
+  });
+  it('names no address from a bridge or VPN default route, in either family', () => {
+    const vpn = {
+      ...PI,
+      wg0: [v4('10.8.0.2', '10.8.0.0/24'), v6('fd00:8::2', 'fd00:8::/64')]
+    };
+    expect(defaultRouteAddresses({ v4: 'wg0', v6: 'wg0' }, vpn)).toEqual([]);
+    expect(defaultRouteAddresses({ v4: 'wg0', v6: 'eth0' }, vpn)).toEqual(['2001:db8:1:2::35']);
   });
   it('proposes the default-route interface’s IPv4 network, never a bridge or VPN', () => {
     expect(candidateSubnet({ v4: 'eth0' }, PI)).toEqual({ iface: 'eth0', cidr: '192.168.1.0/24' });
