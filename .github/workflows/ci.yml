@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Tools the tests need
-        run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates adduser iproute2 procps python3 lintian gnupg apt-utils >/dev/null
+        run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates adduser iproute2 procps python3 lintian gnupg apt-utils openssl strace systemd >/dev/null
       - run: npm ci
       - run: npm run build
       - name: Packaging tests

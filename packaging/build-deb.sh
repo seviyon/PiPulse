@@ -13,6 +13,8 @@ mv "$root/opt/pipulse/pipulse-$version" "$root/opt/pipulse/app"
 sh "$here/fetch-node.sh" "$arch" "$root/opt/pipulse"
 install -m 755 "$here/pipulse" "$root/usr/bin/pipulse"
 install -m 644 "$here/pipulse.service" "$root/lib/systemd/system/pipulse.service"
+install -m 644 "$here/pipulse-tls-renew.service" "$root/lib/systemd/system/pipulse-tls-renew.service"
+install -m 644 "$here/pipulse-tls-renew.timer" "$root/lib/systemd/system/pipulse-tls-renew.timer"
 install -m 640 "$here/pipulse.env" "$root/etc/pipulse/pipulse.env"
 install -m 644 "$here/deb/copyright" "$root/usr/share/doc/pipulse/copyright"
 # Debian wants a changelog even for a package built outside Debian; release notes live on GitHub.
