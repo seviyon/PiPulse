@@ -210,6 +210,19 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
 }
 
 /**
+ * A reader that closes the pipe early (`pipulse tls status | grep -q …`, `init | head -n 1`)
+ * is not an error, and must never cut a command short: init, new-ca, enable and the rest print
+ * before and during their work. The write is dropped and the command finishes, with its own
+ * exit status. Any other stream error is still thrown.
+ */
+export function ignoreClosedPipe(stream: NodeJS.WritableStream): void {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') return;
+    throw error;
+  });
+}
+
+/**
  * The entry point: help needs no settings, and a settings file that can't be read
  * (settingsEnv throws) ends as one line, not a stack trace.
  */
@@ -235,12 +248,7 @@ export async function cli(
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.umask(0o077);
-  // `pipulse tls status | grep -q …` closes the pipe early: that is not an error worth a stack trace.
-  for (const stream of [process.stdout, process.stderr]) {
-    stream.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0);
-      throw error;
-    });
-  }
+  ignoreClosedPipe(process.stdout);
+  ignoreClosedPipe(process.stderr);
   process.exitCode = await cli(process.argv.slice(2), defaultContext);
 }

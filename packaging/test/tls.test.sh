@@ -37,6 +37,10 @@ pipulse tls status | grep -q "SHA-256 $fp" && ok 'a second init keeps the CA' ||
 as_pipulse /opt/pipulse/node/bin/node /opt/pipulse/app/packages/tls/dist/cli.js status | grep -q "SHA-256 $fp" && ok 'status works as the service user' || bad 'status works as the service user'
 pipulse tls status 2>/tmp/epipe.err | head -n 1 >/dev/null
 ! grep -q 'EPIPE\|Unhandled' /tmp/epipe.err && ok 'a closed pipe is not an error' || bad 'a closed pipe is not an error'
+# ...and it must not cut a command short either: init | head -n 1 still makes the CA, and init says it worked.
+rm -rf "$tls"
+( pipulse tls init 2>&1; echo $? > /tmp/init.rc ) | head -n 1 >/dev/null
+[ "$(cat /tmp/init.rc)" = 0 ] && [ -e "$tls/ca/ca.key" ] && openssl verify -CAfile "$tls/ca/ca.crt" "$tls/leaf.crt" >/dev/null 2>&1 && ok 'init piped to head still makes the CA' || bad 'init piped to head still makes the CA'
 pipulse tls export-ca 2>/dev/null | cmp -s - $tls/ca.crt && ok 'export-ca prints ca.crt' || bad 'export-ca prints ca.crt'
 # A native install keeps generated material only in /etc/pipulse/tls (the renew unit can't write elsewhere).
 if PIPULSE_TLS_DIR=/srv/pipulse-tls pipulse tls init > /tmp/dir.log 2>&1; then

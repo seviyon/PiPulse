@@ -1,8 +1,9 @@
 import { X509Certificate } from 'node:crypto';
 import { readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cli, lockFor, main } from '../src/cli.js';
+import { cli, ignoreClosedPipe, lockFor, main } from '../src/cli.js';
 import { buildConstraints } from '../src/constraints.js';
 import { runTransaction } from '../src/journal.js';
 import { paths, pub, writeState } from '../src/layout.js';
@@ -73,6 +74,22 @@ describe('lockFor', () => {
     expect(await main(['constructor'], c)).toBe(2);
     expect(await main(['toString'], c)).toBe(2);
     expect(() => statSync(missing)).toThrow(/ENOENT/);
+  });
+});
+
+describe('a reader that closes the pipe early', () => {
+  it('drops the write and lets the command finish; other stream errors still throw', () => {
+    const stream = new PassThrough();
+    ignoreClosedPipe(stream);
+    expect(() =>
+      stream.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    ).not.toThrow();
+    expect(() =>
+      stream.emit('error', Object.assign(new Error('destroyed'), { code: 'ERR_STREAM_DESTROYED' }))
+    ).not.toThrow();
+    expect(() =>
+      stream.emit('error', Object.assign(new Error('disk'), { code: 'ENOSPC' }))
+    ).toThrow('disk');
   });
 });
 
