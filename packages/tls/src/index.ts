@@ -11,3 +11,6 @@ export * from './constraints.js';
 export * from './envfile.js';
 export * from './layout.js';
 export * from './material.js';
+export * from './journal.js';
+export * from './proc.js';
+export * from './lock.js';
