@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { opensslVersion } from './issue.js';
 import { leafNames } from './constraints.js';
-import { removeTree } from './files.js';
+import { pathExists, removeTree } from './files.js';
 import { recover } from './journal.js';
 import { paths, pub, writeRenewStatus, type RenewStatus } from './layout.js';
 import {
@@ -119,6 +119,20 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
     return 1;
   }
   if (check.kind === 'none') {
+    // Nothing generated at all is simply "not set up". But a served leaf or a chosen mode with
+    // no CA behind it is a failure the hourly run must not hide behind its last good result.
+    let orphaned: boolean;
+    try {
+      orphaned = pathExists(paths(layout).bundle) || pathExists(paths(layout).state);
+    } catch {
+      orphaned = true; // can't tell: don't claim all is well
+    }
+    if (orphaned) {
+      const reason = 'there is no CA but a certificate or mode is in place: sudo pipulse tls init';
+      record('failed', reason);
+      ctx.err(`renewal failed: ${reason}`);
+      return 1;
+    }
     ctx.out('there is no generated certificate here: sudo pipulse tls init makes one');
     return 0;
   }

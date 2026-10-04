@@ -211,4 +211,21 @@ describe('repairPublic and writeLeaf', () => {
     writeLeaf(dir, ctx.layout, leaf.issued);
     expect(checkLeaf(paths(ctx.layout).bundle, ca, pub(ctx.layout)).kind).toBe('ok');
   });
+
+  it('rewrites leaf.crt from leaf.pem when a kill left them apart', async () => {
+    const { ca } = await stagedCa();
+    repairPublic(ctx, ca);
+    const first = await makeLeaf(ctx, ca);
+    writeLeaf(dir, ctx.layout, first.issued);
+    expect(repairPublic(ctx, ca)).toEqual([]);
+    // A second leaf was written, but the kill came between leaf.crt and leaf.pem: leaf.crt is new.
+    const second = await makeLeaf(ctx, ca);
+    writeFileSync(paths(ctx.layout).leafCrt, second.issued.certPem);
+    expect(repairPublic(ctx, ca)).toEqual(['leaf.crt']);
+    expect(readFileSync(paths(ctx.layout).leafCrt, 'utf8')).toBe(first.issued.certPem);
+    expect(repairPublic(ctx, ca)).toEqual([]);
+    // A missing leaf.crt is restored too.
+    unlinkSync(paths(ctx.layout).leafCrt);
+    expect(repairPublic(ctx, ca)).toEqual(['leaf.crt']);
+  });
 });

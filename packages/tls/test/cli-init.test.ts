@@ -209,6 +209,16 @@ describe('renew', () => {
     expect(leafCert().fingerprint256).toBe(fingerprint);
   });
 
+  it('without a CA but with a served certificate or a chosen mode, records a failure', async () => {
+    await main(['init'], ctx);
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(status()?.result).toBe('not-due');
+    rmSync(paths(ctx.layout).caDir, { recursive: true });
+    expect(await main(['renew'], ctx)).toBe(1);
+    expect(status()).toMatchObject({ result: 'failed' });
+    expect(status()?.reason).toContain('there is no CA');
+  });
+
   it('records a corrupt journal as a failure instead of leaving the last good result', async () => {
     await main(['init'], ctx);
     expect(await main(['renew'], ctx)).toBe(0);

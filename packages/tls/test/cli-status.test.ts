@@ -59,8 +59,8 @@ describe('lockFor', () => {
     const operator = testContext(dir, {
       env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_CERT: '/c.pem', PIPULSE_TLS_KEY: '/k.pem' }
     });
-    expect(lockFor('enable', operator)).toEqual({ create: false });
-    expect(lockFor('disable', operator)).toEqual({ create: false });
+    expect(lockFor('enable', operator)).toEqual({ create: true });
+    expect(lockFor('disable', operator)).toEqual({ create: true });
     expect(lockFor('init', operator)).toBeUndefined();
     expect(lockFor('renew', operator)).toBeUndefined();
   });

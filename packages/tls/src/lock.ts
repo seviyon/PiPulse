@@ -27,8 +27,14 @@ export const LOCK_STALE_MS = 15 * 60_000;
 const FRESH_MS = 5_000;
 /** The holder touches the lock this often; a holder we can't see in /proc is judged by it. */
 export const LOCK_HEARTBEAT_MS = 20_000;
-/** A holder in another PID namespace (another container) is gone after this long without a heartbeat. */
+/** A holder in another PID namespace (another container) looks gone after this long without a heartbeat. */
 export const LOCK_REMOTE_STALE_MS = 90_000;
+/**
+ * ...but only if its heartbeat then stays unchanged for this long on the waiter's own
+ * monotonic clock: a forward wall-clock jump (NTP on a Pi without an RTC) makes every
+ * heartbeat look old until the holder's next one, which arrives within a heartbeat period.
+ */
+export const LOCK_OBSERVE_MS = 2 * LOCK_HEARTBEAT_MS + 5_000;
 
 export class LockError extends Error {
   override name = 'LockError';
@@ -103,6 +109,8 @@ export interface LockOptions {
   identity?: LocalIdentity;
   heartbeatMs?: number;
   remoteStaleMs?: number;
+  /** A monotonic clock in ms (tests replace it); wall-clock jumps must not decide who holds the lock. */
+  monotonic?: () => number;
 }
 
 /**
@@ -165,6 +173,7 @@ export async function withLock<T>(
   const token = randomBytes(16).toString('hex');
   const deadline = now() + (options.waitMs ?? LOCK_WAIT_MS);
 
+  const monotonic = options.monotonic ?? (() => performance.now());
   const heartbeatAge = () => {
     try {
       return Date.now() - statSync(path).mtimeMs;
@@ -172,15 +181,49 @@ export async function withLock<T>(
       return undefined; // released meanwhile
     }
   };
+  /** What the waiter last saw of a remote holder's heartbeat, and since when (monotonic). */
+  let observed: { key: string; since: number } | undefined;
+  let observing = false;
+
+  /**
+   * Whether the holder is gone. A holder in our own PID namespace is judged by its pid and
+   * start time, and a holder that checks out is NEVER broken because of its age: commands
+   * legitimately hold the lock across a confirmation prompt and the clock-sync wait, and the
+   * wall clock jumps forward on a Pi when NTP syncs. Only when identity can't be verified
+   * (no /proc, an old lock file) does the age bound apply. A holder in another namespace is
+   * judged by its heartbeat, confirmed by watching the mtime stand still on the monotonic clock.
+   */
   const holderGone = (holder: LockHolder): boolean => {
+    observing = false;
     if (holder.bootId !== null && me.bootId !== null && holder.bootId !== me.bootId) return true; // before a reboot
     const sameNamespace =
       holder.pidNs !== null && me.pidNs !== null
         ? holder.pidNs === me.pidNs
         : holder.host === me.host;
-    if (sameNamespace) return !(options.alive ?? localHolderAlive)(holder);
+    if (sameNamespace) {
+      if (!(options.alive ?? localHolderAlive)(holder)) return true;
+      const verified =
+        options.alive !== undefined ||
+        (holder.startTime !== null && processIdentity(holder.pid) !== undefined);
+      return !verified && now() - holder.startedAt > (options.staleMs ?? LOCK_STALE_MS);
+    }
     const age = heartbeatAge();
-    return age !== undefined && age > (options.remoteStaleMs ?? LOCK_REMOTE_STALE_MS);
+    if (age === undefined || age <= (options.remoteStaleMs ?? LOCK_REMOTE_STALE_MS)) {
+      observed = undefined;
+      return false;
+    }
+    let mtime: string;
+    try {
+      mtime = String(statSync(path).mtimeMs);
+    } catch {
+      return false;
+    }
+    const key = `${holder.token ?? ''}:${mtime}`;
+    if (observed?.key !== key) {
+      observed = { key, since: monotonic() };
+    }
+    observing = true;
+    return monotonic() - observed.since >= LOCK_OBSERVE_MS;
   };
 
   for (;;) {
@@ -215,17 +258,19 @@ export async function withLock<T>(
     const holder = readHolder(path);
     let stale: boolean;
     if (holder) {
-      stale = holderGone(holder) || now() - holder.startedAt > (options.staleMs ?? LOCK_STALE_MS);
+      stale = holderGone(holder);
     } else {
       const age = heartbeatAge();
       if (age === undefined) continue; // released meanwhile: try again at once
       stale = age > FRESH_MS;
     }
     if (stale) {
+      observed = undefined;
       breakLock(path, holder);
       continue;
     }
-    if (now() >= deadline) {
+    // While a remote holder's heartbeat is being watched, the wait is not cut short by waitMs.
+    if (now() >= deadline && !observing) {
       throw new LockError(
         `another pipulse tls command is running (pid ${holder?.pid ?? '?'}${
           holder?.host && holder.host !== me.host ? ` on ${holder.host}` : ''

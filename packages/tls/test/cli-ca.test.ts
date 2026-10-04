@@ -145,6 +145,32 @@ describe('new-ca', () => {
   });
 });
 
+describe('the lock across a confirmation prompt', () => {
+  it('a second new-ca 20 minutes later is refused while the first still waits at its prompt', async () => {
+    // Reproduces the review finding: the prompt holds the lock, the wall clock moves on,
+    // and the second command must not be let in.
+    let answer!: (yes: boolean) => void;
+    const first = testContext(dir, {
+      tty: true,
+      ask: () => new Promise<boolean>((resolve) => (answer = resolve)),
+      lockAlive: () => true
+    });
+    first.setNow(NOW + 5000);
+    const a = main(['new-ca'], first);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // A holds the lock, at its prompt
+    const second = testContext(dir, { lockAlive: () => true });
+    second.setNow(NOW + 20 * 60_000);
+    expect(await main(['new-ca', '--yes'], second)).toBe(1);
+    expect(second.errors.join('\n')).toContain('another pipulse tls command is running');
+    answer(true);
+    expect(await a).toBe(0);
+    expect(listBackups(ctx.layout)).toHaveLength(1);
+    expect(readMeta(ctx.layout)!.backups.map((b) => b.fingerprint)).toEqual(
+      listBackups(ctx.layout).map((b) => b.fingerprint)
+    );
+  });
+});
+
 describe('the lock', () => {
   it('two pipulse tls commands never overlap: the second is refused while the first holds the lock', async () => {
     const first = main(['new-ca', '--yes'], later()); // takes the lock before its first await

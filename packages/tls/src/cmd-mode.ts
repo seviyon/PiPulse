@@ -8,6 +8,7 @@ import { paths, pub, readState, writeState, type Layout } from './layout.js';
 import { checkCa, checkLeaf, repairPublic, type CaFiles } from './material.js';
 import {
   confirm,
+  ensureTlsDirs,
   isoDate,
   nativeLayoutProblem,
   operatorConfigured,
@@ -50,6 +51,8 @@ async function switchMode(
   to: StateMode,
   previous: StateMode | undefined
 ): Promise<boolean> {
+  // After a 6b-1 install with an operator certificate there is no TLS folder yet.
+  ensureTlsDirs(ctx.layout, ctx.hook);
   writeState(ctx.layout, to, ctx.hook);
   try {
     const mode = readTlsConfig(ctx.env, { releaseDefault: RELEASE_DEFAULT }).mode;

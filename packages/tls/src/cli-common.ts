@@ -4,6 +4,7 @@ import { consequenceText } from './constraints.js';
 import { ensureDir, type FsHook } from './files.js';
 import type { CheckResult } from './health-check.js';
 import { MODES, priv, pub, readMeta, type Layout } from './layout.js';
+import type { LockHolder } from './lock.js';
 
 export class UsageError extends Error {
   override name = 'UsageError';
@@ -38,6 +39,8 @@ export interface Context {
   defaultTlsDir: string;
   /** How long to wait for another pipulse tls command's lock (LOCK_WAIT_MS; tests: 0). */
   lockWaitMs: number;
+  /** Tests only: overrides the check that a lock holder in our PID namespace still runs. */
+  lockAlive?: ((holder: LockHolder) => boolean) | undefined;
   hook?: FsHook | undefined;
 }
 

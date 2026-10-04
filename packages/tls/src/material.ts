@@ -409,5 +409,28 @@ export function repairPublic(ctx: IssueContext, ca: CaFiles): string[] {
     writeMeta(p.meta, wanted, ctx.layout, ctx.hook);
     fixed.push('ca-meta.json');
   }
+  // leaf.crt (what `status` reads) must be the certificate of leaf.pem (what is served): a
+  // kill between writeLeaf's two writes leaves them apart, and nothing else would notice.
+  try {
+    const served = parseBundle(readFileSync(p.bundle, 'utf8'), 'leaf.pem').certs[0];
+    if (served !== undefined) {
+      let shown: string | undefined;
+      try {
+        shown = new X509Certificate(readFileSync(p.leafCrt)).fingerprint256;
+      } catch {
+        shown = undefined;
+      }
+      if (shown !== new X509Certificate(served).fingerprint256) {
+        writeAtomic(p.leafCrt, served, {
+          mode: MODES.publicCert,
+          owner: pub(ctx.layout),
+          hook: ctx.hook
+        });
+        fixed.push('leaf.crt');
+      }
+    }
+  } catch {
+    // No readable leaf.pem (none yet, or not for this user): nothing to copy from.
+  }
   return fixed;
 }

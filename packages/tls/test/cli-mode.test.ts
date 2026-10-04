@@ -176,6 +176,34 @@ describe('enable over an operator certificate that has expired', () => {
   });
 });
 
+describe('enable and disable over an operator certificate with no TLS folder yet', () => {
+  it('create the folder and the state (setup never makes it after a 6b-1 install)', async () => {
+    const tls = join(dir, 'tls');
+    const cert = join(dir, 'op.crt');
+    const key = join(dir, 'op.key');
+    const ca = join(dir, 'op-ca.crt');
+    writeFileSync(cert, fixture('leaf.crt') + fixture('intermediate.crt'), { mode: 0o644 });
+    writeFileSync(key, fixture('leaf.key'), { mode: 0o600 });
+    writeFileSync(ca, fixture('root-ca.crt'), { mode: 0o644 });
+    const run = testContext(dir, {
+      layout: { ...ctx.layout, tlsDir: tls, caRoot: tls },
+      defaultTlsDir: tls,
+      env: {
+        PIPULSE_TLS_DIR: tls,
+        PIPULSE_TLS_CERT: cert,
+        PIPULSE_TLS_KEY: key,
+        PIPULSE_TLS_CA: ca
+      }
+    });
+    expect(existsSync(tls)).toBe(false);
+    expect(await main(['enable', '--yes'], run)).toBe(0);
+    expect(readState(run.layout)).toBe('https');
+    expect(existsSync(join(tls, '.pipulse-tls.lock'))).toBe(false); // released
+    expect(await main(['disable', '--yes'], run)).toBe(0);
+    expect(readState(run.layout)).toBe('legacy-http');
+  });
+});
+
 describe('enable over a certificate browsers would refuse', () => {
   const DAY = 86_400_000;
 

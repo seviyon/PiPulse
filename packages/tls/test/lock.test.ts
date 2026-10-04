@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Layout } from '../src/layout.js';
 import {
   LOCK_FILE,
+  LOCK_OBSERVE_MS,
   LockError,
   breakLock,
   localIdentity,
@@ -140,10 +141,67 @@ describe('withLock', () => {
     expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('other');
   });
 
-  it('clears a lock from another container once its heartbeat is gone', async () => {
+  /** A monotonic clock the fake sleep advances, so a 45 s observation takes no real time. */
+  const fakeTime = (onSleep?: () => void) => {
+    let t = 0;
+    return {
+      monotonic: () => t,
+      sleep: async (ms: number) => {
+        t += ms;
+        onSleep?.();
+      }
+    };
+  };
+
+  it('clears a lock from another container whose heartbeat stays unchanged while watched', async () => {
     writeHolder({ ...other });
     const old = new Date(Date.now() - 5 * 60_000);
     utimesSync(lockPath(), old, old);
+    const time = fakeTime();
+    expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0, ...time })).toBe(
+      'ran'
+    );
+    expect(time.monotonic()).toBeGreaterThanOrEqual(LOCK_OBSERVE_MS);
+  });
+
+  it('keeps a remote holder whose heartbeat shows up while watched (a forward clock jump)', async () => {
+    writeHolder({ ...other });
+    const old = new Date(Date.now() - 2 * 3_600_000); // looks 2 h old after a jump
+    utimesSync(lockPath(), old, old);
+    const time = fakeTime(() => {
+      const now = new Date();
+      utimesSync(lockPath(), now, now); // the holder's next heartbeat
+    });
+    await expect(
+      withLock(layout, async () => 'no', { create: true, waitMs: 0, ...time })
+    ).rejects.toThrow(/on container-b/);
+    expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('other');
+  });
+
+  it('never breaks a verified live holder because of its age (a wall-clock jump)', async () => {
+    let wall = Date.now();
+    let release!: () => void;
+    const held = withLock(layout, () => new Promise<void>((resolve) => (release = resolve)), {
+      create: true,
+      now: () => wall,
+      alive: () => true // /proc doesn't exist on every dev machine; Linux verifies for real
+    });
+    await pause(10);
+    wall += 2 * 3_600_000; // NTP syncs: two hours forward
+    await expect(
+      withLock(layout, async () => 'no', {
+        create: true,
+        waitMs: 0,
+        now: () => wall,
+        alive: () => true
+      })
+    ).rejects.toThrow(LockError);
+    release();
+    await held;
+  });
+
+  it('still bounds the age of a holder whose identity cannot be verified', async () => {
+    writeHolder({ pid: process.pid, startedAt: Date.now() - 16 * 60_000, startTime: null });
     expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0 })).toBe('ran');
   });
 

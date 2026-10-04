@@ -51,8 +51,9 @@ const LOCKED: Readonly<Record<string, boolean>> = {
   'new-ca': true,
   'restore-ca': true,
   renew: false,
-  enable: false,
-  disable: false
+  // enable/disable write state.json even for an operator pair, where no CA folder exists yet
+  enable: true,
+  disable: true
 };
 
 async function dispatch(
@@ -190,7 +191,8 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
         create: lock.create,
         waitMs: ctx.lockWaitMs,
         now: ctx.now,
-        sleep: ctx.sleep
+        sleep: ctx.sleep,
+        ...(ctx.lockAlive ? { alive: ctx.lockAlive } : {})
       });
     }
     return await run();
