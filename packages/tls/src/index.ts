@@ -8,3 +8,4 @@ export * from './replacement.js';
 export { checkHealth, healthTarget, healthy, type CheckResult } from './health-check.js';
 export * from './issue.js';
 export * from './constraints.js';
+export * from './envfile.js';
