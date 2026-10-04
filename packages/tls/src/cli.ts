@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli-common.js';
 import { readClock } from './clock.js';
+import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
 import { init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
@@ -66,7 +67,11 @@ async function dispatch(
       return await init(ctx, args);
     case 'renew':
       return await renew(ctx, args);
-    // Tasks 9, 10 and 24 add: new-ca, restore-ca, enable, disable, sidecar-init, sidecar, sidecar-health.
+    case 'new-ca':
+      return await newCa(ctx, args);
+    case 'restore-ca':
+      return await restoreCa(ctx, args);
+    // Tasks 10 and 24 add: enable, disable, sidecar-init, sidecar, sidecar-health.
     default:
       throw new UsageError(
         command === undefined ? 'no command given' : `unknown command: ${command}`
