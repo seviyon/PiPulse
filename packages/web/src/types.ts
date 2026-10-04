@@ -135,9 +135,15 @@ export interface WebhookStatus {
 
 /** /api/config `tls`; mirrors packages/api/src/tls-status.ts. */
 export type TlsView =
-  | { mode: 'http'; reason: 'env' | 'state' | 'default'; stateMode?: 'https' | 'legacy-http' }
+  | {
+      mode: 'http';
+      reason: 'env' | 'state' | 'default';
+      stateMode?: 'https' | 'legacy-http';
+      inContainer?: boolean;
+    }
   | {
       mode: 'https';
+      inContainer?: boolean;
       source: 'operator' | 'generated';
       validity: 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
       notBefore: number;
@@ -152,4 +158,25 @@ export type TlsView =
       clock: 'synced' | 'unsynced' | 'unknown';
       clockSynced: boolean;
       reload: { state: 'ok' | 'failing'; lastAttempt: number | null; lastError: string | null };
+      /** Generated certificates only. `coverage` appears only with `ca.state === 'ok'`. */
+      ca?:
+        | {
+            state: 'ok';
+            subject: string;
+            createdAt: number;
+            notAfter: number;
+            constraints: { dns: string[]; excludedDns: string[]; subnets: string[] };
+            backups: number;
+          }
+        | { state: 'transitional' }
+        | { state: 'unavailable' };
+      coverage?: { dns: string[]; ipSubnets: string[] };
+      renewal?: {
+        state: 'ok' | 'waiting-clock' | 'failing' | 'unknown';
+        lastAttempt: number | null;
+        result: 'renewed' | 'not-due' | 'waiting-clock' | 'failed' | null;
+        reason: string | null;
+      };
+      metadata?: 'ok' | 'transitional' | 'unreadable';
+      metadataProblems?: { file: 'ca-meta.json' | 'renew-status.json'; message: string }[];
     };

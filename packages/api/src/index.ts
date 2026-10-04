@@ -24,7 +24,14 @@ import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
-export { healthBody, tlsView, type TlsView } from './tls-status.js';
+export {
+  healthBody,
+  readGeneratedExtras,
+  tlsView,
+  type GeneratedExtras,
+  type MetadataProblem,
+  type TlsView
+} from './tls-status.js';
 export type { AuthOptions } from './auth-routes.js';
 export type { AlertRulesOptions } from './alert-routes.js';
 export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
@@ -213,7 +220,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
   // however far the clock later jumps.
   const health = options.health ?? createHealth(db);
-  const readTls = options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default' }));
+  const readTls =
+    options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default', inContainer: false }));
   app.get('/api/health', async (_request, reply) => {
     const body = healthBody(health.check(), readTls(), options.auth?.passwordHash !== undefined);
     return body.status === 'failing' ? reply.status(503).send(body) : body;

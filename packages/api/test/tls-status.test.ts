@@ -43,7 +43,8 @@ describe('tlsView', () => {
     ).toEqual({
       mode: 'http',
       reason: 'state',
-      stateMode: 'legacy-http'
+      stateMode: 'legacy-http',
+      inContainer: false
     });
   });
 

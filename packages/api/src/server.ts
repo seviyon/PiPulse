@@ -46,7 +46,7 @@ import {
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
-import { tlsView } from './tls-status.js';
+import { readGeneratedExtras, tlsView } from './tls-status.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
@@ -342,7 +342,11 @@ const app = buildServer(db, {
   health,
   ...(CERT ? { https: { key: CERT.key, cert: CERT.cert } } : {}),
   ...(HSTS_SECONDS !== undefined ? { hstsSeconds: HSTS_SECONDS } : {}),
-  tls: () => tlsView(TLS, tls.provider, Date.now()),
+  tls: () =>
+    tlsView(TLS, tls.provider, Date.now(), {
+      ...(TLS.source?.kind === 'generated' ? { extras: readGeneratedExtras(TLS.dir) } : {}),
+      inContainer: IN_CONTAINER
+    }),
   version: VERSION,
   node: NODE
 });
