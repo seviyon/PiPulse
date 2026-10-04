@@ -6,3 +6,4 @@ export * from './inspect.js';
 export * from './reload.js';
 export * from './replacement.js';
 export { checkHealth, healthTarget, healthy, type CheckResult } from './health-check.js';
+export * from './issue.js';
