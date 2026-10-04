@@ -16,7 +16,7 @@ import {
   renameSync,
   rmSync,
   statSync,
-  writeSync
+  writeFileSync
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -139,7 +139,11 @@ export function syncDir(path: string): void {
   }
 }
 
-/** Removes temp files a crashed writeAtomic left behind (every command runs this first). */
+/**
+ * Removes temp files a crashed writeAtomic left behind. Only for a caller that
+ * holds the TLS lock (mutating commands): it has no age check, so a read-only
+ * command that called it could delete a running writer's temp file.
+ */
 export function cleanTemp(dir: string): void {
   let names: string[];
   try {
@@ -183,7 +187,9 @@ export function writeAtomic(
     }
     fchmodSync(fd, options.mode);
     hook('write', temp);
-    writeSync(fd, data);
+    // writeFileSync loops until every byte is written; a bare writeSync may write less
+    // without throwing, and a cut-off file would be renamed over a good ca.key or leaf.pem.
+    writeFileSync(fd, data);
     hook('fsync', temp);
     fsyncSync(fd);
   } catch (error) {

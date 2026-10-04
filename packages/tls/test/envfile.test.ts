@@ -47,4 +47,20 @@ describe('settingsEnv', () => {
     );
     expect(env['PIPULSE_TLS_NAMES']).toBe('a');
   });
+  const failing = (code: string) => ({
+    read: () => {
+      throw Object.assign(new Error('boom'), { code });
+    }
+  });
+  it('refuses an unreadable file when nothing in the environment says what to do', () => {
+    expect(() => settingsEnv({}, failing('EACCES'))).toThrow(/can't read .*EACCES/);
+    expect(() => settingsEnv({ PATH: '/usr/bin' }, failing('EPERM'))).toThrow(/EPERM/);
+  });
+  it('accepts a hidden file when systemd or Docker already loaded PIPULSE_TLS', () => {
+    expect(settingsEnv({ PIPULSE_TLS: 'off' }, failing('EACCES'))['PIPULSE_TLS']).toBe('off');
+  });
+  it('never swallows other read errors, even with PIPULSE_TLS set', () => {
+    expect(() => settingsEnv({ PIPULSE_TLS: 'off' }, failing('EIO'))).toThrow(/EIO/);
+    expect(() => settingsEnv({ PIPULSE_TLS: 'off' }, failing('EISDIR'))).toThrow(/EISDIR/);
+  });
 });

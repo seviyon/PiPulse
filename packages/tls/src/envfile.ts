@@ -41,8 +41,19 @@ export function settingsEnv(
     fromFile = parseEnvFile(
       (options.read ?? ((path) => readFileSync(path, 'utf8')))(options.file ?? ENV_FILE)
     );
-  } catch {
-    // Missing, or hidden by the renew unit's sandbox: the environment has it.
+  } catch (error) {
+    // Missing is fine (the environment has everything). A file that exists but can't be
+    // read is fine only when systemd or Docker already loaded the settings (PIPULSE_TLS is
+    // set): otherwise an unreadable file would silently run on defaults and could ignore
+    // PIPULSE_TLS=off. Anything else (EIO, EISDIR, ...) is never swallowed.
+    const code = (error as NodeJS.ErrnoException).code;
+    const hidden = (code === 'EACCES' || code === 'EPERM') && env['PIPULSE_TLS'] !== undefined;
+    if (code !== 'ENOENT' && !hidden) {
+      throw new Error(
+        `can't read ${options.file ?? ENV_FILE} (${code ?? 'error'}): fix it, or run with the settings in the environment`,
+        { cause: error }
+      );
+    }
   }
   const merged: NodeJS.ProcessEnv = { ...fromFile };
   for (const [key, value] of Object.entries(env)) if (value !== undefined) merged[key] = value;

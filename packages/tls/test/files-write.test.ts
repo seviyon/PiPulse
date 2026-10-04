@@ -23,6 +23,13 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const me = () => ({ uid: process.getuid!(), gid: process.getgid!() });
 
 describe('writeAtomic', () => {
+  it('writes every byte of a large file', () => {
+    const data = 'x'.repeat(8 * 1024 * 1024);
+    const path = join(dir, 'big');
+    writeAtomic(path, data, { mode: 0o600 });
+    expect(statSync(path).size).toBe(data.length);
+  });
+
   it('writes the content with exactly the requested mode, whatever the umask', () => {
     const old = process.umask(0o000);
     try {
