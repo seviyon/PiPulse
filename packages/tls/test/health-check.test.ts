@@ -1,11 +1,19 @@
 import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import type { AddressInfo } from 'node:net';
+import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkHealth, healthTarget, healthy, VERIFY_CODES } from '../src/health-check.js';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  checkHealth,
+  healthTarget,
+  healthy,
+  verificationFailure,
+  VERIFY_CODES
+} from '../src/health-check.js';
+import { issueCa, issueLeaf } from '../src/issue.js';
 import { fixture, tempDir } from './helpers.js';
+import { TEST_OPENSSL } from './openssl.js';
 
 let dir: string;
 let server: HttpServer | undefined;
@@ -240,6 +248,71 @@ describe('checkHealth identity', () => {
   });
 });
 
+describe('checkHealth with an IPv6 identity', () => {
+  let ipv6 = false;
+  beforeAll(async () => {
+    ipv6 = await new Promise<boolean>((resolve) => {
+      const probe = createNetServer();
+      probe.once('error', () => resolve(false));
+      probe.listen(0, '::1', () => probe.close(() => resolve(true)));
+    });
+  });
+
+  // skipIf(!ipv6) would run before beforeAll set it; ask at run time instead.
+  it('passes a leaf that lists IP:::1 on a server bound to ::1', async ({ skip }) => {
+    if (!ipv6) skip();
+    const work = tempDir();
+    try {
+      const now = Date.now();
+      const scope = {
+        dns: ['localhost'],
+        excludedDns: [],
+        ip: [
+          { address: '127.0.0.1', prefix: 32 },
+          { address: '::1', prefix: 128 }
+        ]
+      };
+      const ca = await issueCa({
+        openssl: TEST_OPENSSL,
+        workDir: work,
+        subject: 'Health CA',
+        scope,
+        now
+      });
+      writeFileSync(join(work, 'ca.key'), ca.keyPem, { mode: 0o600 });
+      writeFileSync(join(work, 'ca.crt'), ca.certPem);
+      const leaf = await issueLeaf({
+        openssl: TEST_OPENSSL,
+        workDir: work,
+        ca: {
+          keyPath: join(work, 'ca.key'),
+          certPath: join(work, 'ca.crt'),
+          certPem: ca.certPem
+        },
+        subject: 'localhost',
+        dns: [],
+        ip: ['::1'],
+        now
+      });
+      const port = await listen(
+        createHttpsServer({ key: leaf.keyPem, cert: leaf.certPem }, answer(200, OK)),
+        '::1'
+      );
+      const env = {
+        PIPULSE_TLS: 'on',
+        PIPULSE_PORT: String(port),
+        PIPULSE_HOST: '::1',
+        PIPULSE_TLS_CERT: put('v6cert.pem', leaf.certPem, 0o644),
+        PIPULSE_TLS_KEY: put('v6key.pem', leaf.keyPem),
+        PIPULSE_TLS_CA: put('v6ca.pem', ca.certPem, 0o644)
+      };
+      expect((await checkHealth(env, { readState: noState })).code).toBe(0);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('checkHealth over HTTP', () => {
   it('passes for a pre-6b body and fails for 503', async () => {
     const port = await listen(createHttpServer(answer(200, { status: 'ok' })));
@@ -256,5 +329,19 @@ describe('checkHealth over HTTP', () => {
     expect((await checkHealth({ PIPULSE_PORT: String(port) }, { readState: noState })).code).toBe(
       1
     );
+  });
+});
+
+describe('verificationFailure', () => {
+  it('treats a name-constraint violation as a verification failure (exit 2)', () => {
+    expect(
+      verificationFailure({ code: 'UNSPECIFIED', message: 'permitted subtree violation' })
+    ).toBe(true);
+    expect(
+      verificationFailure({ code: 'UNSPECIFIED', message: 'excluded subtree violation' })
+    ).toBe(true);
+    expect(verificationFailure({ code: 'UNSPECIFIED', message: 'socket hang up' })).toBe(false);
+    expect(verificationFailure({ code: 'CERT_HAS_EXPIRED', message: '' })).toBe(true);
+    expect(verificationFailure({ code: 'ECONNREFUSED', message: '' })).toBe(false);
   });
 });
