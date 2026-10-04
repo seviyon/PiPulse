@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -24,7 +25,7 @@ import {
   writeLeaf,
   type IssueContext
 } from '../src/material.js';
-import { tempDir } from './helpers.js';
+import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 
 let dir: string;
@@ -131,6 +132,70 @@ describe('checkLeaf', () => {
     chmodSync(join(dirs2.pub, 'leaf.pem'), 0o644);
     const check = checkLeaf(join(dirs2.pub, 'leaf.pem'), two.ca);
     expect(check.kind === 'refused' && check.problem).toMatch(/broader than 640/);
+  });
+});
+
+describe('a CA that cannot be seen is not "none"', () => {
+  const asRoot = process.getuid?.() === 0;
+
+  it.skipIf(asRoot)('reports an unreadable parent as partial, never as no CA', () => {
+    const parent = join(dir, 'locked');
+    mkdirSync(join(parent, 'ca'), { recursive: true });
+    chmodSync(parent, 0o000);
+    try {
+      const check = checkCa(join(parent, 'ca'));
+      expect(check.kind).toBe('partial');
+      expect(check.kind === 'partial' && check.problem).toMatch(/can't be checked \(EACCES\)/);
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+  });
+
+  it.skipIf(asRoot)('reports a file it cannot stat as such, not as missing', () => {
+    const caDir = join(dir, 'ca');
+    mkdirSync(caDir);
+    chmodSync(caDir, 0o000);
+    try {
+      const check = checkCa(caDir);
+      expect(check.kind === 'partial' && check.problem).toMatch(/can't be checked/);
+      expect(check.kind === 'partial' && check.problem).not.toMatch(/is missing/);
+    } finally {
+      chmodSync(caDir, 0o700);
+    }
+  });
+
+  it('still says none for a folder that is not there, and missing for an absent file', () => {
+    expect(checkCa(join(dir, 'nothing')).kind).toBe('none');
+    const caDir = join(dir, 'ca');
+    mkdirSync(caDir);
+    const check = checkCa(caDir);
+    expect(check.kind === 'partial' && check.problem).toMatch(/is missing ca\.key, ca\.crt/);
+  });
+
+  it('checkLeaf: missing only for ENOENT', () => {
+    expect(checkLeaf(join(dir, 'nope', 'leaf.pem'), { certPem: '' }).kind).toBe('missing');
+    if (asRoot) return;
+    const locked = join(dir, 'locked');
+    mkdirSync(locked);
+    chmodSync(locked, 0o000);
+    try {
+      const check = checkLeaf(join(locked, 'leaf.pem'), { certPem: '' });
+      expect(check.kind === 'refused' && check.problem).toMatch(/can't be checked \(EACCES\)/);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  it('checkLeaf: an expired leaf is still "ok" and reports its dates (callers decide)', () => {
+    const bundle = join(dir, 'expired.pem');
+    writeFileSync(
+      bundle,
+      fixture('expired.key') + fixture('expired.crt') + fixture('intermediate.crt'),
+      { mode: 0o640 }
+    );
+    const check = checkLeaf(bundle, { certPem: fixture('root-ca.crt') });
+    expect(check.kind).toBe('ok');
+    expect(check.kind === 'ok' && check.notAfter).toBeLessThan(Date.now());
   });
 });
 

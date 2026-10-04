@@ -1,6 +1,6 @@
 import { X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { DEFAULT_TLS_DIR, parseState, TlsConfigError, type StateMode } from './config.js';
 import { parseConstraints, type Constraints } from './constraints.js';
 import { writeAtomic, type FsHook, type Owner } from './files.js';
@@ -54,9 +54,18 @@ export function layoutFrom(
   options: { uid?: number; gid?: number; privateGid?: number; readGroup?: () => string } = {}
 ): Layout {
   const tlsDir = env['PIPULSE_TLS_DIR']?.trim() || DEFAULT_TLS_DIR;
+  const caRoot = env['PIPULSE_TLS_CA_DIR']?.trim() || tlsDir;
+  // Run as root through sudo, a relative path would resolve against the caller's directory.
+  for (const [setting, value] of [
+    ['PIPULSE_TLS_DIR', tlsDir],
+    ['PIPULSE_TLS_CA_DIR', caRoot]
+  ] as const) {
+    if (!isAbsolute(value))
+      throw new TlsConfigError(`${setting}: ${value} must be an absolute path`);
+  }
   return {
     tlsDir,
-    caRoot: env['PIPULSE_TLS_CA_DIR']?.trim() || tlsDir,
+    caRoot,
     uid: options.uid ?? 0,
     gid: options.gid ?? groupId('pipulse', options.readGroup),
     privateGid: options.privateGid ?? 0
@@ -223,9 +232,16 @@ export const storedConstraintsJson = (
   constraints: Constraints
 ) => `${JSON.stringify({ version: 1, fingerprint, createdAt, constraints }, null, 2)}\n`;
 
-/** ca.old-20261001T101500Z: sorts by time, and says when the CA was replaced. */
-export function backupName(now: number): string {
-  return `ca.old-${new Date(now).toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`;
+/**
+ * ca.old-20261001T101500Z: sorts by time, and says when the CA was replaced.
+ * The name has one-second resolution: pass `taken` (does that folder exist?) and a
+ * second backup in the same second moves on to the next free second.
+ */
+export function backupName(now: number, taken: (name: string) => boolean = () => false): string {
+  for (let at = now; ; at += 1000) {
+    const name = `ca.old-${new Date(at).toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`;
+    if (!taken(name)) return name;
+  }
 }
 
 export function listBackups(layout: Layout): BackupInfo[] {

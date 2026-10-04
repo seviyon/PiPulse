@@ -1,5 +1,5 @@
 import { createPrivateKey, randomBytes, X509Certificate } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   canonicalName,
@@ -89,17 +89,45 @@ export const subnetsSetting = (env: NodeJS.ProcessEnv) => list(env['PIPULSE_TLS_
 export const recoveryHint = (layout: Layout) =>
   `restore a backup (sudo pipulse tls restore-ca <ca.old-…>) or move ${paths(layout).caDir} aside and run sudo pipulse tls init to make a new CA (every browser must then trust the new one)`;
 
+/**
+ * Whether `path` is there: true, false (ENOENT only), or the error's one-line
+ * reason. A path we can't stat (EACCES, EIO, a sandbox or a missing volume) is
+ * never "absent": reporting a CA that merely can't be seen as "none" would let
+ * init make a second one. lstat, so a dangling symlink counts as present and is
+ * refused later by the file policy.
+ */
+function probe(path: string): true | false | string {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? false : `can't be checked (${code ?? 'error'})`;
+  }
+}
+
 const cn = (cert: X509Certificate) => /(?:^|\n)CN=([^\n]*)/.exec(cert.subject)?.[1] ?? '';
 
 /** The CA in `dir`, checked end to end. A partial CA is reported, never regenerated. */
 export function checkCa(dir: string): CaCheck {
-  if (!existsSync(dir)) return { kind: 'none' };
+  const there = probe(dir);
+  if (there === false) return { kind: 'none' };
+  if (typeof there === 'string') return { kind: 'partial', problem: `${dir} ${there}` };
   const keyPath = join(dir, 'ca.key');
   const certPath = join(dir, 'ca.crt');
   const constraintsPath = join(dir, 'constraints.json');
-  const missing = [keyPath, certPath, constraintsPath]
-    .filter((path) => !existsSync(path))
-    .map((path) => basename(path));
+  const checks = [keyPath, certPath, constraintsPath].map((path) => ({
+    name: basename(path),
+    there: probe(path)
+  }));
+  const unseen = checks.filter(({ there }) => typeof there === 'string');
+  if (unseen.length > 0) {
+    return {
+      kind: 'partial',
+      problem: `${dir}: ${unseen.map(({ name, there }) => `${name} ${there as string}`).join(', ')}`
+    };
+  }
+  const missing = checks.filter(({ there }) => there === false).map(({ name }) => name);
   if (missing.length > 0)
     return { kind: 'partial', problem: `${dir} is missing ${missing.join(', ')}` };
   const partial = (problem: string): CaCheck => ({
@@ -144,9 +172,16 @@ const canonicalIp = (text: string) => {
   }
 };
 
-/** leaf.pem counts only if its key matches and it verifies against `ca` (the CA in ca/). */
+/**
+ * leaf.pem counts only if its key matches and it verifies against `ca` (the CA in ca/).
+ * Dates are not judged here: an expired or not-yet-valid leaf comes back `ok` with its
+ * `notBefore`/`notAfter`, and the caller (renew, status) decides what that means.
+ */
 export function checkLeaf(bundlePath: string, ca: { certPem: string }, owner?: Owner): LeafCheck {
-  if (!existsSync(bundlePath)) return { kind: 'missing' };
+  const there = probe(bundlePath);
+  if (there === false) return { kind: 'missing' };
+  if (typeof there === 'string')
+    return { kind: 'refused', problem: `${basename(bundlePath)} ${there}` };
   try {
     const bundle = parseBundle(
       readSecureFile(

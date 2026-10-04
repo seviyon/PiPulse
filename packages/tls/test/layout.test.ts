@@ -46,8 +46,26 @@ describe('layoutFrom', () => {
         .caRoot
     ).toBe('/tls-ca');
   });
+  it('refuses a relative PIPULSE_TLS_DIR or PIPULSE_TLS_CA_DIR', () => {
+    const group = () => 'pipulse:x:998:\n';
+    expect(() => layoutFrom({ PIPULSE_TLS_DIR: 'tls' }, { readGroup: group })).toThrow(
+      /PIPULSE_TLS_DIR: tls must be an absolute path/
+    );
+    expect(() =>
+      layoutFrom({ PIPULSE_TLS_DIR: '/tls', PIPULSE_TLS_CA_DIR: './ca' }, { readGroup: group })
+    ).toThrow(/PIPULSE_TLS_CA_DIR: \.\/ca must be an absolute path/);
+  });
   it('explains a missing pipulse group', () => {
     expect(() => groupId('pipulse', () => 'root:x:0:\n')).toThrow(/install PiPulse first/);
+  });
+});
+
+describe('backupName', () => {
+  it('moves on to the next free second when the name is taken', () => {
+    const now = Date.UTC(2026, 9, 1, 10, 15, 0);
+    const taken = new Set(['ca.old-20261001T101500Z', 'ca.old-20261001T101501Z']);
+    expect(backupName(now, (name) => taken.has(name))).toBe('ca.old-20261001T101502Z');
+    expect(backupName(now)).toBe('ca.old-20261001T101500Z');
   });
 });
 
