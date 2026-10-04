@@ -124,6 +124,13 @@ describe('cli entry', () => {
 });
 
 describe('status', () => {
+  it('shows the running server from the status file, and "not running" without one', async () => {
+    ctx.env['PIPULSE_RUNTIME_DIR'] = join(dir, 'run');
+    await main(['status'], ctx);
+    expect(ctx.lines.join('\n')).toMatch(
+      /Active \(the running server\)\n {2}not running \(missing\)/
+    );
+  });
   it('describes an install with nothing generated yet', async () => {
     expect(await main(['status'], ctx)).toBe(0);
     const text = ctx.lines.join('\n');

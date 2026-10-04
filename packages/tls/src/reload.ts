@@ -48,6 +48,11 @@ export function startReloader(options: {
   pollMs?: number;
   now?: () => number;
   log?: (message: string) => void;
+  /**
+   * Called after every reload attempt, successful or not, so the server can
+   * republish what it serves. A listener that throws never stops polling.
+   */
+  onChange?: () => void;
   /** false: no timer, the caller drives poll() (tests). */
   timer?: boolean;
 }): CertificateProvider {
@@ -69,7 +74,7 @@ export function startReloader(options: {
     }
   };
 
-  const attempt = () => {
+  const tryReload = () => {
     state.lastAttempt = now();
     let candidate: LoadedCertificate;
     try {
@@ -104,6 +109,18 @@ export function startReloader(options: {
     state.lastError = null;
     lastLogged = undefined;
     log(`HTTPS certificate reloaded (SHA-256 ${candidate.fingerprint})`);
+  };
+
+  const attempt = () => {
+    try {
+      tryReload();
+    } finally {
+      try {
+        options.onChange?.();
+      } catch {
+        // a broken listener must not stop the polling
+      }
+    }
   };
 
   const poll = () => {

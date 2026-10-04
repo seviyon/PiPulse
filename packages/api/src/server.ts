@@ -27,14 +27,17 @@ import {
 import { parseDuration } from '@pipulse/storage/duration';
 import {
   checkReplacement,
+  DEFAULT_RUNTIME_DIR,
   EXPIRING_SOON_MS,
   RELEASE_DEFAULT,
   loadCertificate,
+  processIdentity,
   readClock,
   readTlsConfig,
   startReloader,
   statSignature,
   validityOf,
+  writeRuntimeStatus,
   type CertSource,
   type CertificateProvider,
   type LoadedCertificate,
@@ -283,6 +286,41 @@ const alertFeed = createFeed<AlertEvent>();
 // hook needs to reach the engine once it exists; held in a property assigned
 // later instead of a reassigned `let`.
 const tls: { provider?: CertificateProvider } = {};
+
+// systemd's RuntimeDirectory= (and Docker's tmpfs) makes this folder; a dev run has none and
+// nothing is written. `pipulse tls status` reads the file, so it needs no HTTP and no session.
+const RUNTIME_DIR = process.env['PIPULSE_RUNTIME_DIR']?.trim() || DEFAULT_RUNTIME_DIR;
+const IDENTITY = processIdentity(process.pid);
+let runtimeWarned = false;
+function publishRuntime(): void {
+  if (!IDENTITY || !existsSync(RUNTIME_DIR)) return;
+  const cert = tls.provider?.current();
+  try {
+    writeRuntimeStatus(RUNTIME_DIR, {
+      version: 1,
+      transport: CERT ? 'https' : 'http',
+      certificate:
+        cert && tls.provider
+          ? {
+              source: cert.source,
+              fingerprint: cert.fingerprint,
+              class: cert.class,
+              notAfter: cert.notAfter,
+              reload: tls.provider.reload()
+            }
+          : null,
+      pid: process.pid,
+      ...IDENTITY,
+      writtenAt: Date.now()
+    });
+  } catch (error) {
+    if (!runtimeWarned)
+      console.warn(
+        `[pipulse] could not write ${RUNTIME_DIR}/tls-status.json: ${(error as Error).message}`
+      );
+    runtimeWarned = true;
+  }
+}
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
@@ -330,7 +368,8 @@ if (CERT && TLS.source) {
         cert: cert.cert,
         minVersion: 'TLSv1.2'
       }),
-    log: (message) => console.warn(`[pipulse] ${message}`)
+    log: (message) => console.warn(`[pipulse] ${message}`),
+    onChange: publishRuntime
   });
 }
 // Rolls raw samples up into 1m/1h/1d buckets and prunes past retention, every
@@ -379,6 +418,7 @@ engine.alerts = startAlerts(db, {
 app
   .listen({ port: PORT, host: HOST })
   .then(() => {
+    publishRuntime();
     const { port } = app.server.address() as AddressInfo;
     const where = CERT
       ? `https://${HOST}:${port} (certificate: ${CERT.source}, valid until ${new Date(CERT.notAfter).toISOString().slice(0, 10)}, SHA-256 ${CERT.fingerprint})`

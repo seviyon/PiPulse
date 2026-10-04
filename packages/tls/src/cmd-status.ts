@@ -11,10 +11,12 @@ import {
   readMeta,
   readRenewStatus,
   readState,
+  userId,
   type CaMeta,
   type RenewStatus
 } from './layout.js';
 import { parseCertificateFile } from './pem.js';
+import { DEFAULT_RUNTIME_DIR, readRuntimeStatus, type RuntimeView } from './runtime-status.js';
 import {
   isoDate,
   isoMinute,
@@ -35,8 +37,8 @@ export interface LeafInfo {
   verifies: boolean | null;
 }
 
-/** What the running server reports (Task 14 fills this in from /run/pipulse/tls-status.json). */
-export type ActiveView = { state: 'unknown' };
+/** What the running server reports, from its status file (/run/pipulse/tls-status.json). */
+export type ActiveView = RuntimeView;
 
 export interface StatusReport {
   configured: {
@@ -183,7 +185,9 @@ export function collectStatus(ctx: Context): StatusReport {
       clock: { state: clock.state, trust: ctx.env['PIPULSE_TLS_CLOCK']?.trim() === 'trust' },
       journal
     },
-    active: { state: 'unknown' },
+    active: readRuntimeStatus(ctx.env['PIPULSE_RUNTIME_DIR']?.trim() || DEFAULT_RUNTIME_DIR, {
+      expectUid: userId('pipulse')
+    }),
     renewal
   };
 }
@@ -219,10 +223,29 @@ function renewalLine(renewal: RenewStatus): string {
   return `${isoMinute(renewal.lastAttempt)}: ${what}${renewal.reason ? ` (${renewal.reason})` : ''}`;
 }
 
-/** Task 14 replaces this with the runtime-status reader's view. */
 export function activeLines(active: ActiveView): string[] {
-  void active;
-  return ['  not reported by this version: systemctl status pipulse'];
+  switch (active.state) {
+    case 'running': {
+      const s = active.status;
+      const lines = [`  ${s.transport.toUpperCase()}, pid ${s.pid}`];
+      if (s.certificate) {
+        const c = s.certificate;
+        lines.push(
+          `  serving SHA-256 ${c.fingerprint} (${c.source}, ${c.class}, valid until ${isoMinute(c.notAfter)})`
+        );
+        lines.push(
+          `  reload: ${c.reload.state}${c.reload.lastError ? `: ${c.reload.lastError}` : ''}`
+        );
+      }
+      return lines;
+    }
+    case 'not-running':
+      return [`  not running (${active.reason})`];
+    case 'status-file-corrupt':
+      return [`  status-file-corrupt: ${active.problem}`];
+    default:
+      return [`  unknown: ${active.problem}`];
+  }
 }
 
 export function formatStatus(report: StatusReport, ctx: Context): string[] {
@@ -296,6 +319,17 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
       '  Journal:   an unfinished CA change is pending; init, renew, new-ca, restore-ca, enable or disable finishes it'
     );
   lines.push('Active (the running server)', ...activeLines(report.active));
+  if (
+    report.active.state === 'running' &&
+    report.active.status.transport === 'https' &&
+    report.active.status.certificate?.source === 'generated' &&
+    c.leaf &&
+    report.active.status.certificate.fingerprint !== c.leaf.fingerprint
+  ) {
+    lines.push(
+      '  (a newer certificate is on disk; the server picks it up within about two minutes)'
+    );
+  }
   lines.push('Last renewal', `  ${report.renewal ? renewalLine(report.renewal) : 'none recorded'}`);
   if (
     [c.problem, c.caProblem, c.leafProblem].some(
