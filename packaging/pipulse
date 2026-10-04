@@ -2,6 +2,8 @@
 # pipulse — PiPulse's command-line helper (installed as /usr/bin/pipulse).
 set -eu
 node=/opt/pipulse/node/bin/node
+# The Docker image has no bundled Node of its own: use the image's.
+[ -x "$node" ] || node=/usr/local/bin/node
 app=/opt/pipulse/app
 env=/etc/pipulse/pipulse.env
 run() {
@@ -20,6 +22,10 @@ case ${1:-} in
     run "$app/packages/api/dist/notify-test.js" "$@" ;;
   hash-password)
     run "$app/packages/api/dist/hash-password.js" ;;
+  tls)
+    shift
+    # Mostly run as root: the CLI reads pipulse.env as data itself; never source it here.
+    exec "$node" --disable-warning=ExperimentalWarning "$app/packages/tls/dist/cli.js" "$@" ;;
   *)
-    echo 'usage: pipulse version | notify-test [webhook-id] | hash-password' >&2; exit 2 ;;
+    echo 'usage: pipulse version | notify-test [webhook-id] | hash-password | tls <command> (pipulse tls help)' >&2; exit 2 ;;
 esac

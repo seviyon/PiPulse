@@ -14,3 +14,5 @@ export * from './material.js';
 export * from './journal.js';
 export * from './proc.js';
 export * from './lock.js';
+export * from './cli-common.js';
+export { collectStatus, formatStatus, type StatusReport } from './cmd-status.js';

@@ -4,7 +4,7 @@ import { request } from 'node:https';
 import { isIP } from 'node:net';
 import { checkServerIdentity } from 'node:tls';
 import { pathToFileURL } from 'node:url';
-import { readTlsConfig } from './config.js';
+import { RELEASE_DEFAULT, readTlsConfig } from './config.js';
 import { parseSans } from './inspect.js';
 import { parseBundle, parseCertificateFile } from './pem.js';
 
@@ -95,7 +95,7 @@ export async function checkHealth(
   let config;
   try {
     config = readTlsConfig(env, {
-      releaseDefault: 'http',
+      releaseDefault: RELEASE_DEFAULT,
       ...(options.readState ? { readState: options.readState } : {})
     });
   } catch (error) {

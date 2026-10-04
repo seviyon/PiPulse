@@ -37,6 +37,13 @@ export const DEFAULT_TLS_DIR = '/etc/pipulse/tls';
 export const DEFAULT_TIMESYNC_DIR = '/run/systemd/timesync';
 
 /**
+ * What happens with neither PIPULSE_TLS nor state.json: plain HTTP until
+ * 6b-2c, then 'refuse' (stop with the fix line). The server, the health check
+ * and the CLI all read this one constant.
+ */
+export const RELEASE_DEFAULT: Mode | 'refuse' = 'http';
+
+/**
  * state.json is data, never sourced by a shell: exactly
  * {"version":1,"mode":"https"|"legacy-http"}, nothing else, no key twice
  * (JSON.parse would silently keep the last one).
