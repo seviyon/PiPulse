@@ -255,12 +255,12 @@ describe('the TLS folder on a native install (ruling R15)', () => {
     return testContext(dir, { defaultTlsDir: join(dir, 'default'), ...overrides });
   };
 
-  // enable arrives in Task 10: add it to this list there.
-  it('refuses init, new-ca and restore-ca, naming the setting and the reason', async () => {
+  it('refuses init, new-ca, restore-ca and enable, naming the setting and the reason', async () => {
     for (const command of [
       ['init'],
       ['new-ca', '--yes'],
-      ['restore-ca', 'ca.old-20260101T000000Z', '--yes']
+      ['restore-ca', 'ca.old-20260101T000000Z', '--yes'],
+      ['enable', '--yes']
     ]) {
       const run = native();
       expect(await main(command, run)).toBe(1);

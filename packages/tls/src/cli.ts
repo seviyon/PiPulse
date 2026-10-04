@@ -7,6 +7,7 @@ import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } fro
 import { readClock } from './clock.js';
 import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
+import { disable, enable } from './cmd-mode.js';
 import { init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
@@ -71,7 +72,11 @@ async function dispatch(
       return await newCa(ctx, args);
     case 'restore-ca':
       return await restoreCa(ctx, args);
-    // Tasks 10 and 24 add: enable, disable, sidecar-init, sidecar, sidecar-health.
+    case 'enable':
+      return await enable(ctx, args);
+    case 'disable':
+      return await disable(ctx, args);
+    // Task 24 adds: sidecar-init, sidecar, sidecar-health.
     default:
       throw new UsageError(
         command === undefined ? 'no command given' : `unknown command: ${command}`
