@@ -36,6 +36,9 @@ export interface Rule {
   atMost?: number;
   bitsSet?: number;
   noReadingFor?: number | 'auto';
+  /** ms before expiry at which the served certificate's alert raises. */
+  certExpiresWithin?: number;
+  certExpired?: boolean;
   forMs: number;
   clearAfterMs: number;
   severity: Severity;

@@ -46,6 +46,9 @@ export function formatDuration(ms: number): string {
 
 /** A rule in words, e.g. "CPU temperature ≥ 70 °C for 10 min". */
 export function describeRule(rule: Rule, plugins: PluginInfo[]): string {
+  if (rule.certExpired) return 'HTTPS certificate has expired';
+  if (rule.certExpiresWithin !== undefined)
+    return `HTTPS certificate expires within ${formatDuration(rule.certExpiresWithin)}`;
   const plugin = plugins.find((p) => p.id === rule.metric);
   const name = rule.metric === '*' ? 'Any metric' : (plugin?.label ?? rule.metric);
   const withUnit = (value: number) => {

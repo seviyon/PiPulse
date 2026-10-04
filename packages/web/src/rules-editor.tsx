@@ -202,6 +202,8 @@ export function RulesSection({
       ? { 'aria-invalid': 'true' as const, 'aria-describedby': `rule-${name}-error` }
       : {};
 
+  const certCondition =
+    editing?.draft.condition === 'certExpiresWithin' || editing?.draft.condition === 'certExpired';
   const ruleForm = editing && (
     <form
       ref={form}
@@ -233,38 +235,42 @@ export function RulesSection({
           ))}
         </select>
       )}
-      {field(
-        'metric',
-        'Metric',
-        <select
-          id="rule-metric"
-          value={editing.draft.metric}
-          onChange={set('metric')}
-          {...invalid('metric')}
-        >
-          {editing.draft.condition === 'noReadingFor' && <option value="*">Every metric</option>}
-          {plugins.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-      )}
-      {field(
-        'value',
-        editing.draft.condition === 'noReadingFor'
-          ? 'For (e.g. 5min, or auto)'
-          : editing.draft.condition === 'bitsSet'
-            ? 'Flags (e.g. 0xf)'
-            : 'Value',
-        <input
-          id="rule-value"
-          value={editing.draft.value}
-          onInput={set('value')}
-          {...invalid('value')}
-        />
-      )}
-      {editing.draft.condition !== 'noReadingFor' && (
+      {!certCondition &&
+        field(
+          'metric',
+          'Metric',
+          <select
+            id="rule-metric"
+            value={editing.draft.metric}
+            onChange={set('metric')}
+            {...invalid('metric')}
+          >
+            {editing.draft.condition === 'noReadingFor' && <option value="*">Every metric</option>}
+            {plugins.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        )}
+      {editing.draft.condition !== 'certExpired' &&
+        field(
+          'value',
+          editing.draft.condition === 'noReadingFor'
+            ? 'For (e.g. 5min, or auto)'
+            : editing.draft.condition === 'certExpiresWithin'
+              ? 'Within (e.g. 14d)'
+              : editing.draft.condition === 'bitsSet'
+                ? 'Flags (e.g. 0xf)'
+                : 'Value',
+          <input
+            id="rule-value"
+            value={editing.draft.value}
+            onInput={set('value')}
+            {...invalid('value')}
+          />
+        )}
+      {editing.draft.condition !== 'noReadingFor' && !certCondition && (
         <>
           {field(
             'for',

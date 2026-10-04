@@ -106,6 +106,18 @@ describe('describeRule', () => {
     ).toBe('CPU temperature: no reading for 30 s');
   });
 
+  it('describes certificate rules', () => {
+    expect(
+      describeRule(
+        { ...base, id: 'e', metric: 'certificate', certExpiresWithin: 14 * 86_400_000 },
+        []
+      )
+    ).toBe('HTTPS certificate expires within 14 d');
+    expect(describeRule({ ...base, id: 'f', metric: 'certificate', certExpired: true }, [])).toBe(
+      'HTTPS certificate has expired'
+    );
+  });
+
   it('formats durations in the largest whole unit', () => {
     expect([30_000, 120_000, 2 * HOUR, 90_000].map(formatDuration)).toEqual([
       '30 s',

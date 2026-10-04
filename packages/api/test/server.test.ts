@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { get } from 'node:https';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -192,6 +193,98 @@ describe('api server process', () => {
     child.kill('SIGTERM');
     await once(child, 'exit');
     expect(err).toContain('[pipulse] SEVERE: the HTTPS certificate is expired');
+  }, 20000);
+
+  /** GET over HTTPS without verifying (the test certificates have no trusted root). */
+  const insecureJson = (url: string) =>
+    new Promise<unknown>((resolve, reject) => {
+      get(url, { rejectUnauthorized: false }, (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString()));
+        res.on('end', () => resolve(JSON.parse(body)));
+      }).on('error', reject);
+    });
+
+  it('raises the certificate-expired alert for an expired served chain, and has the rules in force', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const cert = join(dir, 'cert.pem');
+    const key = join(dir, 'key.pem');
+    const timesync = join(dir, 'timesync');
+    writeFileSync(cert, fixture('under-expired.crt') + fixture('expired-intermediate.crt'));
+    writeFileSync(key, fixture('under-expired.key'), { mode: 0o600 });
+    mkdirSync(timesync);
+    writeFileSync(join(timesync, 'synchronized'), '');
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'on',
+        PIPULSE_TLS_CERT: cert,
+        PIPULSE_TLS_KEY: key,
+        PIPULSE_TLS_TIMESYNC_DIR: timesync
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    let err = '';
+    child.stderr.on('data', (chunk: Buffer) => (err += chunk.toString()));
+    const base = await new Promise<string>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        const match = /listening on (https:\/\/\S+)/.exec(out);
+        if (match?.[1]) resolve(match[1]);
+      });
+      child.once('exit', (code) => reject(new Error(`exited ${String(code)}: ${err}`)));
+    });
+    const alerts = (await insecureJson(`${base}/api/alerts?state=active`)) as {
+      ruleId: string;
+      metric: string;
+      severity: string;
+    }[];
+    expect(alerts).toEqual([
+      expect.objectContaining({
+        ruleId: 'cert_expired',
+        metric: 'certificate',
+        severity: 'critical'
+      })
+    ]);
+    const config = (await insecureJson(`${base}/api/config`)) as { rules: { id: string }[] };
+    expect(config.rules.map((rule) => rule.id)).toEqual(
+      expect.arrayContaining(['cert_expiring', 'cert_expired'])
+    );
+    child.kill('SIGTERM');
+    await once(child, 'exit');
+  }, 20000);
+
+  it('has no certificate rules in force over plain HTTP', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let out = '';
+    const base = await new Promise<string>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        const match = /listening on (http:\/\/\S+)/.exec(out);
+        if (match?.[1]) resolve(match[1]);
+      });
+      child.once('exit', (code) => reject(new Error(`exited ${String(code)}`)));
+    });
+    const config = (await (await fetch(`${base}/api/config`)).json()) as {
+      rules: { id: string }[];
+    };
+    expect(config.rules.map((rule) => rule.id)).not.toContain('cert_expiring');
+    expect(config.rules.length).toBeGreaterThan(0);
+    child.kill('SIGTERM');
+    await once(child, 'exit');
   }, 20000);
 
   it('says why HTTPS is off and warns about a certificate that is set but unused', async () => {

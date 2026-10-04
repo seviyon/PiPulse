@@ -15,6 +15,7 @@ import {
   createRuleSource,
   readRulesFile,
   startAlerts,
+  type AlertContext,
   type AlertEvent,
   type RuleSource
 } from '@pipulse/alerts';
@@ -237,6 +238,8 @@ function readRuleSource(): RuleSource {
         return { ms: raw.ms, text: raw.text };
       },
       onProblem: (message) => console.warn(`[pipulse] ${message}`),
+      // Certificate rules (built in, from the file or saved) are in force only with HTTPS.
+      certificate: TLS.mode === 'https',
       ...(path ? { file: readRulesFile(path) } : {})
     });
   } catch (error) {
@@ -273,7 +276,11 @@ function readWebhooks(): WebhookConfig[] {
 const notifications = startNotifications(db, {
   webhooks: readWebhooks(),
   hostname: hostname(),
-  metrics: builtinPlugins.map(({ id, label, unit }) => ({ id, label, unit })),
+  metrics: [
+    ...builtinPlugins.map(({ id, label, unit }) => ({ id, label, unit })),
+    // Certificate alerts have no plugin: the metric id is the one the alerts package stores.
+    { id: 'certificate', label: 'HTTPS certificate', unit: '' }
+  ],
   log: (message) => console.warn(`[pipulse] ${message}`)
 });
 
@@ -286,6 +293,20 @@ const alertFeed = createFeed<AlertEvent>();
 // hook needs to reach the engine once it exists; held in a property assigned
 // later instead of a reassigned `let`.
 const tls: { provider?: CertificateProvider } = {};
+
+// What the alert engine needs beyond stored readings. The clock counts as synced for alerts
+// only when synced, or unknown with PIPULSE_TLS_CLOCK=trust (the same rule as the health check).
+const certificateContext = (): AlertContext => {
+  const cert = tls.provider?.current();
+  if (!cert) return {};
+  const clock = readClock({
+    timesyncDir: TLS.timesyncDir,
+    now: Date.now(),
+    trust: TLS.clockTrust,
+    ...(cert.source === 'generated' ? { notBefore: cert.notBefore } : {})
+  });
+  return { certificate: { notAfter: cert.notAfter, clockSynced: clock.synced } };
+};
 
 // systemd's RuntimeDirectory= (and Docker's tmpfs) makes this folder; a dev run has none and
 // nothing is written. `pipulse tls status` reads the file, so it needs no HTTP and no session.
@@ -406,6 +427,8 @@ const scheduler = startScheduler(db, RUN_PLUGINS, {
 engine.alerts = startAlerts(db, {
   rules: rulesInForce,
   metrics: RUN_METRICS,
+  context: certificateContext,
+  onNotice: (message) => console.warn(`[pipulse] ${message}`),
   onCheck: () => health.markAlertCheck(),
   onChange: (event) => {
     alertFeed.publish(event);
