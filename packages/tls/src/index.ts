@@ -9,3 +9,5 @@ export { checkHealth, healthTarget, healthy, type CheckResult } from './health-c
 export * from './issue.js';
 export * from './constraints.js';
 export * from './envfile.js';
+export * from './layout.js';
+export * from './material.js';
