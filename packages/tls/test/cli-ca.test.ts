@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
@@ -74,6 +74,67 @@ describe('new-ca', () => {
     expect(readMeta(ctx.layout)!.backups.map((b) => b.name)).toEqual(names);
     for (const backup of readMeta(ctx.layout)!.backups)
       expect(existsSync(join(dir, backup.name))).toBe(true);
+  });
+
+  it('after an interrupted prune (three backups) needs both of the oldest named', async () => {
+    await main(['new-ca', '--yes'], later());
+    await main(['new-ca', '--yes'], later());
+    const [oldest, newer] = listBackups(ctx.layout);
+    cpSync(join(dir, oldest!.name), join(dir, 'ca.old-20200101T000000Z'), { recursive: true });
+    const three = listBackups(ctx.layout).map((b) => b.name);
+    expect(three).toHaveLength(3);
+    const refused = later();
+    expect(
+      await main(['new-ca', '--yes', '--prune-oldest', 'ca.old-20200101T000000Z'], refused)
+    ).toBe(1);
+    expect(refused.errors.join('\n')).toMatch(/exactly the oldest backups/);
+    expect(
+      await main(
+        [
+          'new-ca',
+          '--yes',
+          '--prune-oldest',
+          'ca.old-20200101T000000Z',
+          '--prune-oldest',
+          oldest!.name
+        ],
+        later()
+      )
+    ).toBe(0);
+    const names = listBackups(ctx.layout).map((b) => b.name);
+    expect(names).toHaveLength(2);
+    expect(names).toContain(newer!.name);
+    expect(readMeta(ctx.layout)!.backups.map((b) => b.name)).toEqual(names);
+  });
+
+  it('keeps the current IP subnets on a routine rotation, and drops them only with --subnet none', async () => {
+    const withSubnet = testContext(dir);
+    await main(['new-ca', '--subnet', '192.168.1.0/24', '--yes'], withSubnet);
+    withSubnet.setNow(NOW + 50_000);
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+    const routine = later();
+    expect(await main(['new-ca', '--yes'], routine)).toBe(0);
+    expect(routine.lines.join('\n')).toContain('Keeping the current IP scope (192.168.1.0/24)');
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+    const mixed = later();
+    expect(
+      await main(['new-ca', '--subnet', 'none', '--subnet', '10.0.0.0/24', '--yes'], mixed)
+    ).toBe(2);
+    const [oldest] = listBackups(ctx.layout); // two backups by now: the third change prunes one
+    expect(
+      await main(['new-ca', '--subnet', 'none', '--yes', '--prune-oldest', oldest!.name], later())
+    ).toBe(0);
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual([]);
+  });
+
+  it('refuses a broad single-label --name, accepts a dotted alias', async () => {
+    const before = fingerprint();
+    const broad = later();
+    expect(await main(['new-ca', '--name', 'com', '--yes'], broad)).toBe(1);
+    expect(broad.errors.join('\n')).toMatch(/single-label name.*all of \*\.com/);
+    expect(fingerprint()).toBe(before);
+    expect(await main(['new-ca', '--name', 'pi.local', '--yes'], later())).toBe(0);
+    expect(readMeta(ctx.layout)!.constraints.dns).toContain('pi.local');
   });
 
   it('refuses with an operator certificate configured', async () => {

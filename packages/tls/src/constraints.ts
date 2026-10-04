@@ -214,7 +214,18 @@ export function buildConstraints(
       warnings.push(
         `PIPULSE_TLS_NAMES: ${name.trim()} is an address, not a name, so the CA ignores it; allow IP access with --subnet (a certificate names an address only when an accepted subnet covers it)`
       );
-    } else extra.push(canonicalName(name));
+    } else {
+      const canonical = canonicalName(name);
+      // "com" permitted would let the CA key vouch for every *.com site on every device that
+      // trusts it (RFC 5280 matches the whole subtree). Only the host itself and localhost
+      // may be single-label; an alias needs a dotted form (pi.local, pi.lan).
+      if (!canonical.includes('.') && canonical !== host && canonical !== 'localhost') {
+        throw new ConstraintError(
+          `${canonical} is a single-label name, which would let this CA issue for every name below it (all of *.${canonical}); use a dotted name such as ${canonical}.local`
+        );
+      }
+      extra.push(canonical);
+    }
   }
   const dns = unique([host, `${host}.local`, 'localhost', ...extra]);
   return {

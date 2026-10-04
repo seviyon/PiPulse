@@ -382,6 +382,20 @@ describe('consequenceText', () => {
   });
 });
 
+describe('single-label names', () => {
+  it('only the host and localhost may be single-label: "com" would cover all of *.com', () => {
+    expect(() => buildConstraints({ hostname: 'io', names: ['com'], subnets: [] })).toThrow(
+      /single-label name.*all of \*\.com/
+    );
+    expect(
+      buildConstraints({ hostname: 'io', names: ['io', 'localhost'], subnets: [] }).constraints.dns
+    ).toEqual(['io', 'io.local', 'localhost']);
+    expect(
+      buildConstraints({ hostname: 'io', names: ['pi.local'], subnets: [] }).constraints.dns
+    ).toContain('pi.local');
+  });
+});
+
 describe('constraints feed the issuer', () => {
   it('scopeOf hands issue.ts only masked network ranges it accepts', () => {
     const { constraints } = buildConstraints({

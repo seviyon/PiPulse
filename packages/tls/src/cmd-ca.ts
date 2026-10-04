@@ -43,10 +43,10 @@ function backupsAfter(
   ctx: Context,
   active: CaFiles | undefined,
   backup: string | null,
-  without?: string
+  without: string[] = []
 ): BackupInfo[] {
   return [
-    ...listBackups(ctx.layout).filter((b) => b.name !== without),
+    ...listBackups(ctx.layout).filter((b) => !without.includes(b.name)),
     ...(backup && active
       ? [{ name: backup, fingerprint: active.fingerprint, createdAt: active.createdAt }]
       : [])
@@ -67,12 +67,15 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
       options: {
         subnet: { type: 'string', multiple: true },
         name: { type: 'string', multiple: true },
-        'prune-oldest': { type: 'string' },
+        'prune-oldest': { type: 'string', multiple: true },
         yes: { type: 'boolean' }
       },
       strict: true
     })
   );
+  const requested = values.subnet ?? [];
+  if (requested.includes('none') && requested.length > 1)
+    throw new UsageError('--subnet none cannot be combined with other subnets');
   const layout = ctx.layout;
   if (operatorConfigured(ctx.env)) {
     ctx.err(
@@ -94,27 +97,44 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
     return 1;
   }
   const backups = listBackups(layout);
-  const prune = values['prune-oldest'];
-  if (current.kind === 'ok' && backups.length >= 2) {
-    const oldest = backups[0]!;
-    if (prune !== oldest.name) {
+  const prune = values['prune-oldest'] ?? [];
+  // The new backup makes one more: at most two may remain, so all but the newest existing
+  // one must go. After an interrupted prune there can be three: then two names are needed.
+  const excess = current.kind === 'ok' ? Math.max(0, backups.length - 1) : 0;
+  if (excess > 0) {
+    const oldest = backups.slice(0, excess).map((b) => b.name);
+    if (prune.length !== excess || !oldest.every((name) => prune.includes(name))) {
+      const flags = oldest.map((name) => `--prune-oldest ${name}`).join(' ');
       ctx.err(
-        prune === undefined
-          ? `two CA backups already exist (${backups.map((b) => b.name).join(', ')}); pass --prune-oldest ${oldest.name} to delete the oldest once the new CA is in place`
-          : `--prune-oldest must name the oldest backup, ${oldest.name}`
+        prune.length === 0
+          ? `${backups.length} CA backups already exist (${backups.map((b) => b.name).join(', ')}); pass ${flags} to delete the oldest once the new CA is in place`
+          : `--prune-oldest must name exactly the oldest ${excess === 1 ? 'backup' : 'backups'}: ${flags}`
       );
       return 1;
     }
-  } else if (prune !== undefined) {
+  } else if (prune.length > 0) {
     ctx.err('--prune-oldest is only needed when two backups exist');
     return 1;
   }
+  // IP scope: --subnet, else PIPULSE_TLS_SUBNETS, else the current CA's own subnets (a routine
+  // rotation must not silently drop accepted ones); `--subnet none` drops them on purpose.
+  const fromSettings = subnetsSetting(ctx.env);
+  let subnets: string[];
+  if (requested.length > 0) subnets = requested[0] === 'none' ? [] : requested;
+  else if (fromSettings.length > 0) subnets = fromSettings;
+  else if (current.kind === 'ok') {
+    subnets = current.ca.constraints.subnets;
+    if (subnets.length > 0)
+      ctx.out(
+        `Keeping the current IP scope (${subnets.join(', ')}); --subnet none drops it, --subnet CIDR changes it.`
+      );
+  } else subnets = [];
   let constraints: Constraints;
   try {
     const built = buildConstraints({
       hostname: ctx.hostname(),
       names: [...namesSetting(ctx.env), ...(values.name ?? [])],
-      subnets: values.subnet ?? subnetsSetting(ctx.env)
+      subnets
     });
     for (const warning of built.warnings) ctx.err(`warning: ${warning}`);
     constraints = built.constraints;
@@ -159,11 +179,13 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
         validateStage(dirs, pub(layout));
       }
     });
-    if (prune) {
-      removeTree(join(layout.caRoot, prune), ctx.hook);
+    if (prune.length > 0) {
+      for (const name of prune) removeTree(join(layout.caRoot, name), ctx.hook);
       const now = checkCa(paths(layout).caDir);
       if (now.kind === 'ok') repairPublic(ctx, now.ca);
-      ctx.out(`deleted the oldest backup, ${prune}`);
+      ctx.out(
+        `deleted the oldest ${prune.length === 1 ? 'backup' : 'backups'}: ${prune.join(', ')}`
+      );
     }
     reportOutside(ctx, outside);
     printCa(ctx);
@@ -240,7 +262,12 @@ export async function restoreCa(ctx: Context, args: string[]): Promise<number> {
       restoreFrom: name,
       hook: ctx.hook,
       stage: async (dirs, next) => {
-        ({ outside } = await stageCopiedCa(ctx, dirs, from, backupsAfter(ctx, active, next, name)));
+        ({ outside } = await stageCopiedCa(
+          ctx,
+          dirs,
+          from,
+          backupsAfter(ctx, active, next, [name])
+        ));
       },
       validate: (dirs) => {
         validateStage(dirs, pub(layout));
