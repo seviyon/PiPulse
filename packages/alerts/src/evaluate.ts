@@ -128,3 +128,32 @@ export function evaluate(rule: Rule, input: CheckInput): Decision {
         : w.withBits === 0;
   return never ? CLEAR : NONE;
 }
+
+export type EpochMs = number;
+
+/** Inputs the engine gets beyond stored readings; alerts imports nothing from tls or api. */
+export interface AlertContext {
+  certificate?: { notAfter: EpochMs; clockSynced: boolean };
+}
+
+export type CertificateDecision = Decision | { action: 'unavailable' } | { action: 'undecided' };
+
+/**
+ * A certificate rule for the served certificate. No certificate: unavailable
+ * (nothing raised, nothing cleared). An unsynced clock can't be trusted to
+ * say "expired" or "fine": undecided, so an open alert stays open and never
+ * clears on a guess.
+ */
+export function evaluateCertificate(
+  rule: Rule,
+  certificate: AlertContext['certificate'],
+  now: number,
+  open: boolean
+): CertificateDecision {
+  if (!certificate) return { action: 'unavailable' };
+  if (!certificate.clockSynced) return { action: 'undecided' };
+  const left = certificate.notAfter - now;
+  const holds = rule.certExpired ? left <= 0 : left > 0 && left <= (rule.certExpiresWithin ?? 0);
+  if (holds) return open ? NONE : { action: 'raise', value: null };
+  return open ? CLEAR : NONE;
+}

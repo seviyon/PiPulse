@@ -1,6 +1,7 @@
 import { getSettings, saveSettings, type PiPulseDb } from '@pipulse/storage';
 import {
   AlertRulesError,
+  isCertificateRule,
   parseRuleEntry,
   resolveRules,
   ruleProblem,
@@ -86,6 +87,8 @@ export function createRuleSource(
     cores: number;
     metrics: MetricInfo[];
     file?: RulesFile;
+    /** HTTPS is on: certificate rules are built in and in force; off, none are. */
+    certificate?: boolean;
     /** Raw retention in force, read on every use. */
     rawRetention: () => { ms: number; text: string };
     /** Told about each distinct problem with a saved entry, once. */
@@ -100,6 +103,7 @@ export function createRuleSource(
     cores: options.cores,
     metrics: options.metrics,
     rawRetentionMs: Infinity,
+    certificate: options.certificate ?? false,
     ...(options.file ? { file: options.file } : {})
   });
   const below = new Map(base.map((rule) => [rule.id, rule]));
@@ -215,6 +219,20 @@ export function createRuleSource(
       if (below.has(id)) continue;
       entries.push(view(id, s, null));
       if (s.entry && !s.entry.disabled && s.entry.rule) rules.push(s.entry.rule);
+    }
+    if (!options.certificate) {
+      // HTTP: certificate rules (from the file or saved) are not in force; show why.
+      for (const entry of entries) {
+        if (
+          entry.rule &&
+          isCertificateRule(entry.rule) &&
+          !entry.disabled &&
+          entry.problem === null
+        ) {
+          entry.problem = 'HTTPS is off, so certificate rules are not in force';
+        }
+      }
+      return { rules: rules.filter((rule) => !isCertificateRule(rule)), entries };
     }
     return { rules, entries };
   };

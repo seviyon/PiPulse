@@ -3,6 +3,9 @@ import { parseDuration } from '@pipulse/storage';
 
 export type Severity = 'warning' | 'critical';
 
+/** The `alerts.metric` value of certificate alerts (the column is NOT NULL; they have no plugin). */
+export const CERTIFICATE_METRIC = 'certificate';
+
 /** A resolved rule: built-in or from the rules file, durations in ms. */
 export interface Rule {
   id: string;
@@ -13,6 +16,10 @@ export interface Rule {
   bitsSet?: number;
   /** ms, or 'auto': 5 × the metric's poll interval, at least 2 minutes. */
   noReadingFor?: number | 'auto';
+  /** ms: raise while 0 < notAfter − now ≤ this (the served certificate; HTTPS only). */
+  certExpiresWithin?: number;
+  /** Raise once notAfter ≤ now. */
+  certExpired?: boolean;
   forMs: number;
   clearAfterMs: number;
   severity: Severity;
@@ -20,6 +27,9 @@ export interface Rule {
   /** built-in, from the rules file, or saved from the browser. */
   source: 'built-in' | 'file' | 'saved';
 }
+
+export const isCertificateRule = (rule: Pick<Rule, 'certExpiresWithin' | 'certExpired'>): boolean =>
+  rule.certExpiresWithin !== undefined || rule.certExpired !== undefined;
 
 export interface MetricInfo {
   id: string;
@@ -54,7 +64,7 @@ const DAY = 24 * HOUR;
  * The rules PiPulse ships with. Temperatures suit a Pi 5 with active
  * cooling (busy ≈ 55–65 °C) and a passively cooled Pi 2 alike.
  */
-export function builtinRules(cores: number): Rule[] {
+export function builtinRules(cores: number, options: { certificate?: boolean } = {}): Rule[] {
   const rule = (r: Omit<Rule, 'source' | 'clearAfterMs'> & { clearAfterMs?: number }): Rule => ({
     ...r,
     clearAfterMs: r.clearAfterMs ?? r.forMs,
@@ -167,7 +177,28 @@ export function builtinRules(cores: number): Rule[] {
       forMs: 0,
       severity: 'warning',
       message: 'No new readings'
-    })
+    }),
+    // Only with HTTPS: with HTTP there is no certificate to watch.
+    ...(options.certificate
+      ? [
+          rule({
+            id: 'cert_expiring',
+            metric: CERTIFICATE_METRIC,
+            certExpiresWithin: 14 * DAY,
+            forMs: 0,
+            severity: 'warning',
+            message: 'HTTPS certificate expires soon'
+          }),
+          rule({
+            id: 'cert_expired',
+            metric: CERTIFICATE_METRIC,
+            certExpired: true,
+            forMs: 0,
+            severity: 'critical',
+            message: 'HTTPS certificate has expired'
+          })
+        ]
+      : [])
   ];
 }
 
@@ -188,13 +219,22 @@ const FIELDS = new Set([
   'atMost',
   'bitsSet',
   'noReadingFor',
+  'certExpiresWithin',
+  'certExpired',
   'for',
   'clearAfter',
   'severity',
   'message',
   'disabled'
 ]);
-const CONDITIONS = ['atLeast', 'atMost', 'bitsSet', 'noReadingFor'] as const;
+const CONDITIONS = [
+  'atLeast',
+  'atMost',
+  'bitsSet',
+  'noReadingFor',
+  'certExpiresWithin',
+  'certExpired'
+] as const;
 
 /** A parsed file or saved entry; `rule` is absent for a bare `{ id, disabled: true }`. */
 export interface Entry {
@@ -245,6 +285,33 @@ export function parseRuleEntry(raw: unknown, where: string, source: 'file' | 'sa
     fail(`needs exactly one of ${CONDITIONS.join(', ')} (found ${present.length})`, 'condition');
   }
   const condition = present[0]!;
+  if (condition === 'certExpiresWithin' || condition === 'certExpired') {
+    for (const field of ['metric', 'for', 'clearAfter'] as const) {
+      if (r[field] !== undefined) fail(`${field} is not allowed with ${condition}`, field);
+    }
+    const certSeverity = r['severity'];
+    if (certSeverity !== 'warning' && certSeverity !== 'critical')
+      fail('severity must be warning or critical', 'severity');
+    const certMessage = r['message'];
+    if (typeof certMessage !== 'string' || certMessage.trim() === '')
+      fail('message must be non-empty text', 'message');
+    const certRule: Rule = {
+      id: ruleId,
+      metric: CERTIFICATE_METRIC,
+      forMs: 0,
+      clearAfterMs: 0,
+      severity: certSeverity as Severity,
+      message: certMessage as string,
+      source
+    };
+    if (condition === 'certExpired') {
+      if (r['certExpired'] !== true) fail('certExpired must be true', 'certExpired');
+      certRule.certExpired = true;
+    } else {
+      certRule.certExpiresWithin = duration('certExpiresWithin', false)!;
+    }
+    return { id: ruleId, disabled, rule: certRule };
+  }
   const metric = r['metric'];
   if (typeof metric !== 'string' || metric === '') fail('metric must be a plugin id', 'metric');
   if (metric === '*' && condition !== 'noReadingFor')
@@ -318,6 +385,8 @@ export function ruleProblem(
   known: string[],
   rawRetentionMs: number
 ): { field: string; message: string } | undefined {
+  // Certificate rules read the served certificate, not readings: no metric, no look-back.
+  if (isCertificateRule(rule)) return undefined;
   if (rule.metric !== '*' && !known.includes(rule.metric)) {
     return {
       field: 'metric',
@@ -349,8 +418,15 @@ export function resolveRules(options: {
   metrics: MetricInfo[];
   rawRetentionMs: number;
   file?: RulesFile;
+  /** HTTPS is on: the certificate rules are built in. */
+  certificate?: boolean;
 }): Rule[] {
-  const rules = new Map(builtinRules(options.cores).map((rule) => [rule.id, rule]));
+  const rules = new Map(
+    builtinRules(options.cores, { certificate: options.certificate ?? false }).map((rule) => [
+      rule.id,
+      rule
+    ])
+  );
   if (options.file) {
     for (const entry of parseFile(options.file)) {
       if (entry.disabled) {
@@ -388,6 +464,16 @@ export function durationText(ms: number): string {
 
 /** A resolved rule written back in the rules-file format, e.g. to fill the editor's form. */
 export function ruleToEntry(rule: Rule): Record<string, unknown> {
+  if (isCertificateRule(rule)) {
+    return {
+      id: rule.id,
+      ...(rule.certExpired
+        ? { certExpired: true }
+        : { certExpiresWithin: durationText(rule.certExpiresWithin ?? 0) }),
+      severity: rule.severity,
+      message: rule.message
+    };
+  }
   const entry: Record<string, unknown> = { id: rule.id, metric: rule.metric };
   if (rule.atLeast !== undefined) entry['atLeast'] = rule.atLeast;
   if (rule.atMost !== undefined) entry['atMost'] = rule.atMost;
