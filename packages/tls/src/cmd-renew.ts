@@ -25,6 +25,14 @@ import {
 
 const DAY_MS = 86_400_000;
 export const RENEW_BEFORE_MS = 30 * DAY_MS;
+/** A leaf is backdated an hour (issue.ts BACKDATE_MS), so its age is measured from notBefore + this. */
+const BACKDATE_MS = 3_600_000;
+/**
+ * A new IPv6 address is waited for this long before it makes the leaf due: privacy
+ * (temporary) addresses rotate and Node can't tell them apart, so reissuing for each one
+ * would rewrite the key and reload the server as often as the address changes.
+ */
+export const IPV6_RENEW_AFTER_MS = DAY_MS;
 
 /**
  * Why the leaf should be replaced now, or undefined. A default-route address
@@ -35,14 +43,25 @@ export function renewDue(input: {
   leaf: LeafCheck;
   now: number;
   wanted: { dns: string[]; ip: string[] };
+  /** When the CA expires: a leaf never outlives it, so near that date expiry is not a reason. */
+  caNotAfter?: number;
 }): string | undefined {
   const { leaf } = input;
   if (leaf.kind === 'missing') return 'there is no certificate';
   if (leaf.kind === 'refused') return `the certificate is not usable: ${leaf.problem}`;
-  if (leaf.notAfter - input.now <= RENEW_BEFORE_MS)
+  if (input.caNotAfter !== undefined && input.now >= input.caNotAfter)
+    return `the CA expired on ${isoDate(input.caNotAfter)}`;
+  // A leaf already ending where the CA ends can't be extended: renewing it hourly would
+  // only rewrite the key and reload the server (see renewCapped for what is said instead).
+  const capped = input.caNotAfter !== undefined && leaf.notAfter >= input.caNotAfter;
+  if (!capped && leaf.notAfter - input.now <= RENEW_BEFORE_MS)
     return `it expires on ${isoDate(leaf.notAfter)}`;
-  const ips = input.wanted.ip.filter((ip) => !leaf.sans.ip.includes(ip));
-  if (ips.length > 0) return `the default-route address ${ips.join(', ')} is not in it`;
+  const missing = input.wanted.ip.filter((ip) => !leaf.sans.ip.includes(ip));
+  const v4 = missing.filter((ip) => !ip.includes(':'));
+  const v6 = missing.filter((ip) => ip.includes(':'));
+  if (v4.length > 0) return `the default-route address ${v4.join(', ')} is not in it`;
+  if (v6.length > 0 && input.now - leaf.notBefore >= IPV6_RENEW_AFTER_MS + BACKDATE_MS)
+    return `the default-route address ${v6.join(', ')} is not in it`;
   const names = input.wanted.dns.filter((name) => !leaf.sans.dns.includes(name));
   if (names.length > 0) return `${names.join(', ')} is not in it`;
   return undefined;
@@ -88,8 +107,17 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
     ctx.err(`renewal failed: ${folderProblem}`);
     return 1;
   }
-  recover(layout, ctx.hook);
-  const check = checkCa(paths(layout).caDir);
+  // A corrupt journal or a failed recovery is recorded like any other failure: otherwise
+  // renew-status.json keeps its last good result while every hourly run fails.
+  let check: ReturnType<typeof checkCa>;
+  try {
+    recover(layout, ctx.hook);
+    check = checkCa(paths(layout).caDir);
+  } catch (error) {
+    record('failed', (error as Error).message);
+    ctx.err(`renewal failed: ${(error as Error).message}`);
+    return 1;
+  }
   if (check.kind === 'none') {
     ctx.out('there is no generated certificate here: sudo pipulse tls init makes one');
     return 0;
@@ -116,10 +144,19 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
       names: namesSetting(ctx.env),
       addresses: ctx.addresses()
     });
-    const reason = values.force ? 'forced' : renewDue({ leaf, now, wanted });
+    const reason = values.force
+      ? 'forced'
+      : renewDue({ leaf, now, wanted, caNotAfter: ca.notAfter });
     if (reason === undefined) {
-      record('not-due', leaf.kind === 'ok' ? `valid until ${isoDate(leaf.notAfter)}` : '');
-      ctx.out(`not due${leaf.kind === 'ok' ? `: valid until ${isoDate(leaf.notAfter)}` : ''}`);
+      // A leaf that ends with the CA can't be extended: say what to do about the CA instead.
+      const note =
+        leaf.kind === 'ok'
+          ? leaf.notAfter >= ca.notAfter
+            ? `valid until ${isoDate(leaf.notAfter)}, when the CA expires: sudo pipulse tls new-ca`
+            : `valid until ${isoDate(leaf.notAfter)}`
+          : '';
+      record('not-due', note);
+      ctx.out(`not due${note ? `: ${note}` : ''}`);
       return 0;
     }
     await opensslVersion(ctx.openssl);

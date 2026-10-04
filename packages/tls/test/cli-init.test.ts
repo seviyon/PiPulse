@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
+import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cmd-renew.js';
 import { CLOCK_FLOOR_MS } from '../src/clock.js';
 import { paths, readMeta, readRenewStatus } from '../src/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
@@ -109,6 +110,23 @@ describe('init', () => {
     expect(chrony.errors.join('\n')).toContain('PIPULSE_TLS_CLOCK=trust');
   });
 
+  it('replaces an expired leaf instead of saying there is nothing to do', async () => {
+    await main(['init'], ctx);
+    const before = leafCert();
+    const later = testContext(dir);
+    later.setNow(before.validToDate.getTime() + DAY);
+    expect(await main(['init'], later)).toBe(0);
+    expect(later.errors.join('\n')).toMatch(/replacing the certificate: it expired on/);
+    expect(leafCert().fingerprint256).not.toBe(before.fingerprint256);
+    // and a valid one names its date
+    const again = testContext(dir);
+    again.setNow(later.now());
+    expect(await main(['init'], again)).toBe(0);
+    expect(again.lines.join('\n')).toMatch(
+      /certificate is valid until \d{4}-\d\d-\d\d\); nothing to do/
+    );
+  });
+
   it('replaces a leaf that does not verify', async () => {
     await main(['init'], ctx);
     const before = leafCert().fingerprint256;
@@ -171,6 +189,34 @@ describe('renew', () => {
     expect(await main(['renew', '--force'], broken)).toBe(1);
     expect(status()?.result).toBe('failed');
     expect(leafCert().fingerprint256).toBe(before);
+  });
+
+  it('does not reissue every hour once the CA itself is about to expire', async () => {
+    await main(['init'], ctx);
+    const caEnd = new X509Certificate(
+      readFileSync(paths(ctx.layout).publicCa)
+    ).validToDate.getTime();
+    const late = testContext(dir);
+    late.setNow(caEnd - 10 * DAY);
+    expect(await main(['renew'], late)).toBe(0); // the 90-day leaf is long expired: renewed, capped at the CA
+    expect(status()?.result).toBe('renewed');
+    expect(leafCert().validToDate.getTime()).toBe(caEnd);
+    const fingerprint = leafCert().fingerprint256;
+    late.setNow(late.now() + 3_600_000);
+    expect(await main(['renew'], late)).toBe(0);
+    expect(status()).toMatchObject({ result: 'not-due' });
+    expect(status()?.reason).toContain('sudo pipulse tls new-ca');
+    expect(leafCert().fingerprint256).toBe(fingerprint);
+  });
+
+  it('records a corrupt journal as a failure instead of leaving the last good result', async () => {
+    await main(['init'], ctx);
+    expect(await main(['renew'], ctx)).toBe(0);
+    expect(status()?.result).toBe('not-due');
+    writeFileSync(paths(ctx.layout).txn, '{ not json', { mode: 0o600 });
+    expect(await main(['renew'], ctx)).toBe(1);
+    expect(status()).toMatchObject({ result: 'failed' });
+    expect(status()?.reason).toContain('txn.json');
   });
 
   it('never renews an operator certificate', async () => {
@@ -256,5 +302,43 @@ describe('the TLS folder on a native install (ruling R15)', () => {
     const run = native();
     await main(['status'], run);
     expect(run.lines.join('\n')).toMatch(/problem: PIPULSE_TLS_DIR=/);
+  });
+});
+
+describe('renewDue', () => {
+  const ok = (over: Partial<{ notBefore: number; notAfter: number; ip: string[] }> = {}) => ({
+    kind: 'ok' as const,
+    fingerprint: 'F',
+    notBefore: NOW - 3_600_000,
+    notAfter: NOW + 60 * DAY,
+    sans: { dns: ['io'], ip: over.ip ?? [] },
+    ...over
+  });
+  const wanted = (ip: string[]) => ({ dns: ['io'], ip });
+
+  it('treats the CA’s end as a limit, not a reason', () => {
+    const leaf = ok({ notAfter: NOW + 10 * DAY });
+    expect(renewDue({ leaf, now: NOW, wanted: wanted([]) })).toContain('expires');
+    expect(renewDue({ leaf, now: NOW, wanted: wanted([]), caNotAfter: NOW + 10 * DAY })).toBe(
+      undefined
+    );
+    expect(renewDue({ leaf, now: NOW, wanted: wanted([]), caNotAfter: NOW - 1 })).toContain(
+      'the CA expired'
+    );
+  });
+
+  it('adds a new IPv4 address at once, a new IPv6 address only once the leaf is a day old', () => {
+    const fresh = ok();
+    expect(renewDue({ leaf: fresh, now: NOW, wanted: wanted(['192.168.1.36']) })).toContain(
+      '192.168.1.36'
+    );
+    expect(renewDue({ leaf: fresh, now: NOW, wanted: wanted(['2001:db8::1']) })).toBeUndefined();
+    expect(
+      renewDue({
+        leaf: fresh,
+        now: NOW + IPV6_RENEW_AFTER_MS + 3_600_000,
+        wanted: wanted(['2001:db8::1'])
+      })
+    ).toContain('2001:db8::1');
   });
 });

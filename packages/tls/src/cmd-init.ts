@@ -21,6 +21,7 @@ import {
 import { recover } from './journal.js';
 import {
   confirm,
+  isoDate,
   ensureTlsDirs,
   nativeLayoutProblem,
   operatorConfigured,
@@ -123,10 +124,14 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
     }
     for (const file of repairPublic(ctx, ca)) ctx.out(`repaired ${file}`);
     const leaf = checkLeaf(paths(layout).bundle, ca, pub(layout));
-    if (leaf.kind === 'ok') {
-      ctx.out('the CA and certificate are in place; nothing to do');
+    if (leaf.kind === 'ok' && leaf.notAfter > ctx.now()) {
+      ctx.out(
+        `the CA and certificate are in place (the certificate is valid until ${isoDate(leaf.notAfter)}); nothing to do`
+      );
       return 0;
     }
+    if (leaf.kind === 'ok')
+      ctx.err(`replacing the certificate: it expired on ${isoDate(leaf.notAfter)}`);
     if (leaf.kind === 'refused') ctx.err(`replacing the certificate: ${leaf.problem}`);
     await opensslVersion(ctx.openssl);
     const gate = await issuanceClock(ctx, { lenient: true, waitMs: CLOCK_WAIT_MS });
