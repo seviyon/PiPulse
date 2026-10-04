@@ -149,6 +149,28 @@ describe('the generated openssl config', () => {
     );
   });
 
+  it.each([
+    [{ address: '0.0.0.0', prefix: 0 }],
+    [{ address: '::', prefix: 0 }],
+    [{ address: '192.168.77.5', prefix: 24 }],
+    [{ address: 'fd00::1', prefix: 64 }],
+    [{ address: '::ffff:10.1.2.3', prefix: 112 }]
+  ])('refuses the range %j (a /0, or host bits set)', (range) => {
+    expect(() => caExtensions({ ...SCOPE, ip: [range] })).toThrow(IssueError);
+  });
+
+  it('accepts network addresses, including an IPv4-tailed IPv6 one', () => {
+    const ext = caExtensions({
+      ...SCOPE,
+      ip: [
+        { address: 'fd00::', prefix: 64 },
+        { address: '::ffff:10.1.2.0', prefix: 120 }
+      ]
+    }).join('\n');
+    expect(ext).toContain('permitted;IP:fd00::/ffff:ffff:ffff:ffff:0:0:0:0');
+    expect(ext).toContain('permitted;IP:::ffff:10.1.2.0/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ff00');
+  });
+
   it('writes masks, never an IP exclusion', () => {
     const ext = caExtensions(SCOPE).join('\n');
     expect(ext).toContain('permitted;IP:192.168.77.0/255.255.255.0');
@@ -223,6 +245,21 @@ describe('issueLeaf', () => {
       now: NOW + CA_LIFETIME_MS - 10 * DAY
     });
     expect(issued.notAfter).toBeLessThanOrEqual(ca.notAfter);
+  });
+
+  it.each([NaN, -1, 0, Infinity])('refuses the lifetime %s before making a key', async (ms) => {
+    await expect(
+      issueLeaf({
+        openssl: TEST_OPENSSL,
+        workDir: work,
+        ca: caPaths,
+        subject: 'pipulse-check',
+        dns: ['pipulse-check'],
+        ip: [],
+        now: NOW,
+        lifetimeMs: ms
+      })
+    ).rejects.toThrow(IssueError);
   });
 
   it('refuses to issue from an expired CA', async () => {

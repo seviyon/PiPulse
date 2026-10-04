@@ -67,23 +67,49 @@ function ipAddress(address: string): string {
   return address;
 }
 
-/** The netmask openssl wants after the slash (it doesn't take prefix lengths). */
+/** An address as 16-bit words: two for IPv4, eight for IPv6 (any "::" or dotted tail expanded). */
+function words(address: string, family: 4 | 6): number[] {
+  const dotted = (text: string) => {
+    const [a, b, c, d] = text.split('.').map(Number) as [number, number, number, number];
+    return [(a << 8) | b, (c << 8) | d];
+  };
+  if (family === 4) return dotted(address);
+  const tail = address.includes('.') ? address.slice(address.lastIndexOf(':') + 1) : undefined;
+  const head =
+    tail === undefined ? address : `${address.slice(0, address.lastIndexOf(':') + 1)}0:0`;
+  const [left = '', right] = head.split('::');
+  const part = (text: string) => (text === '' ? [] : text.split(':').map((g) => parseInt(g, 16)));
+  const front = part(left);
+  const back = right === undefined ? [] : part(right);
+  const all =
+    right === undefined
+      ? front
+      : [...front, ...Array(8 - front.length - back.length).fill(0), ...back];
+  if (tail !== undefined) all.splice(6, 2, ...dotted(tail));
+  return all;
+}
+
+/**
+ * The netmask openssl wants after the slash (it doesn't take prefix lengths).
+ * Refuses /0 (it would permit every address) and an address with bits set
+ * beyond the prefix (192.168.77.5/24): a constraint is always a network.
+ */
 function netmask(range: IpRange): string {
-  const family = isIP(ipAddress(range.address));
+  const family = isIP(ipAddress(range.address)) as 4 | 6;
   const bits = family === 4 ? 32 : 128;
-  if (!Number.isInteger(range.prefix) || range.prefix < 0 || range.prefix > bits) {
+  if (!Number.isInteger(range.prefix) || range.prefix < 1 || range.prefix > bits) {
     throw new IssueError(`bad prefix length /${range.prefix}`);
   }
-  if (family === 4) {
-    const mask = range.prefix === 0 ? 0 : (0xffffffff << (32 - range.prefix)) >>> 0;
-    return [24, 16, 8, 0].map((shift) => (mask >>> shift) & 255).join('.');
-  }
-  const groups: string[] = [];
-  for (let g = 0; g < 8; g++) {
+  const mask: number[] = [];
+  for (let g = 0; g < bits / 16; g++) {
     const on = Math.max(0, Math.min(16, range.prefix - g * 16));
-    groups.push((on === 0 ? 0 : (0xffff << (16 - on)) & 0xffff).toString(16));
+    mask.push(on === 0 ? 0 : (0xffff << (16 - on)) & 0xffff);
   }
-  return groups.join(':');
+  if (words(range.address, family).some((word, g) => (word & ~mask[g]!) !== 0)) {
+    throw new IssueError(`${range.address}/${range.prefix} has bits set beyond the prefix`);
+  }
+  if (family === 4) return mask.flatMap((w) => [w >> 8, w & 255]).join('.');
+  return mask.map((w) => w.toString(16)).join(':');
 }
 
 export function caExtensions(scope: IssueScope, keyIds = true): string[] {
@@ -329,11 +355,10 @@ export async function issueLeaf(options: {
   lifetimeMs?: number;
   keyIds?: boolean;
 }): Promise<Issued> {
+  const lifetime = options.lifetimeMs ?? LEAF_LIFETIME_MS;
+  if (!Number.isFinite(lifetime) || lifetime <= 0) throw new IssueError('bad certificate lifetime');
   const ca = new X509Certificate(options.ca.certPem);
-  const notAfter = Math.min(
-    options.now + (options.lifetimeMs ?? LEAF_LIFETIME_MS),
-    ca.validToDate.getTime()
-  );
+  const notAfter = Math.min(options.now + lifetime, ca.validToDate.getTime());
   const notBefore = Math.max(options.now - BACKDATE_MS, ca.validFromDate.getTime());
   if (notAfter <= options.now)
     throw new IssueError('the CA has expired: make a new one with sudo pipulse tls new-ca');
