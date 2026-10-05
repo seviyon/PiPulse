@@ -20,7 +20,7 @@ import { layoutFrom, type Layout } from './layout.js';
 
 export const USAGE = `usage: pipulse tls <command>
   status [--json]              what is configured, what the server serves, the last renewal
-  init [--subnet CIDR]... [--yes]
+  init [--subnet CIDR]... [--yes] [--mode auto [--first-install] [--quiet]]
                                make the CA and certificate if they are missing (never replaces a CA)
   renew [--force]              renew the certificate when it is due (the hourly timer runs this)
   new-ca [--subnet CIDR]... [--name NAME]... [--prune-oldest ca.old-…] [--yes]

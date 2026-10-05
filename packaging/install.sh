@@ -239,7 +239,11 @@ stop_service() { sh -c "${PIPULSE_STOP_CMD:-systemctl stop pipulse}" >/dev/null 
 # Runs setup and (re)starts the service. FIRST is yes on a first install.
 start_service() {
   if [ -n "${PIPULSE_FORCE_RESTART:-}" ]; then # tests without systemd
-    sh /opt/pipulse/app/packaging/setup.sh --no-start
+    if [ "$1" = yes ]; then
+      sh /opt/pipulse/app/packaging/setup.sh --no-start --first-install
+    else
+      sh /opt/pipulse/app/packaging/setup.sh --no-start
+    fi
     restart
   elif [ "$1" = yes ]; then
     sh /opt/pipulse/app/packaging/setup.sh --first-install
@@ -266,6 +270,13 @@ install_tarball() { # install_tarball FILE NO_START
     [ -d /run/systemd/system ] || die 'systemd is not running: use --no-start'
   fi
   mkdir -p /opt/pipulse
+  # A fresh install stays fresh until setup has made HTTPS work (setup removes this), so a
+  # retry after any failure is never taken for an upgrade that stays on plain HTTP.
+  pending=/etc/pipulse/.first-install-pending
+  if [ ! -d /opt/pipulse/app ] && [ ! -e "$(db_path)" ] && [ ! -e /etc/pipulse/tls ]; then
+    install -d -m 750 /etc/pipulse
+    (umask 077 && : > "$pending")
+  fi
   rm -rf /opt/pipulse/app.new /opt/pipulse/node.new /opt/pipulse/app.previous /opt/pipulse/node.previous
   mv "$src" /opt/pipulse/app.new
   mv "$work/staged/node" /opt/pipulse/node.new
@@ -285,8 +296,13 @@ install_tarball() { # install_tarball FILE NO_START
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
   first=yes
   [ "$had_previous" = no ] || first=no
+  if [ -e "$pending" ]; then first=yes; fi
   if [ "$no_start" = yes ]; then
-    sh /opt/pipulse/app/packaging/setup.sh --no-start
+    if [ "$first" = yes ]; then
+      sh /opt/pipulse/app/packaging/setup.sh --no-start --first-install
+    else
+      sh /opt/pipulse/app/packaging/setup.sh --no-start
+    fi
     rm -rf /opt/pipulse/app.previous /opt/pipulse/node.previous
     log "installed $(installed) (not started)"
     return 0
@@ -304,7 +320,10 @@ install_tarball() { # install_tarball FILE NO_START
     log "running $(installed)"
     return 0
   fi
-  [ "$had_previous" = yes ] || die "PiPulse did not become healthy${HEALTH_MSG:+ ($HEALTH_MSG)}; see: journalctl -u pipulse"
+  # A pending fresh install has nothing good to go back to: its "previous" is a half-made first run.
+  if [ "$had_previous" != yes ] || [ -e "$pending" ]; then
+    die "PiPulse did not become healthy${HEALTH_MSG:+ ($HEALTH_MSG)}; see: journalctl -u pipulse"
+  fi
   failed=$(installed)
   reason=${HEALTH_MSG:+ ($HEALTH_MSG)}
   log "$failed did not become healthy: rolling back"

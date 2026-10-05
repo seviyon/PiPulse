@@ -406,6 +406,7 @@ describe('init --mode auto', () => {
     expect(await main(['init', '--mode', 'auto', '--yes'], withDb(ctx))).toBe(0);
     expect(readState(ctx.layout)).toBe('legacy-http');
     expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+    expect(ctx.lines.join('\n')).toContain('sudo pipulse tls enable');
   });
 
   it('never touches an existing state.json', async () => {

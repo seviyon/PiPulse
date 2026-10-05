@@ -39,6 +39,35 @@ fi
 chown root:pipulse /etc/pipulse/pipulse.env
 chmod 640 /etc/pipulse/pipulse.env
 
+# 3b. HTTPS material and mode: made and checked before the service (re)starts; state.json is
+#     written last, and an upgrade never switches the transport.
+# install.sh leaves this marker on a fresh install until setup succeeds, so a retry after any
+# failure is still a first install, never an HTTP "upgrade".
+pending=/etc/pipulse/.first-install-pending
+if [ -e "$pending" ]; then first=yes; fi
+tls_ready=no
+tls_cli() {
+  n=/opt/pipulse/node/bin/node
+  [ -x "$n" ] || n=$(command -v node)
+  "$n" --disable-warning=ExperimentalWarning "$here/../packages/tls/dist/cli.js" "$@"
+}
+# --yes: consent to a subnet came from the installer's prompt or PIPULSE_TLS_SUBNETS.
+set -- init --mode auto --yes
+if [ "$first" = yes ]; then set -- "$@" --first-install; fi
+if [ "$first" = yes ] && [ -n "${PIPULSE_TLS_INIT_SUBNET:-}" ]; then
+  set -- "$@" --subnet "$PIPULSE_TLS_INIT_SUBNET"
+fi
+if tls_cli "$@"; then
+  tls_ready=yes
+elif [ "$first" = yes ] && [ -n "${PIPULSE_TLS_INIT_SUBNET:-}" ] && tls_cli init --mode auto --yes --first-install; then
+  tls_ready=yes
+  warn "$PIPULSE_TLS_INIT_SUBNET was not accepted; the CA covers names only (to add a subnet later: sudo pipulse tls new-ca --subnet <cidr>)"
+elif [ "$first" = yes ]; then
+  die 'HTTPS could not be set up (see above). Fix it and run setup again: sudo sh /opt/pipulse/app/packaging/setup.sh --first-install, or serve plain HTTP: sudo pipulse tls disable --allow-insecure'
+fi
+port=$(env_value PIPULSE_PORT)
+port=${port:-8889}
+
 # 4. Service
 if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
   if [ "$unit_dir" != none ]; then
@@ -51,8 +80,31 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
     if systemctl enable pipulse >/dev/null 2>&1; then
       systemctl restart pipulse
       log 'service enabled and started'
+      # Success on a first install is the service answering and, over HTTPS, the server
+      # having marked its data (see tls-installed): without the marker, losing the TLS
+      # folder later would make this install look like an HTTP one.
+      if pipulse_health; then
+        db=$(env_value PIPULSE_DB_PATH)
+        marker="$(dirname "${db:-/var/lib/pipulse/pipulse.sqlite}")/tls-installed"
+        i=0
+        while [ ! -e "$marker" ] && [ "$i" -lt 5 ]; do i=$((i + 1)); sleep 1; done
+        if grep -q '"https"' /etc/pipulse/tls/state.json 2>/dev/null && [ "$(env_value PIPULSE_TLS)" != off ] && [ ! -e "$marker" ]; then
+          printf '[pipulse] error: the server serves HTTPS but could not write %s (see journalctl -u pipulse); fix the data folder, then: sudo sh /opt/pipulse/app/packaging/setup.sh --first-install\n' "$marker" >&2
+          exit 1
+        fi
+        rm -f "$pending"
+        if grep -q '"https"' /etc/pipulse/tls/state.json 2>/dev/null && [ "$(env_value PIPULSE_TLS)" != off ]; then
+          log "PiPulse is running: https://$(hostname):$port (trust its CA first: sudo pipulse tls export-ca)"
+        fi
+      else
+        printf '[pipulse] error: PiPulse did not come up healthy%s\n' "${HEALTH_MSG:+ ($HEALTH_MSG)}" >&2
+        printf '  see: journalctl -u pipulse   and   sudo pipulse tls status\n' >&2
+        printf '  retry: sudo sh /opt/pipulse/app/packaging/setup.sh --first-install\n  or serve plain HTTP: sudo pipulse tls disable --allow-insecure\n' >&2
+        exit 1
+      fi
     else
       warn 'could not enable the pipulse service (masked?); start it with: sudo systemctl enable --now pipulse'
+      rm -f "$pending"
     fi
   else
     state=$(systemctl is-enabled pipulse 2>/dev/null || true)
@@ -70,12 +122,12 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
   esac
 else
   log 'no systemd running (or --no-start): service not started'
+  # Nothing starts here, so the material made and state.json written are the success gate.
+  if [ "$first" = yes ] && [ "$tls_ready" = yes ]; then rm -f "$pending"; fi
 fi
 
 # 5. Warnings (never change anything)
 command -v openssl >/dev/null 2>&1 || warn 'openssl is not installed; generated HTTPS certificates need it: sudo apt install openssl'
-port=$(env_value PIPULSE_PORT)
-port=${port:-8889}
 if command -v ss >/dev/null 2>&1; then
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -n 1)
   if [ -n "$holder" ] && [ "$holder" != node ]; then

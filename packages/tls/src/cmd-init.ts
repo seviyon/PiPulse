@@ -115,6 +115,13 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
     );
   }
   writeState(ctx.layout, 'legacy-http', ctx.hook);
+  if (code === 0) {
+    ctx.out(
+      ctx.inContainer
+        ? 'HTTPS is ready but not switched on (this is an upgrade): docker compose run --rm pipulse-tls pipulse tls enable --yes'
+        : 'HTTPS is ready but not switched on (this is an upgrade): sudo pipulse tls enable'
+    );
+  }
   return 0;
 }
 
