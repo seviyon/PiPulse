@@ -286,4 +286,50 @@ describe('createRuleSource', () => {
       errors: { id: 'id must be lowercase snake_case' }
     });
   });
+
+  describe('certificate rules', () => {
+    const certSoon = {
+      id: 'cert_soon',
+      certExpiresWithin: '30d',
+      severity: 'warning',
+      message: 'Soon'
+    };
+    const withCertificate = (on: boolean, file?: object) =>
+      createRuleSource(db, {
+        cores: 4,
+        metrics,
+        rawRetention: () => raw,
+        certificate: on,
+        ...(file ? { file: { name: 'alerts.json', text: JSON.stringify(file) } } : {})
+      });
+
+    it('are built in with HTTPS and absent without it', () => {
+      expect(ids(withCertificate(true).read().rules)).toEqual(
+        expect.arrayContaining(['cert_expiring', 'cert_expired'])
+      );
+      const off = withCertificate(false).read();
+      expect(ids(off.rules)).not.toContain('cert_expiring');
+      expect(ids(off.entries)).not.toContain('cert_expired');
+    });
+
+    it('a saved certificate rule runs with HTTPS and is shown as not in force without it', () => {
+      expect(withCertificate(true).save(certSoon)).toEqual({ ok: true });
+      expect(ids(withCertificate(true).read().rules)).toContain('cert_soon');
+      const off = withCertificate(false).read();
+      expect(ids(off.rules)).not.toContain('cert_soon');
+      expect(off.entries.find((e) => e.id === 'cert_soon')?.problem).toBe(
+        'HTTPS is off, so certificate rules are not in force'
+      );
+    });
+
+    it('a certificate rule from the rules file is not in force without HTTPS, and a disabled one says nothing', () => {
+      const file = { rules: [certSoon, { id: 'cert_expiring', disabled: true }] };
+      const on = withCertificate(true, file).read();
+      expect(ids(on.rules)).toContain('cert_soon');
+      expect(ids(on.rules)).not.toContain('cert_expiring');
+      const off = withCertificate(false, { rules: [certSoon] }).read();
+      expect(ids(off.rules)).not.toContain('cert_soon');
+      expect(off.entries.find((e) => e.id === 'cert_soon')?.problem).toContain('HTTPS is off');
+    });
+  });
 });

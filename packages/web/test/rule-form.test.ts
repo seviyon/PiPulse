@@ -13,6 +13,46 @@ const written = {
 };
 
 describe('draftOf / bodyOf', () => {
+  it('turns certificate conditions into rules without metric or durations', () => {
+    const within = {
+      ...emptyDraft('cpu_load'),
+      id: 'cert_soon',
+      condition: 'certExpiresWithin' as const,
+      value: '30d',
+      message: 'Soon'
+    };
+    expect(bodyOf(within)).toEqual({
+      ok: true,
+      body: { id: 'cert_soon', certExpiresWithin: '30d', severity: 'warning', message: 'Soon' }
+    });
+    const expired = {
+      ...emptyDraft('cpu_load'),
+      id: 'gone',
+      condition: 'certExpired' as const,
+      message: 'Gone'
+    };
+    expect(bodyOf(expired)).toEqual({
+      ok: true,
+      body: { id: 'gone', certExpired: true, severity: 'warning', message: 'Gone' }
+    });
+    expect(bodyOf({ ...within, value: ' ' })).toEqual({
+      ok: false,
+      errors: { value: 'Enter a duration like 14d.' }
+    });
+    expect(
+      draftOf({ id: 'cert_soon', certExpiresWithin: '30d', severity: 'critical', message: 'x' })
+    ).toMatchObject({ condition: 'certExpiresWithin', value: '30d' });
+    expect(
+      draftOf({ id: 'gone', certExpired: true, severity: 'warning', message: 'x' })
+    ).toMatchObject({ condition: 'certExpired', value: '' });
+    expect(formErrors({ certExpiresWithin: 'must be longer than 0' })).toEqual({
+      value: 'must be longer than 0'
+    });
+    expect(formErrors({ certExpired: 'certExpired must be true' })).toEqual({
+      value: 'certExpired must be true'
+    });
+  });
+
   it('round-trips a threshold rule', () => {
     const draft = draftOf(written);
     expect(draft).toMatchObject({ condition: 'atLeast', value: '80', for: '2min' });

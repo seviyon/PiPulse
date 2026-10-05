@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson, type Session } from './api.js';
-import { formatDateTime } from './format.js';
+import { compactIp, formatDateYear } from './format.js';
 import { StatusIcon } from './tile.js';
 import type { Config, TlsView } from './types.js';
 
 const DAY_MS = 86_400_000;
+export const REFRESH_MS = 60_000;
 
 type Https = Extract<TlsView, { mode: 'https' }>;
 type Http = Extract<TlsView, { mode: 'http' }>;
 
 /** The validity line: what matters for each state (an early clock needs the start date). */
 function validityText(tls: Https, daysLeft: number): string {
-  if (tls.validity === 'expired') return `Expired on ${formatDateTime(tls.notAfter)}`;
-  if (tls.validity === 'not-yet-valid') return `Not valid until ${formatDateTime(tls.notBefore)}`;
+  if (tls.validity === 'expired') return `Expired on ${formatDateYear(tls.notAfter)}`;
+  if (tls.validity === 'not-yet-valid') return `Not valid until ${formatDateYear(tls.notBefore)}`;
   const left =
     daysLeft <= 0 ? 'expires today' : `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`;
-  return `Valid until ${formatDateTime(tls.notAfter)} (${left})`;
+  return `Valid until ${formatDateYear(tls.notAfter)} (${left})`;
 }
 
 const CLASS_TEXT: Record<Https['class'], string> = {
@@ -40,11 +41,63 @@ function HttpBody({ tls, signIn }: { tls: Http | undefined; signIn: boolean }) {
       )}
       {tls?.reason === 'state' && tls.stateMode === 'legacy-http' && (
         <p>
-          HTTPS is ready: run <code>sudo pipulse tls enable</code> on the Pi.
+          HTTPS is ready:{' '}
+          {tls.inContainer ? (
+            <>
+              run <code>docker compose run --rm pipulse-tls pipulse tls enable --yes</code>, then{' '}
+              <code>docker compose restart pipulse</code>.
+            </>
+          ) : (
+            <>
+              run <code>sudo pipulse tls enable</code> on the Pi.
+            </>
+          )}
         </p>
       )}
     </>
   );
+}
+
+export function warningExpected(host: string, sans: { dns: string[]; ip: string[] }): boolean {
+  const h = host.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  return h.includes(':') || /^\d+(\.\d+){3}$/.test(h)
+    ? !sans.ip.map(compactIp).includes(compactIp(h))
+    : !sans.dns.includes(h);
+}
+
+function Coverage({ tls }: { tls: Https }) {
+  const coverage = tls.coverage!;
+  const change = tls.inContainer
+    ? 'docker compose run --rm pipulse-tls pipulse tls new-ca --subnet <cidr> --yes'
+    : 'sudo pipulse tls new-ca --subnet <cidr>';
+  const expected = warningExpected(location.hostname, tls.sans);
+  return (
+    <>
+      <p>DNS access: covered ({coverage.dns.join(', ')})</p>
+      <p>
+        IP access:{' '}
+        {coverage.ipSubnets.length ? `covered for ${coverage.ipSubnets.join(', ')}` : 'not covered'}
+      </p>
+      <p>
+        Certificate warning expected here:{' '}
+        {expected
+          ? `yes (${location.hostname} is not in the certificate)`
+          : 'no, once this device trusts the CA'}
+      </p>
+      <p>
+        How to change scope: <code>{change}</code>
+      </p>
+    </>
+  );
+}
+
+function renewalText(r: NonNullable<Https['renewal']>): string {
+  if (r.state === 'failing')
+    return `Renewal failing: ${r.reason ?? 'see pipulse tls status'} (the current certificate stays in use)`;
+  if (r.state === 'waiting-clock') return 'Renewal waiting for the clock to synchronize';
+  if (r.state === 'unknown' || r.lastAttempt === null)
+    return 'Renewal: not checked yet (the hourly timer runs soon)';
+  return `Renewal: checked ${formatDateYear(r.lastAttempt)}, ${r.result === 'renewed' ? 'renewed' : 'not due'}`;
 }
 
 function HttpsBody({ tls, now }: { tls: Https; now: number }) {
@@ -65,10 +118,45 @@ function HttpsBody({ tls, now }: { tls: Https; now: number }) {
         {CLASS_TEXT[tls.class]}
         {tls.missingNames.length > 0 && `: ${tls.missingNames.join(', ')}`}
       </p>
-      <p>Names: {[...tls.sans.dns, ...tls.sans.ip].join(', ')}</p>
+      <p>Names: {[...tls.sans.dns, ...tls.sans.ip.map(compactIp)].join(', ')}</p>
       <p>
         SHA-256: <code class="fingerprint">{tls.fingerprint}</code>
       </p>
+      {tls.caFingerprint && (
+        <p>
+          CA SHA-256: <code class="fingerprint">{tls.caFingerprint}</code>
+          <br />
+          Before trusting this CA on a device, compare this with{' '}
+          <code>sudo pipulse tls status</code>
+          {tls.inContainer ? (
+            <>
+              {' '}
+              (or <code>docker compose logs pipulse-tls</code>)
+            </>
+          ) : null}{' '}
+          on the Pi itself: this page can't vouch for itself.
+        </p>
+      )}
+      {tls.ca?.state === 'transitional' && (
+        <p class="alert-severity">
+          <StatusIcon level="warning" />
+          The CA is being replaced; the served certificate has not switched yet (it does within
+          about two minutes).
+        </p>
+      )}
+      {tls.metadataProblems?.map((problem) => (
+        <p class="alert-severity" key={problem.file}>
+          <StatusIcon level="warning" />
+          CA details unavailable: {problem.file}: {problem.message}
+        </p>
+      ))}
+      {tls.coverage && <Coverage tls={tls} />}
+      {tls.renewal && (
+        <p class={tls.renewal.state === 'failing' ? 'alert-severity' : undefined}>
+          {tls.renewal.state === 'failing' && <StatusIcon level="warning" />}
+          {renewalText(tls.renewal)}
+        </p>
+      )}
       {tls.reload.state === 'failing' && (
         <p class="alert-severity">
           <StatusIcon level="warning" />A replacement certificate was not loaded
@@ -84,7 +172,21 @@ function HttpsBody({ tls, now }: { tls: Https; now: number }) {
 export function CertificateSection({ session }: { session: Session }) {
   const [config, setConfig] = useState<Config | 'loading' | 'error'>('loading');
   useEffect(() => {
-    getJson<Config>('/api/config').then(setConfig, () => setConfig('error'));
+    const load = () =>
+      getJson<Config>('/api/config').then(setConfig, () =>
+        // A failed refresh keeps the last good view; only the first load shows the error.
+        setConfig((current) => (typeof current === 'object' ? current : 'error'))
+      );
+    load();
+    const timer = setInterval(load, REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
   return (
     <section aria-labelledby="settings-certificate">

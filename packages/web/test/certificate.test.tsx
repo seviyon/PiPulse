@@ -3,7 +3,7 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { CertificateSection } from '../src/certificate.js';
 import type { Session } from '../src/api.js';
-import { formatDateTime } from '../src/format.js';
+import { formatDateYear } from '../src/format.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2027, 0, 1);
@@ -61,7 +61,7 @@ describe('CertificateSection', () => {
     expect(root.querySelector('h2')?.textContent).toBe('Certificate');
     expect(root.textContent).toContain('Your certificate (PIPULSE_TLS_CERT)');
     expect(root.textContent).toContain(
-      `Valid until ${formatDateTime(NOW + 80 * DAY)} (80 days left)`
+      `Valid until ${formatDateYear(NOW + 80 * DAY)} (80 days left)`
     );
     expect(root.textContent).toContain('io.lan, 192.168.1.20');
     expect(root.textContent).toContain('AB:CD');
@@ -71,7 +71,7 @@ describe('CertificateSection', () => {
 
   it('flags an expired certificate with an icon and words', async () => {
     await show({ ...https, validity: 'expired', notAfter: NOW - DAY });
-    expect(root.textContent).toContain(`Expired on ${formatDateTime(NOW - DAY)}`);
+    expect(root.textContent).toContain(`Expired on ${formatDateYear(NOW - DAY)}`);
     expect(root.textContent).not.toContain('days left');
     expect(root.querySelector('svg')).not.toBeNull();
   });
@@ -83,7 +83,7 @@ describe('CertificateSection', () => {
       notBefore: NOW + 3 * DAY,
       notAfter: NOW + 90 * DAY
     });
-    expect(root.textContent).toContain(`Not valid until ${formatDateTime(NOW + 3 * DAY)}`);
+    expect(root.textContent).toContain(`Not valid until ${formatDateYear(NOW + 3 * DAY)}`);
     expect(root.textContent).not.toContain('days left');
     expect(root.querySelector('svg')).not.toBeNull();
   });

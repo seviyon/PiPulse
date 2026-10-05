@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { PiPulseDb } from '@pipulse/storage';
-import { EMPTY_WINDOW, evaluate, windowMs } from './evaluate.js';
-import type { MetricInfo, Rule } from './rules.js';
+import {
+  EMPTY_WINDOW,
+  evaluate,
+  evaluateCertificate,
+  windowMs,
+  type AlertContext
+} from './evaluate.js';
+import { CERTIFICATE_METRIC, isCertificateRule, type MetricInfo, type Rule } from './rules.js';
 import {
   clearAlert,
   latestReading,
@@ -27,7 +33,7 @@ const key = (ruleId: string, metric: string) => `${ruleId}\u0000${metric}`;
  * an older version of the rule (edited in the browser) and is closed.
  */
 export function ruleHash(rule: Rule): string {
-  const fields = [
+  const fields: unknown[] = [
     rule.id,
     rule.metric,
     rule.atLeast ?? null,
@@ -39,6 +45,10 @@ export function ruleHash(rule: Rule): string {
     rule.severity,
     rule.message
   ];
+  // Appended only when present, so every existing rule keeps its hash.
+  if (rule.certExpiresWithin !== undefined)
+    fields.push('certExpiresWithin', rule.certExpiresWithin);
+  if (rule.certExpired !== undefined) fields.push('certExpired', rule.certExpired);
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0, 16);
 }
 
@@ -66,13 +76,21 @@ export function startAlerts(
     onError?: (error: unknown, rule?: Rule) => void;
     /** After every check that read its rules and open alerts (the health check's freshness). */
     onCheck?: () => void;
+    /** What the engine needs beyond stored readings (the served certificate), read on every check. */
+    context?: () => AlertContext;
+    /** One line when certificate alerts can't decide (no certificate yet, unsynced clock). */
+    onNotice?: (message: string) => void;
   }
 ): { check(): void; stop(): void } {
   const now = options.now ?? Date.now;
   const intervalMs = options.intervalMs ?? CHECK_INTERVAL_MS;
   const byId = new Map(options.metrics.map((metric) => [metric.id, metric]));
   const targets = (rule: Rule): MetricInfo[] =>
-    rule.metric === '*' ? options.metrics : [byId.get(rule.metric)].filter((m) => m !== undefined);
+    isCertificateRule(rule)
+      ? [{ id: CERTIFICATE_METRIC, intervalMs }]
+      : rule.metric === '*'
+        ? options.metrics
+        : [byId.get(rule.metric)].filter((m) => m !== undefined);
   const emit = (event: AlertEvent) => {
     try {
       options.onChange?.(event);
@@ -83,6 +101,7 @@ export function startAlerts(
 
   let since = now();
   let lastCheck: number | undefined;
+  let certificateState: 'decided' | 'unavailable' | 'undecided' | undefined;
 
   const check = () => {
     try {
@@ -92,6 +111,7 @@ export function startAlerts(
       if (lastCheck !== undefined && (t < lastCheck || t - lastCheck > 3 * intervalMs)) since = t;
       lastCheck = t;
       const rules = typeof options.rules === 'function' ? options.rules() : options.rules;
+      const certificate = options.context?.().certificate;
       const byRuleId = new Map(rules.map((rule) => [rule.id, rule]));
       const open = new Map<string, Alert>();
       for (const alert of openAlerts(db)) {
@@ -108,6 +128,40 @@ export function startAlerts(
         for (const metric of targets(rule)) {
           try {
             const current = open.get(key(rule.id, metric.id));
+            if (isCertificateRule(rule)) {
+              const decision = evaluateCertificate(rule, certificate, t, current !== undefined);
+              const state =
+                decision.action === 'unavailable' || decision.action === 'undecided'
+                  ? decision.action
+                  : 'decided';
+              if (state !== certificateState) {
+                certificateState = state;
+                if (state !== 'decided') {
+                  options.onNotice?.(
+                    state === 'unavailable'
+                      ? 'certificate alerts: no certificate information yet; nothing raised or cleared'
+                      : 'certificate alerts: waiting for a synchronized clock; open alerts stay open'
+                  );
+                }
+              }
+              if (decision.action === 'raise' && current === undefined) {
+                emit({
+                  type: 'raised',
+                  alert: raiseAlert(db, {
+                    ruleId: rule.id,
+                    metric: metric.id,
+                    severity: rule.severity,
+                    message: rule.message,
+                    value: null,
+                    raisedAt: t,
+                    ruleHash: ruleHash(rule)
+                  })
+                });
+              } else if (decision.action === 'clear' && current !== undefined) {
+                emit({ type: 'cleared', alert: clearAlert(db, current.id, t, 'condition') });
+              }
+              continue;
+            }
             const span = windowMs(rule, current !== undefined);
             const decision = evaluate(rule, {
               now: t,

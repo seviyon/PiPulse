@@ -69,6 +69,38 @@ export function formatDateTime(ts: number): string {
   });
 }
 
+/** "Jan 1, 2027, 10:15": a certificate's dates are months or years apart, so the year matters. */
+export function formatDateYear(ts: number): string {
+  return new Date(ts).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+/** Node prints IPv6 SANs in full ("0:0:0:0:0:0:0:1"); show them the way people type them ("::1"). */
+export function compactIp(text: string): string {
+  if (!text.includes(':')) return text;
+  const groups = text.split(':');
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-fA-F]{1,4}$/.test(g))) return text;
+  const values = groups.map((g) => parseInt(g, 16).toString(16));
+  let best = { at: -1, length: 0 };
+  for (let i = 0; i < 8;) {
+    if (values[i] !== '0') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < 8 && values[j] === '0') j++;
+    if (j - i > best.length) best = { at: i, length: j - i };
+    i = j;
+  }
+  if (best.length < 2) return values.join(':');
+  return `${values.slice(0, best.at).join(':')}::${values.slice(best.at + best.length).join(':')}`;
+}
+
 /** "5 min", "3 h 12 min", "16 days 11 h". */
 export function formatUptime(ms: number): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000);

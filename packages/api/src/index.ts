@@ -1,4 +1,5 @@
 import { hostname, uptime } from 'node:os';
+import type { Server as HttpsServer } from 'node:https';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
@@ -22,9 +23,17 @@ import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
+import { answerPlainHttp } from './plain-http.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
-export { healthBody, tlsView, type TlsView } from './tls-status.js';
+export {
+  healthBody,
+  readGeneratedExtras,
+  tlsView,
+  type GeneratedExtras,
+  type MetadataProblem,
+  type TlsView
+} from './tls-status.js';
 export type { AuthOptions } from './auth-routes.js';
 export type { AlertRulesOptions } from './alert-routes.js';
 export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './settings-routes.js';
@@ -186,6 +195,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   const app = (options.https
     ? Fastify({ logger: false, https: { ...options.https, minVersion: 'TLSv1.2' } })
     : Fastify({ logger: false })) as unknown as FastifyInstance;
+  // An old http:// bookmark gets a fixed hint page instead of a dropped connection.
+  if (options.https) (app.server as unknown as HttpsServer).on('tlsClientError', answerPlainHttp);
   if (options.https && options.hstsSeconds !== undefined) {
     const hsts = `max-age=${options.hstsSeconds}`;
     app.addHook('onSend', async (_request, reply, payload) => {
@@ -213,7 +224,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
   // however far the clock later jumps.
   const health = options.health ?? createHealth(db);
-  const readTls = options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default' }));
+  const readTls =
+    options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default', inContainer: false }));
   app.get('/api/health', async (_request, reply) => {
     const body = healthBody(health.check(), readTls(), options.auth?.passwordHash !== undefined);
     return body.status === 'failing' ? reply.status(503).send(body) : body;

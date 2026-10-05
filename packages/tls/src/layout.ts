@@ -36,6 +36,22 @@ export const MODES = {
   stagePublic: 0o750
 } as const;
 
+/** The uid of `name` from /etc/passwd, or undefined (a dev machine has no pipulse user). */
+export function userId(
+  name: string,
+  read: () => string = () => readFileSync('/etc/passwd', 'utf8')
+): number | undefined {
+  try {
+    for (const line of read().split('\n')) {
+      const [user, , uid] = line.split(':');
+      if (user === name && uid !== undefined && /^\d+$/.test(uid)) return Number(uid);
+    }
+  } catch {
+    // no passwd file: no expectation
+  }
+  return undefined;
+}
+
 export function groupId(
   name: string,
   read: () => string = () => readFileSync('/etc/group', 'utf8')
@@ -93,7 +109,7 @@ export function paths(layout: Layout) {
 export const pub = (layout: Layout): Owner => ({ uid: layout.uid, gid: layout.gid });
 export const priv = (layout: Layout): Owner => ({ uid: layout.uid, gid: layout.privateGid });
 
-const FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
+export const FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
 export const BACKUP_NAME = /^ca\.old-\d{8}T\d{6}Z$/;
 
 type Json = Record<string, unknown>;

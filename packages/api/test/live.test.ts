@@ -99,7 +99,7 @@ describe('GET /api/config', () => {
       serverTime: expect.any(Number),
       uptimeMs: expect.any(Number),
       rules: [],
-      tls: { mode: 'http', reason: 'default' }
+      tls: { mode: 'http', reason: 'default', inContainer: false }
     });
   });
 

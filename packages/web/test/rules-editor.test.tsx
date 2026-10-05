@@ -339,6 +339,22 @@ describe('<RulesSection>', () => {
     expect(root.querySelector('#rule-clearAfter')).toBeNull();
   });
 
+  it('hides the metric and durations for certificate conditions, and the value for "expired"', async () => {
+    await show();
+    await act(() => button('Add rule').click());
+    await input('rule-condition', 'certExpiresWithin');
+    expect(root.querySelector('#rule-metric')).toBeNull();
+    expect(root.querySelector('#rule-for')).toBeNull();
+    expect(root.querySelector('#rule-clearAfter')).toBeNull();
+    expect(root.querySelector('label[for="rule-value"]')?.textContent).toBe('Within (e.g. 14d)');
+    await input('rule-condition', 'certExpired');
+    expect(root.querySelector('#rule-metric')).toBeNull();
+    expect(root.querySelector('#rule-value')).toBeNull();
+    await input('rule-condition', 'atLeast');
+    expect(root.querySelector('#rule-metric')).not.toBeNull();
+    expect(root.querySelector('#rule-for')).not.toBeNull();
+  });
+
   it('falls back to signed out on a 401', async () => {
     const onSignedOut = vi.fn();
     render(

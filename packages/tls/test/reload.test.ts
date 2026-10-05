@@ -64,6 +64,38 @@ function setup(
 }
 
 describe('startReloader', () => {
+  it('calls onChange after every attempt, successful or not, and survives a throwing listener', () => {
+    let changes = 0;
+    let sig = 's0';
+    let next: () => LoadedCertificate = () => A;
+    const provider = startReloader({
+      initial: A,
+      load: () => next(),
+      signature: () => sig,
+      apply: () => {},
+      onChange: () => {
+        changes++;
+        throw new Error('listener broke');
+      },
+      now: () => 0,
+      timer: false
+    });
+    sig = 's1';
+    next = () => B;
+    provider.poll(); // first sight of a change: no attempt yet
+    expect(changes).toBe(0);
+    provider.poll(); // stable on the second poll: one attempt
+    expect(changes).toBe(1);
+    sig = 's2';
+    next = () => {
+      throw new Error('refused');
+    };
+    provider.poll();
+    provider.poll(); // a refused attempt counts too
+    expect(changes).toBe(2);
+    expect(provider.reload().state).toBe('failing');
+  });
+
   it('keeps the active certificate when accept refuses the candidate, and reports failing', () => {
     const r = setup(A, () => {
       throw new Error('PIPULSE_TLS_REQUIRE_VALID_CERT: the replacement certificate is expired');

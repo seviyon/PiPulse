@@ -1,6 +1,7 @@
 import type { RuleEntry, Severity } from './types.js';
 
-export type Condition = 'atLeast' | 'atMost' | 'bitsSet' | 'noReadingFor';
+export type Condition =
+  'atLeast' | 'atMost' | 'bitsSet' | 'noReadingFor' | 'certExpiresWithin' | 'certExpired';
 
 /** The rule form's fields, all as typed. */
 export interface RuleDraft {
@@ -21,7 +22,9 @@ export const CONDITIONS: { id: Condition; label: string }[] = [
   { id: 'atLeast', label: 'At least' },
   { id: 'atMost', label: 'At most' },
   { id: 'bitsSet', label: 'Any of these flags set' },
-  { id: 'noReadingFor', label: 'No reading for' }
+  { id: 'noReadingFor', label: 'No reading for' },
+  { id: 'certExpiresWithin', label: 'Certificate expires within' },
+  { id: 'certExpired', label: 'Certificate expired' }
 ];
 
 export function emptyDraft(metric: string): RuleDraft {
@@ -42,7 +45,7 @@ const text = (value: unknown) => (typeof value === 'string' ? value : '');
 /** A rule in the rules-file format as form fields; a mask shows in hex. */
 export function draftOf(written: Record<string, unknown>): RuleDraft {
   const condition = CONDITIONS.find(({ id }) => written[id] !== undefined)?.id ?? 'atLeast';
-  const raw = written[condition];
+  const raw = condition === 'certExpired' ? undefined : written[condition];
   return {
     id: text(written['id']),
     metric: text(written['metric']),
@@ -64,6 +67,17 @@ export function draftOf(written: Record<string, unknown>): RuleDraft {
 export function bodyOf(
   draft: RuleDraft
 ): { ok: true; body: Record<string, unknown> } | { ok: false; errors: FormErrors } {
+  if (draft.condition === 'certExpiresWithin' || draft.condition === 'certExpired') {
+    // Certificate rules watch the served certificate: no metric, no lasting, no clear-after.
+    const body: Record<string, unknown> = { id: draft.id.trim() };
+    if (draft.condition === 'certExpired') body['certExpired'] = true;
+    else if (draft.value.trim() === '')
+      return { ok: false, errors: { value: 'Enter a duration like 14d.' } };
+    else body['certExpiresWithin'] = draft.value.trim();
+    body['severity'] = draft.severity;
+    body['message'] = draft.message.trim();
+    return { ok: true, body };
+  }
   const body: Record<string, unknown> = { id: draft.id.trim(), metric: draft.metric };
   const value = draft.value.trim();
   if (draft.condition === 'noReadingFor') {
@@ -114,7 +128,14 @@ const FIELDS: FormField[] = [
 export function formErrors(server: Record<string, string>): FormErrors {
   const errors: FormErrors = {};
   for (const [field, message] of Object.entries(server)) {
-    const at: FormField = ['atLeast', 'atMost', 'bitsSet', 'noReadingFor'].includes(field)
+    const at: FormField = [
+      'atLeast',
+      'atMost',
+      'bitsSet',
+      'noReadingFor',
+      'certExpiresWithin',
+      'certExpired'
+    ].includes(field)
       ? 'value'
       : (FIELDS.find((f) => f === field) ?? 'form');
     errors[at] = message;

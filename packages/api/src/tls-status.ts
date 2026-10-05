@@ -1,23 +1,87 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   EXPIRING_SOON_MS,
+  parseMeta,
+  parseRenewStatus,
   readClock,
   validityOf,
+  type CaMeta,
   type CertificateProvider,
   type ChainClass,
   type ClockState,
+  type Constraints,
   type ModeReason,
   type ReloadState,
+  type RenewStatus,
   type StateMode,
   type TlsConfig,
   type Validity
 } from '@pipulse/tls';
 import type { HealthResult } from './health.js';
 
+export type MetadataFile = 'ca-meta.json' | 'renew-status.json';
+/** For /api/config (read-protected): which file, and an errno code or the parser's one line. */
+export interface MetadataProblem {
+  file: MetadataFile;
+  message: string;
+}
+export interface GeneratedExtras {
+  meta?: CaMeta;
+  renewal?: RenewStatus;
+  problems: MetadataProblem[];
+}
+
+const shortMessage = (error: unknown): string =>
+  (error as NodeJS.ErrnoException).code ??
+  (error instanceof Error ? error.message : String(error)).slice(0, 120);
+
+/**
+ * Public facts about a generated CA and its renewal, read per request (two
+ * small files). Only a missing renew-status.json is expected (no renewal has
+ * run yet). A missing ca-meta.json (it is written with the CA), any other
+ * read error and any content that doesn't validate are problems. Messages
+ * are errno codes or the parsers' one-line reasons, never paths or contents.
+ */
+export function readGeneratedExtras(
+  tlsDir: string,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8')
+): GeneratedExtras {
+  const extras: GeneratedExtras = { problems: [] };
+  function load<T>(
+    file: MetadataFile,
+    parse: (text: string) => T,
+    optional: boolean
+  ): T | undefined {
+    let text: string;
+    try {
+      text = read(join(tlsDir, file));
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+      if (!(missing && optional))
+        extras.problems.push({ file, message: missing ? 'missing' : shortMessage(error) });
+      return undefined;
+    }
+    try {
+      return parse(text);
+    } catch (error) {
+      extras.problems.push({ file, message: shortMessage(error) });
+      return undefined;
+    }
+  }
+  const meta = load('ca-meta.json', parseMeta, false);
+  const renewal = load('renew-status.json', parseRenewStatus, true);
+  if (meta) extras.meta = meta;
+  if (renewal) extras.renewal = renewal;
+  return extras;
+}
+
 /** What /api/config serves as `tls` (subject to read protection). */
 export type TlsView =
-  | { mode: 'http'; reason: ModeReason; stateMode?: StateMode }
+  | { mode: 'http'; reason: ModeReason; stateMode?: StateMode; inContainer: boolean }
   | {
       mode: 'https';
+      inContainer: boolean;
       source: 'operator' | 'generated';
       validity: Validity;
       notBefore: number;
@@ -32,21 +96,85 @@ export type TlsView =
       clock: ClockState;
       clockSynced: boolean;
       reload: ReloadState;
+      /** Generated certificates only: the served certificate's CA (never a scope it doesn't have). */
+      ca?:
+        | {
+            state: 'ok';
+            subject: string;
+            createdAt: number;
+            notAfter: number;
+            constraints: Constraints;
+            backups: number;
+          }
+        | { state: 'transitional' }
+        | { state: 'unavailable' };
+      /** Present only with `ca.state === 'ok'`. */
+      coverage?: { dns: string[]; ipSubnets: string[] };
+      renewal?: {
+        state: 'ok' | 'waiting-clock' | 'failing' | 'unknown';
+        lastAttempt: number | null;
+        result: RenewStatus['result'] | null;
+        reason: string | null;
+      };
+      metadata?: 'ok' | 'transitional' | 'unreadable';
+      metadataProblems?: MetadataProblem[];
     };
 
 export function tlsView(
   config: TlsConfig,
   provider: CertificateProvider | undefined,
-  now: number
+  now: number,
+  options: { extras?: GeneratedExtras; inContainer?: boolean } = {}
 ): TlsView {
+  const inContainer = options.inContainer ?? false;
   if (config.mode === 'http' || !provider) {
     return {
       mode: 'http',
       reason: config.modeReason,
-      ...(config.stateMode !== undefined ? { stateMode: config.stateMode } : {})
+      ...(config.stateMode !== undefined ? { stateMode: config.stateMode } : {}),
+      inContainer
     };
   }
   const cert = provider.current();
+  const extras = cert.source === 'generated' ? (options.extras ?? { problems: [] }) : undefined;
+  type Https = Extract<TlsView, { mode: 'https' }>;
+  let ca: Https['ca'];
+  if (extras) {
+    if (!extras.meta) ca = { state: 'unavailable' };
+    // ca-meta.json must describe the CA of the certificate being SERVED: a CA
+    // change installs it before the reloader switches to the new leaf.
+    else if (cert.caFingerprint === undefined || extras.meta.fingerprint !== cert.caFingerprint)
+      ca = { state: 'transitional' };
+    else {
+      ca = {
+        state: 'ok',
+        subject: extras.meta.subject,
+        createdAt: extras.meta.createdAt,
+        notAfter: extras.meta.notAfter,
+        constraints: extras.meta.constraints,
+        backups: extras.meta.backups.length
+      };
+    }
+  }
+  const renewal = extras && {
+    state: !extras.renewal
+      ? ('unknown' as const)
+      : extras.renewal.result === 'failed'
+        ? ('failing' as const)
+        : extras.renewal.result === 'waiting-clock'
+          ? ('waiting-clock' as const)
+          : ('ok' as const),
+    lastAttempt: extras.renewal?.lastAttempt ?? null,
+    result: extras.renewal?.result ?? null,
+    reason: extras.renewal?.reason ?? null
+  };
+  const metadata =
+    extras &&
+    (extras.problems.length > 0
+      ? ('unreadable' as const)
+      : ca?.state === 'transitional'
+        ? ('transitional' as const)
+        : ('ok' as const));
   const clock = readClock({
     timesyncDir: config.timesyncDir,
     now,
@@ -55,6 +183,7 @@ export function tlsView(
   });
   return {
     mode: 'https',
+    inContainer,
     source: cert.source,
     validity: validityOf(cert, now, EXPIRING_SOON_MS[cert.source]),
     notBefore: cert.notBefore,
@@ -68,7 +197,14 @@ export function tlsView(
     certificateAgeMs: now - cert.notBefore,
     clock: clock.state,
     clockSynced: clock.synced,
-    reload: provider.reload()
+    reload: provider.reload(),
+    ...(ca ? { ca } : {}),
+    ...(ca?.state === 'ok'
+      ? { coverage: { dns: ca.constraints.dns, ipSubnets: ca.constraints.subnets } }
+      : {}),
+    ...(renewal ? { renewal } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(extras && extras.problems.length > 0 ? { metadataProblems: extras.problems } : {})
   };
 }
 
@@ -92,6 +228,8 @@ export interface HealthBody {
     clockSynced: ClockState;
     class: ChainClass;
     reload: 'ok' | 'failing' | 'no-valid-reload';
+    renewal?: 'ok' | 'waiting-clock' | 'failing' | 'unknown';
+    metadata?: 'ok' | 'transitional' | 'unreadable';
   };
 }
 
@@ -113,12 +251,16 @@ export function healthBody(
       tls.reload.state === 'ok' ? 'ok' : tls.validity === 'expired' ? 'no-valid-reload' : 'failing';
     if (reload !== 'ok') reasons.push(reload === 'failing' ? 'reload-failing' : reload);
     if (tls.source === 'generated' && !tls.clockSynced) reasons.push(`clock-${tls.clock}`);
+    if (tls.renewal?.state === 'failing') reasons.push('renewal-failing');
+    if (tls.metadata === 'unreadable') reasons.push('generated-metadata-unreadable');
     certificate = {
       source: tls.source,
       validity: tls.validity,
       clockSynced: tls.clock,
       class: tls.class,
-      reload
+      reload,
+      ...(tls.renewal ? { renewal: tls.renewal.state } : {}),
+      ...(tls.metadata ? { metadata: tls.metadata } : {})
     };
   } else if (signInConfigured) {
     reasons.push('http-with-sign-in');

@@ -149,6 +149,12 @@ sudo pipulse tls disable --allow-insecure   # serve plain HTTP again; the certif
 
 **Recovering the CA.** An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next command that changes something (`init`, `renew`, `new-ca`, `restore-ca`, `enable` or `disable`); nothing else is needed. `status` and `export-ca` only read: they leave it unfinished, and `status` says when one is pending. An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
 
+**Seeing what is happening.** `sudo pipulse tls status` shows, next to what is configured on disk, what the running server actually serves (`Active … HTTPS, pid …, serving SHA-256 …`), and says when a newer certificate on disk was not applied and why. The server publishes this in `/run/pipulse/tls-status.json`; `status` treats that file as untrusted input and prints only validated values. A failing renewal shows on Settings → Certificate ("Renewal failing: …"), in `/api/health` (`degraded`, reason `renewal-failing`) and in `pipulse tls status`; the current certificate keeps serving until it expires. Settings also shows the CA fingerprint (compare it with `sudo pipulse tls status` on the Pi, never with this page alone), what the certificate covers, whether a warning is expected for the address you opened, and refreshes by itself every minute.
+
+**Certificate alerts.** With HTTPS on, two built-in rules watch the served certificate: `cert_expiring` (warning, 14 days before it ends) and `cert_expired` (critical). They go through the usual alert path, so the Alerts page, the nav badge and your webhooks all see them. While the clock is not synchronized they stay undecided: a Pi without a clock would otherwise raise a false expiry after every boot.
+
+**Old `http://` bookmarks.** A browser that opens `http://<pi>:8889` while HTTPS is on gets a small page saying to use `https://`, instead of a dropped connection. It is a fixed page: nothing from the request is read or echoed, and there is no redirect. It relies on an undocumented Node detail, so if a future Node drops it the connection is simply closed, as before; requests of hundreds of KB (never a browser's) can lose the page to a connection reset.
+
 
 The `pipulse` command wraps the everyday tasks, with the service's settings loaded:
 
@@ -337,7 +343,7 @@ Configuration is environment variables for now (see the table under [Develop](#d
 | 5b-2 | Alert rules in the browser, acknowledging alerts | ✅ Done |
 | 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (apt, tarball, Docker, releases, Renovate) | ✅ Done |
-| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ In progress (6b-1: your own certificate) |
+| 6b | HTTPS by default (self-signed or your own certificate) | ⏳ In progress (6b-1 your own certificate, 6b-2a generated CA, 6b-2b status and alerts; 6b-2c default next) |
 | 7 | Cutover from the legacy daemon |  |
 
 ## Credits
