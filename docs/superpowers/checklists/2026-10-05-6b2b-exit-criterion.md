@@ -36,7 +36,12 @@ Everything here is manual: it needs the real Pi, its systemd unit and real brows
    - Expect: `failed`; `sudo pipulse tls status` shows `Last renewal … FAILED`; the tab shows "Renewal failing: …" within a minute; `curl --cacert /Users/seviyon/pipulse-ca.crt https://io.local:8889/api/health` is `200`, `"status":"degraded"`, `renewal-failing` in `reasons`; the dashboard stays Live.
    - Pi: `sudo chattr -i /etc/pipulse/tls/leaf.pem`, then `sudo systemctl start pipulse-tls-renew.service` again.
    - Expect: `renewed`; health back to `ok`; **the tab updates by itself within a minute, no reload**.
-   - Pi: `sudo rm -r /etc/systemd/system/pipulse-tls-renew.service.d && sudo systemctl daemon-reload`
+   - Pi, remove only the temporary file (never the whole folder, which may hold the operator's own overrides):
+     ```
+     sudo rm -f /etc/systemd/system/pipulse-tls-renew.service.d/force.conf
+     sudo rmdir /etc/systemd/system/pipulse-tls-renew.service.d 2>/dev/null || true
+     sudo systemctl daemon-reload
+     ```
 
 3. **Browser pass** (Safari and Firefox; Chrome if you can).
    - **Hint page:** open `http://io.local:8889` → a small page "PiPulse uses HTTPS", not "Unable to connect". Pi: `curl -si http://io.local:8889/` shows `HTTP/1.1 400 Bad Request`.
@@ -58,12 +63,12 @@ Everything here is manual: it needs the real Pi, its systemd unit and real brows
 
 ## Results (send back; I update the plan, `CLAUDE.md` and open the PR with `release:patch`)
 
-| Step                                                    | Result                  | Notes |
-| ------------------------------------------------------- | ----------------------- | ----- |
-| 1 Active line matches the configured leaf; not running  | pass                    | `HTTPS, pid 20836`, fingerprint B5:F9:40… matched; `not running (missing)` when stopped |
-| 2 Failing renewal visible (status, Settings, health)    | pass (Settings not seen)| `failed` EPERM; `degraded` + `renewal-failing`; Settings tab not reported |
-| 2 Recovery; tab refreshes by itself                     | pass / unconfirmed      | `renewed`, health `ok`; tab refresh not reported |
-| 3 Hint page (Safari / Firefox / Chrome)                 | pass (Safari + one more)| second browser not named; `curl` also 400 + body |
-| 3 Warning expected: no (name) / yes (IP); year          | name pass, IP not seen  | year, `::1`, CA fingerprint shown |
-| 3 "CA is being replaced" line, then new scope           | pass                    | `transitional` in health, status `ok`; `restore-ca` back to A |
-| 4 `cert_expiring` raised, then `cert_expired` after it  | raise pass; expired not run | closed by condition on a longer-lived certificate; the expiry crossing is fake-clock tested only |
+| Step                                                   | Result                      | Notes                                                                                            |
+| ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| 1 Active line matches the configured leaf; not running | pass                        | `HTTPS, pid 20836`, fingerprint B5:F9:40… matched; `not running (missing)` when stopped          |
+| 2 Failing renewal visible (status, Settings, health)   | pass (Settings not seen)    | `failed` EPERM; `degraded` + `renewal-failing`; Settings tab not reported                        |
+| 2 Recovery; tab refreshes by itself                    | pass / unconfirmed          | `renewed`, health `ok`; tab refresh not reported                                                 |
+| 3 Hint page (Safari / Firefox / Chrome)                | pass (Safari + one more)    | second browser not named; `curl` also 400 + body                                                 |
+| 3 Warning expected: no (name) / yes (IP); year         | name pass, IP not seen      | year, `::1`, CA fingerprint shown                                                                |
+| 3 "CA is being replaced" line, then new scope          | pass                        | `transitional` in health, status `ok`; `restore-ca` back to A                                    |
+| 4 `cert_expiring` raised, then `cert_expired` after it | raise pass; expired not run | closed by condition on a longer-lived certificate; the expiry crossing is fake-clock tested only |
