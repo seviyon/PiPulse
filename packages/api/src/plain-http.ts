@@ -18,7 +18,9 @@ export const HINT_RESPONSE =
  * tlsClientError handler: a plain-HTTP request (an old http:// bookmark) that
  * OpenSSL already recognised gets the hint page on the raw socket; anything
  * else is dropped, as Node does without a handler. `_parent` (the TCP socket
- * under the TLS one) is undocumented: without it, the request is dropped too.
+ * under the TLS one) is undocumented: without it, the request is dropped too. Node has already
+ * destroyed the TLS socket by now, so a request of hundreds of KB (never a browser's) can lose
+ * the page to a connection reset; normal requests arrive whole and get it.
  */
 export function answerPlainHttp(error: Error & { code?: string }, socket: TLSSocket): void {
   const raw = (socket as unknown as { _parent?: Socket | null })._parent;

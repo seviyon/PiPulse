@@ -63,3 +63,17 @@ describe('plain HTTP on the HTTPS port', () => {
     expect(body).toBe('tls ok');
   });
 });
+
+// Node has destroyed the TLS socket by the time the handler runs, so a request far bigger than
+// any browser sends (hundreds of KB) can lose the page to a reset. Browsers cap headers at
+// ~8-64 KB; these sizes must always get the hint, on every Node line CI runs.
+describe('plain HTTP requests of browser size', () => {
+  it.each([1_000, 8_000, 16_000, 64_000])(
+    'still delivers the hint for %i bytes of headers',
+    async (size) => {
+      const request = `GET / HTTP/1.1\r\nHost: x\r\nCookie: ${'a'.repeat(size)}\r\n\r\n`;
+      const answer = await raw(request);
+      expect(answer).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+    }
+  );
+});
