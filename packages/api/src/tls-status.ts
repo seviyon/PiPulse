@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   EXPIRING_SOON_MS,
@@ -44,6 +44,14 @@ export const TLS_MARKER = 'tls-installed';
  * a path), or undefined.
  */
 export function writeTlsMarker(dataDir: string, now = Date.now()): string | undefined {
+  try {
+    // Already there (for instance a data folder restored as root, which the service can't
+    // rewrite): it does its job, so leave it alone instead of failing on every start.
+    lstatSync(join(dataDir, TLS_MARKER));
+    return undefined;
+  } catch {
+    // Absent or not visible: fall through and let the write report what is wrong.
+  }
   try {
     writeFileSync(join(dataDir, TLS_MARKER), `${new Date(now).toISOString()}\n`, { mode: 0o640 });
     return undefined;

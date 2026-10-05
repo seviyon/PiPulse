@@ -1,5 +1,13 @@
 import { X509Certificate } from 'node:crypto';
-import { readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -215,6 +223,35 @@ describe('status', () => {
         `problem: ${join(dir, 'tls-installed')} is missing although the server serves HTTPS: see journalctl -u pipulse`
       );
     });
+    it.skipIf(process.getuid?.() === 0)(
+      'a data folder this user cannot enter is "can\'t check", not "missing" and not a crash',
+      () => {
+        const data = join(dir, 'data');
+        mkdirSync(data);
+        ctx.env['PIPULSE_DB_PATH'] = join(data, 'pipulse.sqlite');
+        const report = collectStatus(ctx);
+        report.active = {
+          state: 'running',
+          status: {
+            version: 1,
+            transport: 'https',
+            certificate: null,
+            pid: 1,
+            startTime: '1',
+            bootId: 'b',
+            writtenAt: ctx.now()
+          }
+        };
+        chmodSync(data, 0o000);
+        try {
+          const text = formatStatus(report, ctx).join('\n');
+          expect(text).toContain(`can't check ${join(data, 'tls-installed')} (EACCES)`);
+          expect(text).not.toContain('is missing although');
+        } finally {
+          chmodSync(data, 0o700);
+        }
+      }
+    );
     it('is silent when it is there, and when the server serves HTTP', () => {
       writeFileSync(join(dir, 'tls-installed'), '2026-10-05T00:00:00.000Z\n');
       expect(running('https')).not.toContain('tls-installed');

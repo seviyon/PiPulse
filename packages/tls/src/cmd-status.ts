@@ -353,10 +353,17 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
       dirname(ctx.env['PIPULSE_DB_PATH']?.trim() || '/var/lib/pipulse/pipulse.sqlite'),
       'tls-installed'
     );
-    if (!pathExists(marker))
-      lines.push(
-        `  problem: ${marker} is missing although the server serves HTTPS: see journalctl -u pipulse`
-      );
+    // `status` isn't root-only: a user who can read the runtime file may not be able to look
+    // inside the data folder (700, owned by the service), and that must not fail the command.
+    try {
+      if (!pathExists(marker))
+        lines.push(
+          `  problem: ${marker} is missing although the server serves HTTPS: see journalctl -u pipulse`
+        );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? 'error';
+      lines.push(`  can't check ${marker} (${code}): run sudo pipulse tls status`);
+    }
   }
   lines.push('Last renewal', `  ${report.renewal ? renewalLine(report.renewal) : 'none recorded'}`);
   if (

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inspectMaterial, startReloader, type TlsConfig } from '@pipulse/tls';
@@ -45,6 +45,17 @@ describe('the tls-installed marker', () => {
     expect(writeTlsMarker(dir)).toBeUndefined();
     expect(existsSync(join(dir, 'tls-installed'))).toBe(true);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'an existing marker the service cannot rewrite is left alone, with no problem',
+    () => {
+      const marker = join(dir, 'tls-installed');
+      writeFileSync(marker, 'old\n');
+      chmodSync(marker, 0o444);
+      expect(writeTlsMarker(dir)).toBeUndefined();
+      expect(readFileSync(marker, 'utf8')).toBe('old\n');
+    }
+  );
 
   it('shows no problem and no health reason when it was written', () => {
     const view = tlsView(config, provider, Date.now());
