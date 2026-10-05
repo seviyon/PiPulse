@@ -15,8 +15,9 @@ sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.0-test.tar.gz" --no-sta
 pipulse version | grep -q '^PiPulse 0.0.0-test, Node v' && ok 'pipulse version' || bad 'pipulse version'
 # Start it the way the unit would and check it answers.
 su -s /bin/sh pipulse -c 'cd /var/lib/pipulse && PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite PIPULSE_PORT=18888 PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist /opt/pipulse/node/bin/node --disable-warning=ExperimentalWarning /opt/pipulse/app/packages/api/dist/server.js' & pid=$!
-for _ in $(seq 1 30); do curl -fs http://127.0.0.1:18888/api/health >/dev/null 2>&1 && break; sleep 1; done
-curl -fs http://127.0.0.1:18888/api/config | grep -q '"version":"0.0.0-test"' && ok 'serves the stamped version' || bad 'serves the stamped version'
+# A fresh install serves HTTPS with the CA it made (the certificate names localhost).
+for _ in $(seq 1 30); do curl -fs --cacert /etc/pipulse/tls/ca.crt https://localhost:18888/api/health >/dev/null 2>&1 && break; sleep 1; done
+curl -fs --cacert /etc/pipulse/tls/ca.crt https://localhost:18888/api/config | grep -q '"version":"0.0.0-test"' && ok 'serves the stamped version' || bad 'serves the stamped version'
 kill $pid; wait $pid 2>/dev/null || true
 sh "$repo/packaging/install.sh" --uninstall
 [ ! -e /opt/pipulse ] && [ -d /var/lib/pipulse ] && [ -f /etc/pipulse/pipulse.env ] && ok 'uninstall keeps data and settings' || bad 'uninstall keeps data and settings'

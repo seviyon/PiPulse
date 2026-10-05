@@ -7,6 +7,12 @@ fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
 rm -rf /etc/pipulse /var/lib/pipulse; userdel pipulse 2>/dev/null || true; groupdel pipulse 2>/dev/null || true
+# A first install now waits for the service to answer: stand in for the installed health check
+# (and its Node), and serve plain HTTP so no tls-installed marker is expected.
+mkdir -p /etc/pipulse /opt/pipulse/node/bin /opt/pipulse/app/packages/tls/dist
+ln -sf "$(command -v node)" /opt/pipulse/node/bin/node
+echo 'process.exit(0);' > /opt/pipulse/app/packages/tls/dist/health-check.js
+echo 'PIPULSE_TLS=off' > /etc/pipulse/pipulse.env
 # Pretend systemd runs: a stand-in systemctl that logs its calls and reports $STATE.
 mkdir -p /run/systemd/system
 fake=$(mktemp -d)
@@ -36,5 +42,5 @@ if run masked ''; then ok 'a masked service does not fail the upgrade'; else bad
 ! grep -qx 'enable pipulse' /tmp/systemctl.log && ! grep -qx 'restart pipulse' /tmp/systemctl.log && ok 'leaves a masked service alone' || bad 'leaves a masked service alone'
 ! grep -qx 'enable --now pipulse-tls-renew.timer' /tmp/systemctl.log && grep -q 'pipulse-tls-renew.timer is masked' /tmp/setup.out && ok 'leaves a masked timer alone, and says so' || bad 'leaves a masked timer alone, and says so'
 
-rm -rf /run/systemd/system
+rm -rf /run/systemd/system /opt/pipulse
 exit $fail
