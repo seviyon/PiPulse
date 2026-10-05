@@ -11,6 +11,7 @@ import {
   verificationFailure,
   VERIFY_CODES
 } from '../src/health-check.js';
+import { REFUSE_LINE } from '../src/config.js';
 import { issueCa, issueLeaf } from '../src/issue.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
@@ -316,7 +317,9 @@ describe('checkHealth with an IPv6 identity', () => {
 describe('checkHealth over HTTP', () => {
   it('passes for a pre-6b body and fails for 503', async () => {
     const port = await listen(createHttpServer(answer(200, { status: 'ok' })));
-    expect(await checkHealth({ PIPULSE_PORT: String(port) }, { readState: noState })).toEqual({
+    expect(
+      await checkHealth({ PIPULSE_PORT: String(port), PIPULSE_TLS: 'off' }, { readState: noState })
+    ).toEqual({
       code: 0,
       message: 'healthy'
     });
@@ -326,9 +329,21 @@ describe('checkHealth over HTTP', () => {
     const port = await listen(
       createHttpServer(answer(503, { status: 'failing', monitoring: 'failing' }))
     );
-    expect((await checkHealth({ PIPULSE_PORT: String(port) }, { readState: noState })).code).toBe(
-      1
-    );
+    expect(
+      (
+        await checkHealth(
+          { PIPULSE_PORT: String(port), PIPULSE_TLS: 'off' },
+          { readState: noState }
+        )
+      ).code
+    ).toBe(1);
+  });
+
+  it('says what the server would say with no setting at all, instead of probing', async () => {
+    expect(await checkHealth({ PIPULSE_PORT: '1' }, { readState: noState })).toEqual({
+      code: 1,
+      message: REFUSE_LINE
+    });
   });
 });
 

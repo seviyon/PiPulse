@@ -1,7 +1,13 @@
 import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseState, readTlsConfig, TlsConfigError } from '../src/config.js';
+import {
+  parseState,
+  readTlsConfig,
+  RELEASE_DEFAULT,
+  REFUSE_LINE,
+  TlsConfigError
+} from '../src/config.js';
 import { tempDir } from './helpers.js';
 
 const noState = () => undefined;
@@ -60,8 +66,55 @@ describe('readTlsConfig mode resolution', () => {
 
   it('6b-2 docker run with no state refuses with the fix line', () => {
     expect(() => readTlsConfig({}, { releaseDefault: 'refuse', readState: noState })).toThrow(
-      'no HTTPS certificate configured: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY, or PIPULSE_TLS=off'
+      REFUSE_LINE
     );
+  });
+
+  it('the fix line names the Pi command and the way out', () => {
+    expect(REFUSE_LINE).toBe(
+      'no HTTPS certificate is set up: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY (on a Pi install: sudo pipulse tls init), or PIPULSE_TLS=off'
+    );
+  });
+
+  it('6b-2: an operator certificate alone means HTTPS when nothing else decides', () => {
+    const config = readTlsConfig(
+      { PIPULSE_TLS_CERT: '/c.pem', PIPULSE_TLS_KEY: '/k.pem' },
+      { releaseDefault: 'refuse', readState: noState }
+    );
+    expect(config).toMatchObject({
+      mode: 'https',
+      modeReason: 'default',
+      source: { kind: 'operator' }
+    });
+  });
+
+  it('6b-2: state.json still wins over an operator pair (an upgraded 6b-1 install stays on HTTP)', () => {
+    const config = readTlsConfig(
+      { PIPULSE_TLS_CERT: '/c.pem', PIPULSE_TLS_KEY: '/k.pem' },
+      { releaseDefault: 'refuse', readState: state(LEGACY_STATE) }
+    );
+    expect(config.mode).toBe('http');
+  });
+
+  it('6b-2: PIPULSE_TLS=off still wins over an operator pair', () => {
+    const config = readTlsConfig(
+      { PIPULSE_TLS: 'off', PIPULSE_TLS_CERT: '/c.pem', PIPULSE_TLS_KEY: '/k.pem' },
+      { releaseDefault: 'refuse', readState: noState }
+    );
+    expect(config.mode).toBe('http');
+  });
+
+  it('6b-2: half an operator pair is a pair error, not the fix line', () => {
+    expect(() =>
+      readTlsConfig(
+        { PIPULSE_TLS_CERT: '/c.pem' },
+        { releaseDefault: 'refuse', readState: noState }
+      )
+    ).toThrow('PIPULSE_TLS_CERT and PIPULSE_TLS_KEY must be set together');
+  });
+
+  it('the release default is refuse', () => {
+    expect(RELEASE_DEFAULT).toBe('refuse');
   });
 
   it('refuses any PIPULSE_TLS other than on/off', () => {

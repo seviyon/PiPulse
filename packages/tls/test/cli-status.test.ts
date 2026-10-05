@@ -5,6 +5,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cli, ignoreClosedPipe, lockFor, main } from '../src/cli.js';
 import { collectStatus, formatStatus } from '../src/cmd-status.js';
+import { REFUSE_LINE } from '../src/config.js';
 import { buildConstraints } from '../src/constraints.js';
 import { runTransaction } from '../src/journal.js';
 import { paths, pub, writeState } from '../src/layout.js';
@@ -163,6 +164,37 @@ describe('status', () => {
       expect(text).not.toContain('within about two minutes');
     });
   });
+  describe('the tls-installed marker', () => {
+    const running = (transport: 'https' | 'http') => {
+      ctx.env['PIPULSE_DB_PATH'] = join(dir, 'pipulse.sqlite');
+      const report = collectStatus(ctx);
+      report.active = {
+        state: 'running',
+        status: {
+          version: 1,
+          transport,
+          certificate: null,
+          pid: 1,
+          startTime: '1',
+          bootId: 'b',
+          writtenAt: ctx.now()
+        }
+      };
+      return formatStatus(report, ctx).join('\n');
+    };
+    it('is reported missing while the server serves HTTPS, naming the path', () => {
+      expect(running('https')).toContain(
+        `problem: ${join(dir, 'tls-installed')} is missing although the server serves HTTPS: see journalctl -u pipulse`
+      );
+    });
+    it('is silent when it is there, and when the server serves HTTP', () => {
+      writeFileSync(join(dir, 'tls-installed'), '2026-10-05T00:00:00.000Z\n');
+      expect(running('https')).not.toContain('tls-installed');
+      rmSync(join(dir, 'tls-installed'));
+      expect(running('http')).not.toContain('tls-installed');
+    });
+  });
+
   it('shows the running server from the status file, and "not running" without one', async () => {
     ctx.env['PIPULSE_RUNTIME_DIR'] = join(dir, 'run');
     await main(['status'], ctx);
@@ -174,7 +206,9 @@ describe('status', () => {
     expect(await main(['status'], ctx)).toBe(0);
     const text = ctx.lines.join('\n');
     expect(text).toContain(`Configured (${dir})`);
-    expect(text).toMatch(/Mode: +HTTP — not chosen \(no state\.json\)/);
+    // The release default is to refuse: status says so and prints the fix line.
+    expect(text).toMatch(/Mode: +PiPulse would refuse to start — not chosen \(no state\.json\)/);
+    expect(text).toContain(`problem: ${REFUSE_LINE}`);
     expect(text).toContain('none yet (sudo pipulse tls init)');
     expect(text).toMatch(/Last renewal\n {2}none recorded/);
   });

@@ -37,11 +37,15 @@ export const DEFAULT_TLS_DIR = '/etc/pipulse/tls';
 export const DEFAULT_TIMESYNC_DIR = '/run/systemd/timesync';
 
 /**
- * What happens with neither PIPULSE_TLS nor state.json: plain HTTP until
- * 6b-2c, then 'refuse' (stop with the fix line). The server, the health check
- * and the CLI all read this one constant.
+ * What happens with neither PIPULSE_TLS nor state.json: 'refuse' (stop with
+ * the fix line, unless an operator certificate pair is set, which is what
+ * the fix line asks for). The server, the health check and the CLI all read
+ * this one constant.
  */
-export const RELEASE_DEFAULT: Mode | 'refuse' = 'http';
+export const RELEASE_DEFAULT: Mode | 'refuse' = 'refuse';
+
+export const REFUSE_LINE =
+  'no HTTPS certificate is set up: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY (on a Pi install: sudo pipulse tls init), or PIPULSE_TLS=off';
 
 /**
  * state.json is data, never sourced by a shell: exactly
@@ -118,6 +122,12 @@ export function readTlsConfig(
     }
   }
 
+  const certPath = setting(env, 'PIPULSE_TLS_CERT');
+  const keyPath = setting(env, 'PIPULSE_TLS_KEY');
+  if ((certPath === undefined) !== (keyPath === undefined)) {
+    throw new TlsConfigError('PIPULSE_TLS_CERT and PIPULSE_TLS_KEY must be set together');
+  }
+
   let mode: Mode;
   let modeReason: ModeReason;
   if (flag === 'on' || flag === 'off') {
@@ -129,19 +139,15 @@ export function readTlsConfig(
     mode = stateMode === 'https' ? 'https' : 'http';
     modeReason = 'state';
   } else if (options.releaseDefault === 'refuse') {
-    throw new TlsConfigError(
-      'no HTTPS certificate configured: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY, or PIPULSE_TLS=off'
-    );
+    // An operator certificate is exactly what the fix line asks for: serve it.
+    if (certPath === undefined) throw new TlsConfigError(REFUSE_LINE);
+    mode = 'https';
+    modeReason = 'default';
   } else {
     mode = options.releaseDefault;
     modeReason = 'default';
   }
 
-  const certPath = setting(env, 'PIPULSE_TLS_CERT');
-  const keyPath = setting(env, 'PIPULSE_TLS_KEY');
-  if ((certPath === undefined) !== (keyPath === undefined)) {
-    throw new TlsConfigError('PIPULSE_TLS_CERT and PIPULSE_TLS_KEY must be set together');
-  }
   const caPath = setting(env, 'PIPULSE_TLS_CA');
   const source: CertSource =
     certPath !== undefined && keyPath !== undefined
