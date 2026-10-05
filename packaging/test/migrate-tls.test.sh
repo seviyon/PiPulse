@@ -95,4 +95,20 @@ grep -q 'running 0.0.2' /tmp/probe.log && grep -q 'listening on http://' /tmp/pr
 pkill -f /opt/pipulse/app/packages/api/dist/server.js || true
 rm -f /usr/local/bin/pipulse-test-restart
 sh "$repo/packaging/install.sh" --purge >/dev/null
+# 10. init dying before it writes state.json (a full disk, a wrong owner): an upgrade falls back to
+#     plain HTTP instead of restarting into "no mode chosen"; a first install fails loudly.
+sh "$repo/packaging/install.sh" --purge >/dev/null
+sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.1.tar.gz" --no-start >/dev/null 2>&1
+rm -rf /etc/pipulse/tls
+stub=$(mktemp -d)
+mkdir -p "$stub/packaging" "$stub/packages/tls/dist"
+cp "$repo/packaging/setup.sh" "$repo/packaging/lib.sh" "$repo/packaging/pipulse.env" "$stub/packaging/"
+echo 'process.exit(1);' > "$stub/packages/tls/dist/cli.js"
+sh "$stub/packaging/setup.sh" --no-start > /tmp/x.log 2>&1 || { cat /tmp/x.log; bad 'an upgrade whose init died still completes'; }
+[ "$(state)" = legacy-http ] && ok 'an upgrade whose init died falls back to plain HTTP' || bad "an upgrade whose init died falls back to plain HTTP (got $(state))"
+grep -q 'stays on plain HTTP' /tmp/x.log && ok 'and says so' || bad 'and says so'
+rm -rf /etc/pipulse/tls
+if sh "$stub/packaging/setup.sh" --no-start --first-install > /tmp/y.log 2>&1; then bad 'a first install whose init died fails'; else ok 'a first install whose init died fails'; fi
+[ -z "$(state)" ] && ok 'and writes no state' || bad 'and writes no state'
+sh "$repo/packaging/install.sh" --purge >/dev/null
 exit $fail

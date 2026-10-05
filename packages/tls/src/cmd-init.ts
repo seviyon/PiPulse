@@ -115,7 +115,9 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
     );
   }
   writeState(ctx.layout, 'legacy-http', ctx.hook);
-  if (code === 0) {
+  // With an operator certificate configured the environment decides the transport, so
+  // "not switched on" would be wrong (a 6b-1 install with PIPULSE_TLS=on keeps serving HTTPS).
+  if (code === 0 && !operatorConfigured(ctx.env)) {
     ctx.out(
       ctx.inContainer
         ? 'HTTPS is ready but not switched on (this is an upgrade): docker compose run --rm pipulse-tls pipulse tls enable --yes'

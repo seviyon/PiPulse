@@ -65,6 +65,21 @@ elif [ "$first" = yes ] && [ -n "${PIPULSE_TLS_INIT_SUBNET:-}" ] && tls_cli init
 elif [ "$first" = yes ]; then
   die 'HTTPS could not be set up (see above). Fix it and run setup again: sudo sh /opt/pipulse/app/packaging/setup.sh --first-install, or serve plain HTTP: sudo pipulse tls disable --allow-insecure'
 fi
+# An upgrade must never restart into "no mode chosen": the release default stops the server
+# then. If init failed before writing state.json (a full disk, a wrong owner), say so and fall
+# back to the previous behaviour, plain HTTP, which `sudo pipulse tls enable` can still undo.
+tls_dir=$(env_value PIPULSE_TLS_DIR)
+tls_dir=${tls_dir:-/etc/pipulse/tls}
+if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ]; then
+  warn "HTTPS could not be prepared (see above): PiPulse stays on plain HTTP until you run: sudo pipulse tls init"
+  install -d -o root -g pipulse -m 2750 "$tls_dir" 2>/dev/null || true
+  if printf '{"version":1,"mode":"legacy-http"}\n' > "$tls_dir/state.json" 2>/dev/null; then
+    chown root:pipulse "$tls_dir/state.json" 2>/dev/null || true
+    chmod 640 "$tls_dir/state.json" 2>/dev/null || true
+  else
+    warn "could not write $tls_dir/state.json: the service may refuse to start; set PIPULSE_TLS=off in /etc/pipulse/pipulse.env"
+  fi
+fi
 port=$(env_value PIPULSE_PORT)
 port=${port:-8889}
 

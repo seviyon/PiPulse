@@ -409,6 +409,14 @@ describe('init --mode auto', () => {
     expect(ctx.lines.join('\n')).toContain('sudo pipulse tls enable');
   });
 
+  it('an upgrade with an operator certificate does not say HTTPS is "not switched on"', async () => {
+    ctx.env['PIPULSE_TLS_CERT'] = '/etc/pipulse/cert.pem';
+    ctx.env['PIPULSE_TLS_KEY'] = '/etc/pipulse/key.pem';
+    expect(await main(['init', '--mode', 'auto', '--yes'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(ctx.lines.join('\n')).not.toContain('not switched on');
+  });
+
   it('never touches an existing state.json', async () => {
     await main(['init', '--mode', 'auto', '--first-install'], ctx);
     const again = testContext(dir);
