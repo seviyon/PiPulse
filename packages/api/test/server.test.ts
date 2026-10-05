@@ -203,7 +203,13 @@ describe('api server process', () => {
       get(url, { rejectUnauthorized: false }, (res) => {
         let body = '';
         res.on('data', (chunk: Buffer) => (body += chunk.toString()));
-        res.on('end', () => resolve(JSON.parse(body)));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (error) {
+            reject(error);
+          }
+        });
       }).on('error', reject);
     });
 

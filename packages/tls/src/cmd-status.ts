@@ -335,10 +335,15 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   ) {
     // 'failing' means the replacement was refused (the reload line above says why); it is
     // retried only every RETRY_MS while its files stay the same, so no "two minutes" promise.
+    // A renewal that failed after writing leaf.crt (leaf.pem is written last) leaves the served
+    // file untouched: the reloader never runs, the reload stays "ok", and nothing picks it up
+    // until a renewal succeeds.
     lines.push(
-      report.active.status.certificate.reload.state === 'ok'
-        ? '  (a newer certificate is on disk; the server picks it up within about two minutes)'
-        : '  (a newer certificate is on disk but was not applied: see the reload line above; it is retried every 10 minutes while the files stay the same)'
+      report.active.status.certificate.reload.state !== 'ok'
+        ? '  (a newer certificate is on disk but was not applied: see the reload line above; it is retried every 10 minutes while the files stay the same)'
+        : report.renewal?.result === 'failed'
+          ? '  (leaf.crt holds a newer certificate, but the served certificate was not replaced because the last renewal failed; the next successful renewal repairs it)'
+          : '  (a newer certificate is on disk; the server picks it up within about two minutes)'
     );
   }
   if (report.active.state === 'running' && report.active.status.transport === 'https') {

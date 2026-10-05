@@ -127,8 +127,18 @@ describe('cli entry', () => {
 
 describe('status', () => {
   describe('a newer certificate on disk than the one served', () => {
-    const served = (reload: { state: 'ok' | 'failing'; lastError: string | null }) => {
+    const served = (
+      reload: { state: 'ok' | 'failing'; lastError: string | null },
+      renewal?: { result: 'failed' | 'renewed'; reason?: string }
+    ) => {
       const report = collectStatus(ctx);
+      if (renewal)
+        report.renewal = {
+          version: 1,
+          lastAttempt: ctx.now(),
+          result: renewal.result,
+          ...(renewal.reason ? { reason: renewal.reason } : {})
+        };
       report.active = {
         state: 'running',
         status: {
@@ -152,6 +162,24 @@ describe('status', () => {
     it('promises pickup within two minutes only while the reload is ok', async () => {
       await makeCa();
       expect(served({ state: 'ok', lastError: null })).toContain(
+        'the server picks it up within about two minutes'
+      );
+    });
+    it('does not promise pickup when the last renewal failed after writing leaf.crt', async () => {
+      // The renewal wrote leaf.crt but failed before leaf.pem: the served file never changes, the
+      // reloader never runs, so the reload stays "ok" and nothing is going to pick it up.
+      await makeCa();
+      const text = served(
+        { state: 'ok', lastError: null },
+        { result: 'failed', reason: 'EPERM: operation not permitted' }
+      );
+      expect(text).not.toContain('within about two minutes');
+      expect(text).toContain('the served certificate was not replaced');
+      expect(text).toContain('the next successful renewal repairs it');
+    });
+    it('still promises pickup after a renewal that succeeded', async () => {
+      await makeCa();
+      expect(served({ state: 'ok', lastError: null }, { result: 'renewed' })).toContain(
         'the server picks it up within about two minutes'
       );
     });
