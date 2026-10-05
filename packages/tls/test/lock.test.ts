@@ -255,6 +255,23 @@ describe('withLock', () => {
     expect(readdirSync(dir).filter((n) => n.includes('.stale-'))).toEqual([]);
   });
 
+  it('does not delete a new, still-empty lock when the judged-stale one was unreadable', () => {
+    // Waiter B judged an empty lock stale; before it breaks it, waiter A broke that one and made
+    // its own (created, not yet written). B's rename picks up A's file: unreadable, token null.
+    writeFileSync(lockPath(), '');
+    breakLock(lockPath(), undefined);
+    expect(existsSync(lockPath())).toBe(true);
+    expect(readdirSync(dir).filter((n) => n.includes('.stale-'))).toEqual([]);
+  });
+
+  it('still removes an old unreadable lock judged stale', () => {
+    writeFileSync(lockPath(), '');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lockPath(), old, old);
+    breakLock(lockPath(), undefined);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
   it('releases the lock when the command throws', async () => {
     await expect(
       withLock(

@@ -1,7 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import {
   CertificateRefused,
   CLASS_RANK,
@@ -315,6 +315,7 @@ describe('6b-2 hardening', () => {
 
   it('picks, among anchors with the same name, the one whose key signed the chain', async () => {
     const work = tempDir();
+    onTestFinished(() => rmSync(work, { recursive: true, force: true })); // it holds CA keys
     const scope = {
       dns: ['pipulse.test'],
       excludedDns: [],

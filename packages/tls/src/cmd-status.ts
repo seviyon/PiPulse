@@ -293,7 +293,7 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   lines.push(`  Clock:     ${clockLine(c.clock)}`);
   if (c.journal === 'pending')
     lines.push(
-      '  Journal:   an unfinished CA change is pending; any other sudo pipulse tls command finishes it'
+      '  Journal:   an unfinished CA change is pending; init, renew, new-ca, restore-ca, enable or disable finishes it'
     );
   lines.push('Active (the running server)', ...activeLines(report.active));
   lines.push('Last renewal', `  ${report.renewal ? renewalLine(report.renewal) : 'none recorded'}`);

@@ -147,7 +147,7 @@ sudo pipulse tls disable --allow-insecure   # serve plain HTTP again; the certif
 
 **Backups.** `/etc/pipulse/tls` is a secret: it holds the CA key. Back it up like one, and never copy `ca/` to a device. `new-ca` keeps the old CA as `ca.old-<time>`, at most two (a third change needs `--prune-oldest <oldest>`), and `sudo pipulse tls restore-ca ca.old-<time>` brings one back. On a Pi install generated certificates live only in `/etc/pipulse/tls`: a custom `PIPULSE_TLS_DIR` is refused for them, because the renewal service's sandbox can write nowhere else (your own certificate can live anywhere).
 
-**Recovering the CA.** An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next `sudo pipulse tls` command; nothing else is needed. An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
+**Recovering the CA.** An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next command that changes something (`init`, `renew`, `new-ca`, `restore-ca`, `enable` or `disable`); nothing else is needed. `status` and `export-ca` only read: they leave it unfinished, and `status` says when one is pending. An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
 
 
 The `pipulse` command wraps the everyday tasks, with the service's settings loaded:

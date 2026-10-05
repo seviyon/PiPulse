@@ -129,7 +129,18 @@ export function breakLock(path: string, judged: LockHolder | undefined): void {
   }
   try {
     const taken = readHolder(aside);
-    if ((taken?.token ?? null) !== (judged?.token ?? null)) {
+    // A lock whose content can't be read matches an unreadable judgement (null === null), so the
+    // token alone can't tell the stale file from a new one that its owner has created but not yet
+    // written. rename() keeps the mtime: a fresh one means it is somebody's new lock.
+    let freshUnreadable = false;
+    if (taken === undefined) {
+      try {
+        freshUnreadable = Date.now() - statSync(aside).mtimeMs <= FRESH_MS;
+      } catch {
+        // can't tell: treat as not fresh
+      }
+    }
+    if (freshUnreadable || (taken?.token ?? null) !== (judged?.token ?? null)) {
       try {
         linkSync(aside, path);
       } catch {

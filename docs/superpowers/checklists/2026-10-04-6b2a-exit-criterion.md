@@ -108,7 +108,9 @@ _Kept for the record and for the browser versions, which were not captured: if y
       sudo mkdir -p /etc/systemd/system/pipulse-tls-renew.service.d
       printf '[Service]\nExecStart=\nExecStart=/usr/bin/pipulse tls renew --force\n' | sudo tee /etc/systemd/system/pipulse-tls-renew.service.d/force.conf
       sudo systemctl daemon-reload && sudo systemctl start pipulse-tls-renew.service && sudo cat /etc/pipulse/tls/renew-status.json
-      sudo rm -r /etc/systemd/system/pipulse-tls-renew.service.d && sudo systemctl daemon-reload
+      sudo rm -f /etc/systemd/system/pipulse-tls-renew.service.d/force.conf
+      sudo rmdir /etc/systemd/system/pipulse-tls-renew.service.d 2>/dev/null || true
+      sudo systemctl daemon-reload
       ```
       Expect `renewed`. Record the journal.
 16. **The real sandbox** (criterion 10). Run a probe under the unit's own sandbox:
@@ -116,7 +118,9 @@ _Kept for the record and for the browser versions, which were not captured: if y
     sudo mkdir -p /etc/systemd/system/pipulse-tls-renew.service.d
     printf '%s\n' '[Service]' 'ExecStart=' "ExecStart=/bin/sh -c 'for f in /var/lib/pipulse/pipulse.sqlite /etc/pipulse/admin.hash /etc/pipulse/rules.json /etc/pipulse/notify.json /etc/pipulse/pipulse.env /etc/pipulse/tls/leaf.pem; do if cat \"\$f\" >/dev/null 2>&1; then echo \"READABLE \$f\"; else echo \"hidden \$f: \$(cat \"\$f\" 2>&1 | head -n 1)\"; fi; done; touch /etc/pipulse/tls/.probe && echo writable-tls && rm /etc/pipulse/tls/.probe; ip -o -4 addr show'" | sudo tee /etc/systemd/system/pipulse-tls-renew.service.d/probe.conf
     sudo systemctl daemon-reload && sudo systemctl start pipulse-tls-renew.service; journalctl -u pipulse-tls-renew -n 25 --no-pager
-    sudo rm -r /etc/systemd/system/pipulse-tls-renew.service.d && sudo systemctl daemon-reload
+    sudo rm -f /etc/systemd/system/pipulse-tls-renew.service.d/probe.conf
+    sudo rmdir /etc/systemd/system/pipulse-tls-renew.service.d 2>/dev/null || true
+    sudo systemctl daemon-reload
     ```
     - Expect: `hidden` for the database, hash, rules, notify file and `pipulse.env` (with the reason text: this answers the ENOENT-vs-EACCES question); `READABLE /etc/pipulse/tls/leaf.pem`; `writable-tls`; the interface addresses.
     - If `writable-tls` is missing, remove `ReadWritePaths=` or `BindPaths=` (whichever systemd 247 objects to) and repeat; tell me which.
