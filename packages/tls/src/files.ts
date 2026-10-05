@@ -1,4 +1,24 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  chmodSync,
+  chownSync,
+  closeSync,
+  constants,
+  fchmodSync,
+  fchownSync,
+  fstatSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 export class TlsFileError extends Error {
   override name = 'TlsFileError';
@@ -92,4 +112,151 @@ export function statSignature(paths: string[]): string {
       }
     })
     .join('|');
+}
+
+export interface Owner {
+  uid: number;
+  gid: number;
+}
+
+export type FsPoint = 'create' | 'write' | 'fsync' | 'rename' | 'fsync-dir' | 'mkdir' | 'remove';
+/** Called before each step that changes the disk; tests throw SimulatedCrash from it. */
+export type FsHook = (point: FsPoint, path: string) => void;
+
+/** Thrown by a test hook to stop a write the way a crash would: nothing is cleaned up. */
+export class SimulatedCrash extends Error {
+  override name = 'SimulatedCrash';
+}
+
+const TEMP = /^\..+\.[0-9a-f]{12}\.tmp$/;
+
+export function syncDir(path: string): void {
+  const fd = openSync(path, constants.O_RDONLY);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Removes temp files a crashed writeAtomic left behind. Only for a caller that
+ * holds the TLS lock (mutating commands): it has no age check, so a read-only
+ * command that called it could delete a running writer's temp file.
+ */
+export function cleanTemp(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) if (TEMP.test(name)) rmSync(join(dir, name), { force: true });
+}
+
+/**
+ * Replaces `path` so a reader sees the old file or the new one, never a mix,
+ * and never with broader permissions: the temp file is created O_EXCL|
+ * O_NOFOLLOW (0600), gets its owner and final mode before any content, is
+ * written and fsync'd, renamed over `path`, and the directory is fsync'd.
+ * The owner is changed only when it differs: in a setgid directory the group
+ * is already right, so root without CAP_CHOWN (the renew unit, the sidecar)
+ * never needs it.
+ */
+export function writeAtomic(
+  path: string,
+  data: string,
+  options: { mode: number; owner?: Owner | undefined; hook?: FsHook | undefined }
+): void {
+  const dir = dirname(path);
+  const temp = join(dir, `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
+  const hook = options.hook ?? (() => {});
+  const cleanUp = (error: unknown) => {
+    if (!(error instanceof SimulatedCrash)) rmSync(temp, { force: true });
+  };
+  hook('create', temp);
+  const fd = openSync(
+    temp,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    const stat = fstatSync(fd);
+    if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
+      fchownSync(fd, options.owner.uid, options.owner.gid);
+    }
+    fchmodSync(fd, options.mode);
+    hook('write', temp);
+    // writeFileSync loops until every byte is written; a bare writeSync may write less
+    // without throwing, and a cut-off file would be renamed over a good ca.key or leaf.pem.
+    writeFileSync(fd, data);
+    hook('fsync', temp);
+    fsyncSync(fd);
+  } catch (error) {
+    closeSync(fd);
+    cleanUp(error);
+    throw error;
+  }
+  closeSync(fd);
+  try {
+    hook('rename', path);
+    renameSync(temp, path);
+  } catch (error) {
+    cleanUp(error);
+    throw error;
+  }
+  hook('fsync-dir', dir);
+  syncDir(dir);
+}
+
+/** rename + fsync of the target's directory, for moving whole directories in the journal. */
+export function renameDurable(from: string, to: string, hook?: FsHook | undefined): void {
+  hook?.('rename', to);
+  renameSync(from, to);
+  hook?.('fsync-dir', dirname(to));
+  syncDir(dirname(to));
+}
+
+export function removeTree(path: string, hook?: FsHook | undefined): void {
+  hook?.('remove', path);
+  rmSync(path, { recursive: true, force: true });
+}
+
+/**
+ * Makes `path` a real directory (never a symlink) with exactly `mode`
+ * (setgid included) and `owner`, creating it if needed. An existing
+ * directory is tightened or loosened to `mode`: these directories are
+ * PiPulse's own.
+ */
+export function ensureDir(
+  path: string,
+  options: { mode: number; owner?: Owner | undefined; hook?: FsHook | undefined }
+): void {
+  try {
+    options.hook?.('mkdir', path);
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  const stat = lstatSync(path);
+  if (!stat.isDirectory()) throw new TlsFileError(`${path} is not a directory`);
+  if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
+    chownSync(path, options.owner.uid, options.owner.gid);
+  }
+  chmodSync(path, options.mode);
+}
+
+/**
+ * Whether `path` exists (lstat, so a dangling symlink does). False only for ENOENT: any
+ * other failure (EACCES, EIO, a missing volume) is thrown, never read as "absent". Used
+ * where "absent" would let a step be skipped or a second CA be made.
+ */
+export function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }

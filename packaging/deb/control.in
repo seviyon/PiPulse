@@ -2,7 +2,7 @@ Package: pipulse
 Version: @VERSION@
 Architecture: @ARCH@
 Maintainer: Andres <seviyon@users.noreply.github.com>
-Depends: adduser, libc6, libgcc-s1, libstdc++6
+Depends: adduser, libc6, libgcc-s1, libstdc++6, openssl
 Section: admin
 Priority: optional
 Homepage: https://github.com/seviyon/PiPulse

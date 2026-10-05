@@ -1,0 +1,43 @@
+[Unit]
+Description=Renew PiPulse's generated HTTPS certificate when it is due
+Documentation=https://github.com/seviyon/PiPulse#https
+# Ordering only: `pipulse tls renew` checks the clock itself and waits
+# (renew-status "waiting-clock") until it is synchronized.
+After=time-sync.target network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/pipulse tls renew
+TimeoutStartSec=2min
+# Read by systemd before the sandbox below hides /etc/pipulse.
+EnvironmentFile=-/etc/pipulse/pipulse.env
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# No capabilities: the setgid tls folder gives new files the pipulse group, so no chown is needed.
+CapabilityBoundingSet=
+# Opens no network sockets; netlink only, to list the default-route interface's addresses.
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# Sees only the TLS folder of /etc/pipulse, and no database: not the password
+# hash, the rules file, the notify file or pipulse.env.
+TemporaryFileSystem=/etc/pipulse:ro
+# "-": a Pi that never made a generated certificate has no tls folder; the unit
+# must still start, so `pipulse tls renew` can say there is nothing to renew.
+BindPaths=-/etc/pipulse/tls
+ReadWritePaths=-/etc/pipulse/tls
+InaccessiblePaths=/var/lib/pipulse

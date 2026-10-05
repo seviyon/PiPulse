@@ -102,11 +102,14 @@ set_aside_tarball() {
     if systemctl is-enabled pipulse >/dev/null 2>&1; then was_enabled=yes; fi
     if systemctl is-active pipulse >/dev/null 2>&1; then was_active=yes; fi
     systemctl disable --now pipulse >/dev/null 2>&1 || true
+    systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
   fi
   echo "$was_enabled $was_active" > "$ASIDE/state"
   if [ -d /opt/pipulse ]; then mv /opt/pipulse "$ASIDE/opt"; fi
   if [ -e /usr/bin/pipulse ]; then mv /usr/bin/pipulse "$ASIDE/pipulse"; fi
-  if [ -e /etc/systemd/system/pipulse.service ]; then mv /etc/systemd/system/pipulse.service "$ASIDE/pipulse.service"; fi
+  for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+    if [ -e "/etc/systemd/system/$unit" ]; then mv "/etc/systemd/system/$unit" "$ASIDE/$unit"; fi
+  done
   if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
 }
 
@@ -114,11 +117,21 @@ restore_tarball() {
   rm -rf /opt/pipulse
   if [ -d "$ASIDE/opt" ]; then mv "$ASIDE/opt" /opt/pipulse; fi
   if [ -e "$ASIDE/pipulse" ]; then mv "$ASIDE/pipulse" /usr/bin/pipulse; fi
-  if [ -e "$ASIDE/pipulse.service" ]; then mv "$ASIDE/pipulse.service" /etc/systemd/system/pipulse.service; fi
+  # The failed new version's units go first; the old version may have had none of the renewal ones.
+  if [ -d /run/systemd/system ]; then systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true; fi
+  for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+    rm -f "/etc/systemd/system/$unit"
+    if [ -e "$ASIDE/$unit" ]; then mv "$ASIDE/$unit" "/etc/systemd/system/$unit"; fi
+  done
   read -r was_enabled was_active < "$ASIDE/state" || true
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
-    if [ "${was_enabled:-no}" = yes ]; then systemctl enable pipulse >/dev/null 2>&1 || true; fi
+    if [ "${was_enabled:-no}" = yes ]; then
+      systemctl enable pipulse >/dev/null 2>&1 || true
+      if [ -e /etc/systemd/system/pipulse-tls-renew.timer ]; then
+        systemctl enable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
+      fi
+    fi
     if [ "${was_active:-no}" = yes ]; then systemctl start pipulse || true; fi
   fi
   rm -rf "$ASIDE"
@@ -317,7 +330,8 @@ refuse_over_apt() {
 uninstall() { # uninstall PURGE
   if [ -d /run/systemd/system ]; then
     systemctl disable --now pipulse >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/pipulse.service
+    systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/pipulse.service /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer
     systemctl daemon-reload
   fi
   rm -rf /opt/pipulse /usr/bin/pipulse

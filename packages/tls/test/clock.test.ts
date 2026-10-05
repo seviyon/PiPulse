@@ -68,4 +68,13 @@ describe('readClock', () => {
       }).state
     ).toBe('unsynced');
   });
+
+  it('counts exactly the floor as a real time', () => {
+    expect(
+      readClock({ timesyncDir: DIR, now: CLOCK_FLOOR_MS, trust: true, exists: files() }).state
+    ).toBe('unknown');
+    expect(
+      readClock({ timesyncDir: DIR, now: CLOCK_FLOOR_MS - 1, trust: true, exists: files() }).state
+    ).toBe('unsynced');
+  });
 });

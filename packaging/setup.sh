@@ -41,7 +41,11 @@ chmod 640 /etc/pipulse/pipulse.env
 
 # 4. Service
 if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
-  if [ "$unit_dir" != none ]; then install -m 644 "$here/pipulse.service" "$unit_dir/pipulse.service"; fi
+  if [ "$unit_dir" != none ]; then
+    for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+      install -m 644 "$here/$unit" "$unit_dir/$unit"
+    done
+  fi
   systemctl daemon-reload || true
   if [ "$first" = yes ]; then
     if systemctl enable pipulse >/dev/null 2>&1; then
@@ -58,11 +62,18 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
       *) warn "the pipulse service is ${state:-not enabled}: left as it is, not started (sudo systemctl enable --now pipulse)" ;;
     esac
   fi
+  # Hourly check; renews only a generated certificate that is due. Enabled on
+  # every install and upgrade unless the operator masked it.
+  case $(systemctl is-enabled pipulse-tls-renew.timer 2>/dev/null || true) in
+    masked) warn 'pipulse-tls-renew.timer is masked: a generated HTTPS certificate will not renew by itself' ;;
+    *) systemctl enable --now pipulse-tls-renew.timer >/dev/null 2>&1 || warn 'could not enable pipulse-tls-renew.timer' ;;
+  esac
 else
   log 'no systemd running (or --no-start): service not started'
 fi
 
 # 5. Warnings (never change anything)
+command -v openssl >/dev/null 2>&1 || warn 'openssl is not installed; generated HTTPS certificates need it: sudo apt install openssl'
 port=$(env_value PIPULSE_PORT)
 port=${port:-8889}
 if command -v ss >/dev/null 2>&1; then

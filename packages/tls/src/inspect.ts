@@ -138,6 +138,16 @@ export function inspectMaterial(input: {
     }
   }
 
+  // Only a CA can issue: a server certificate further up the chain is refused
+  // even when its name and signature happen to line up.
+  for (let i = 1; i < certs.length; i++) {
+    if (!certs[i]!.ca) {
+      throw new CertificateRefused(
+        `certificate ${i + 1} is not a CA certificate, so it can't have issued certificate ${i}`
+      );
+    }
+  }
+
   let chainClass: ChainClass = 'valid';
   const reasons: string[] = [];
   const degrade = (to: ChainClass, reason: string) => {
@@ -156,9 +166,14 @@ export function inspectMaterial(input: {
     })
     .concat(input.trust.system ? loadSystemRoots() : []);
   const last = certs.at(-1)!;
+  // By fingerprint (the top is itself a configured anchor), else by issuer name and
+  // signature (a CA rollover can leave two anchors with one name), else by name alone,
+  // which the signature check below then refuses.
+  const byName = anchors.filter((a) => last.checkIssued(a));
   const anchor =
     anchors.find((a) => a.fingerprint256 === last.fingerprint256) ??
-    anchors.find((a) => last.checkIssued(a));
+    byName.find((a) => last.verify(a.publicKey)) ??
+    byName[0];
   if (anchor && anchor.fingerprint256 !== last.fingerprint256 && !last.verify(anchor.publicKey)) {
     throw new CertificateRefused("the chain's signature by its certificate authority is invalid");
   }
@@ -197,7 +212,9 @@ export function inspectMaterial(input: {
     sans: parseSans(leaf.subjectAltName),
     class: chainClass,
     reasons,
-    missingNames
+    missingNames,
+    // The anchor the chain actually verified against (a refused signature never gets here).
+    ...(input.source === 'generated' && anchor ? { caFingerprint: anchor.fingerprint256 } : {})
   };
 }
 
@@ -215,7 +232,7 @@ function named<T>(setting: string, inspect: () => T): T {
 
 /**
  * Reads and inspects the active source's files. Operator: the certificate
- * (+ chain) and key files, trusting PIPULSE_TLS_CA or else the system store.
+ * (+ chain) and key files, trusting PIPULSE_TLS_CA or else Node's bundled root certificates (not /etc/ssl/certs).
  * Generated: leaf.pem against ca.crt, with the strict file policy.
  */
 export function loadCertificate(
@@ -253,7 +270,7 @@ export function loadCertificate(
     readSecureFile(source.caPath, { kind: 'generated', maxMode: 0o644, ...owner }, 'ca.crt'),
     'ca.crt'
   );
-  const inspected = named(basename(source.bundlePath), () =>
+  return named(basename(source.bundlePath), () =>
     inspectMaterial({
       source: 'generated',
       keyPem: bundle.key,
@@ -262,5 +279,4 @@ export function loadCertificate(
       names: options.names
     })
   );
-  return { ...inspected, caFingerprint: new X509Certificate(ca[0]!).fingerprint256 };
 }

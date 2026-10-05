@@ -28,6 +28,7 @@ import { parseDuration } from '@pipulse/storage/duration';
 import {
   checkReplacement,
   EXPIRING_SOON_MS,
+  RELEASE_DEFAULT,
   loadCertificate,
   readClock,
   readTlsConfig,
@@ -120,7 +121,7 @@ const PROTECT_READS = AUTH.protectReads;
  */
 function readTls(): TlsConfig {
   try {
-    return readTlsConfig(process.env, { releaseDefault: 'http' });
+    return readTlsConfig(process.env, { releaseDefault: RELEASE_DEFAULT });
   } catch (error) {
     fail(error);
   }

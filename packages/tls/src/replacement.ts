@@ -17,10 +17,12 @@ export function checkReplacement(
   }
 ): void {
   const { now } = options;
+  const setting =
+    candidate.source === 'generated' ? 'leaf.pem' : 'PIPULSE_TLS_CERT/PIPULSE_TLS_KEY';
   const candidateValidity = validityOf(candidate, now, 0);
   if (candidateValidity === 'expired' && validityOf(active, now, 0) !== 'expired') {
     throw new CertificateRefused(
-      'PIPULSE_TLS_CERT/PIPULSE_TLS_KEY: the replacement certificate is expired and the active one is not; kept the active one',
+      `${setting}: the replacement certificate is expired and the active one is not; kept the active one`,
       true
     );
   }

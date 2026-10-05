@@ -2,4 +2,5 @@
 set -e
 if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
   systemctl disable --now pipulse >/dev/null 2>&1 || true
+  systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
 fi

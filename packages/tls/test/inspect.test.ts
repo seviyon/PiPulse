@@ -1,6 +1,7 @@
+import { X509Certificate } from 'node:crypto';
 import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import {
   CertificateRefused,
   CLASS_RANK,
@@ -10,7 +11,9 @@ import {
   validityOf,
   type Trust
 } from '../src/inspect.js';
+import { issueCa, issueLeaf } from '../src/issue.js';
 import { fixture, tempDir } from './helpers.js';
+import { TEST_OPENSSL } from './openssl.js';
 
 const root: Trust = { anchors: [fixture('root-ca.crt')], system: false };
 const inspect = (certs: string[], key = fixture('leaf.key'), trust = root, names: string[] = []) =>
@@ -293,5 +296,106 @@ describe('loadCertificate', () => {
         { names: [], generatedOwner: { uid, gid } }
       )
     ).toThrow(/^leaf\.pem: the private key does not match/);
+  });
+});
+
+describe('6b-2 hardening', () => {
+  it('refuses a chain whose second certificate is not a CA', () => {
+    // leaf2 is a server certificate: it can't have issued anything, even if its name matched.
+    expect(() =>
+      inspectMaterial({
+        source: 'operator',
+        keyPem: fixture('leaf.key'),
+        certPems: [fixture('leaf.crt'), fixture('leaf2.crt')],
+        trust: { anchors: [fixture('root-ca.crt')], system: false },
+        names: []
+      })
+    ).toThrow(/certificate 2 (did not issue certificate 1|is not a CA certificate)/);
+  });
+
+  it('picks, among anchors with the same name, the one whose key signed the chain', async () => {
+    const work = tempDir();
+    onTestFinished(() => rmSync(work, { recursive: true, force: true })); // it holds CA keys
+    const scope = {
+      dns: ['pipulse.test'],
+      excludedDns: [],
+      ip: [{ address: '127.0.0.1', prefix: 32 }]
+    };
+    const now = Date.now();
+    // Two CAs with one subject and no key identifiers: only the signature tells them apart.
+    const oldCa = await issueCa({
+      openssl: TEST_OPENSSL,
+      workDir: work,
+      subject: 'Rollover CA',
+      scope,
+      now,
+      keyIds: false
+    });
+    const newCa = await issueCa({
+      openssl: TEST_OPENSSL,
+      workDir: work,
+      subject: 'Rollover CA',
+      scope,
+      now,
+      keyIds: false
+    });
+    writeFileSync(join(work, 'old.key'), oldCa.keyPem, { mode: 0o600 });
+    writeFileSync(join(work, 'old.crt'), oldCa.certPem);
+    const leaf = await issueLeaf({
+      openssl: TEST_OPENSSL,
+      workDir: work,
+      ca: {
+        keyPath: join(work, 'old.key'),
+        certPath: join(work, 'old.crt'),
+        certPem: oldCa.certPem
+      },
+      subject: 'pipulse.test',
+      dns: ['pipulse.test'],
+      ip: [],
+      now,
+      keyIds: false
+    });
+    const loaded = inspectMaterial({
+      source: 'operator',
+      keyPem: leaf.keyPem,
+      certPems: [leaf.certPem],
+      trust: { anchors: [newCa.certPem, oldCa.certPem], system: false },
+      names: []
+    });
+    expect(loaded.class).toBe('valid');
+  });
+
+  it('takes a generated certificate’s CA fingerprint from the anchor its chain verifies against', () => {
+    const rootFp = new X509Certificate(fixture('root-ca.crt')).fingerprint256;
+    const chain = [fixture('leaf.crt'), fixture('intermediate.crt')];
+    const generated = (anchors: string[]) =>
+      inspectMaterial({
+        source: 'generated',
+        keyPem: fixture('leaf.key'),
+        certPems: chain,
+        trust: { anchors, system: false },
+        names: []
+      });
+    expect(generated([fixture('other-ca.crt'), fixture('root-ca.crt')]).caFingerprint).toBe(rootFp);
+    // ca.crt already holds the new CA, the leaf is still the old one: no verified anchor, no fingerprint.
+    expect(generated([fixture('other-ca.crt')]).caFingerprint).toBeUndefined();
+    const operator = inspectMaterial({
+      source: 'operator',
+      keyPem: fixture('leaf.key'),
+      certPems: chain,
+      trust: { anchors: [fixture('root-ca.crt')], system: false },
+      names: []
+    });
+    expect(operator.caFingerprint).toBeUndefined();
+  });
+
+  it('has exact validity boundaries', () => {
+    const cert = { notBefore: 1000, notAfter: 2000 };
+    expect(validityOf(cert, 999, 0)).toBe('not-yet-valid');
+    expect(validityOf(cert, 1000, 0)).toBe('valid');
+    expect(validityOf(cert, 1999, 0)).toBe('valid');
+    expect(validityOf(cert, 2000, 0)).toBe('expired');
+    expect(validityOf(cert, 1500, 500)).toBe('expiring-soon');
+    expect(validityOf(cert, 1499, 500)).toBe('valid');
   });
 });

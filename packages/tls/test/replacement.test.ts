@@ -33,6 +33,16 @@ const options = (over: Partial<Parameters<typeof checkReplacement>[2]> = {}) => 
 };
 
 describe('checkReplacement', () => {
+  it('names leaf.pem when a generated replacement is refused', () => {
+    expect(() =>
+      checkReplacement(
+        { ...EXPIRED, source: 'generated' },
+        { ...VALID, source: 'generated' },
+        options()
+      )
+    ).toThrow(/^leaf\.pem: the replacement certificate is expired/);
+  });
+
   it('refuses an expired candidate over a valid active one, even when not strict', () => {
     expect(() => checkReplacement(EXPIRED, VALID, options())).toThrow(
       /replacement certificate is expired/
