@@ -1,10 +1,13 @@
+import { statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
+import type { StateMode } from './config.js';
 import { opensslVersion } from './issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import { buildConstraints, checkSubnet, consequenceText, subnetWarning } from './constraints.js';
 import { removeTree } from './files.js';
 import { runTransaction } from './journal.js';
-import { listBackups, paths, pub } from './layout.js';
+import { listBackups, paths, pub, readState, writeState } from './layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -28,17 +31,94 @@ import {
   printCa,
   reportOutside,
   usage,
+  UsageError,
   type Context
 } from './cli-common.js';
+
+/**
+ * The mode for an install without state.json: an upgrade (a previous install, or data from
+ * one) stays on HTTP until the operator enables HTTPS — unless that data was already served
+ * over HTTPS (the marker the server writes), so a lost TLS folder never silently falls back
+ * to HTTP.
+ */
+export function decideInitialMode(input: {
+  previousInstall: boolean;
+  dbExists: boolean;
+  markerExists: boolean;
+}): StateMode {
+  return (input.previousInstall || input.dbExists) && !input.markerExists ? 'legacy-http' : 'https';
+}
+
+type InitValues = {
+  subnet?: string[] | undefined;
+  yes?: boolean | undefined;
+  quiet?: boolean | undefined;
+};
 
 export async function init(ctx: Context, args: string[]): Promise<number> {
   const { values } = usage(() =>
     parseArgs({
       args,
-      options: { subnet: { type: 'string', multiple: true }, yes: { type: 'boolean' } },
+      options: {
+        subnet: { type: 'string', multiple: true },
+        yes: { type: 'boolean' },
+        mode: { type: 'string' },
+        'first-install': { type: 'boolean' },
+        quiet: { type: 'boolean' }
+      },
       strict: true
     })
   );
+  if (values.mode === undefined) return material(ctx, values);
+  if (values.mode !== 'auto') throw new UsageError(`--mode must be auto, not ${values.mode}`);
+  // Mode already chosen (by an earlier install or by the operator): only fill in material.
+  if (readState(ctx.layout) !== undefined) return material(ctx, values);
+  const db = ctx.env['PIPULSE_DB_PATH']?.trim() || '/var/lib/pipulse/pipulse.sqlite';
+  const exists = (path: string, whenUnsure: boolean) => {
+    try {
+      statSync(path);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : whenUnsure;
+    }
+  };
+  // Unsure (unreadable) means: data present, never served over HTTPS, the choice that keeps HTTP.
+  const markerExists = exists(join(dirname(db), 'tls-installed'), false);
+  const mode = decideInitialMode({
+    previousInstall: !values['first-install'],
+    dbExists: exists(db, true),
+    markerExists
+  });
+  const hadCa = checkCa(paths(ctx.layout).caDir).kind === 'ok';
+  let code: number;
+  try {
+    code = await material(ctx, values);
+  } catch (error) {
+    // e.g. openssl missing: an upgrade must still land on legacy-http.
+    ctx.err(`pipulse tls: ${(error as Error).message}`);
+    code = 1;
+  }
+  if (mode === 'https') {
+    // No state.json on failure: the server refuses rather than serve something half-made.
+    if (code !== 0) return code;
+    if (markerExists && !hadCa) {
+      ctx.err(
+        'warning: this data was served over HTTPS before but its TLS folder is gone: a new CA was made, so every device must trust the new CA (sudo pipulse tls export-ca)'
+      );
+    }
+    writeState(ctx.layout, 'https', ctx.hook);
+    return 0;
+  }
+  if (code !== 0) {
+    ctx.err(
+      'warning: HTTPS is not prepared (see above); PiPulse stays on plain HTTP. Try again later with: sudo pipulse tls init'
+    );
+  }
+  writeState(ctx.layout, 'legacy-http', ctx.hook);
+  return 0;
+}
+
+async function material(ctx: Context, values: InitValues): Promise<number> {
   const layout = ctx.layout;
   if (operatorConfigured(ctx.env)) {
     ctx.out(
@@ -106,7 +186,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
         }
       });
       reportOutside(ctx, outside);
-      printCa(ctx);
+      if (!values.quiet) printCa(ctx);
       return 0;
     }
 

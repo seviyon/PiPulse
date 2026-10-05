@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cmd-renew.js';
 import { CLOCK_FLOOR_MS } from '../src/clock.js';
-import { paths, readMeta, readRenewStatus, writeState } from '../src/layout.js';
+import { decideInitialMode } from '../src/cmd-init.js';
+import { paths, readMeta, readRenewStatus, readState, writeState } from '../src/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -370,5 +371,73 @@ describe('renewDue', () => {
         wanted: wanted(['2001:db8::1'])
       })
     ).toContain('2001:db8::1');
+  });
+});
+
+describe('decideInitialMode', () => {
+  it.each([
+    [{ previousInstall: false, dbExists: false, markerExists: false }, 'https'],
+    [{ previousInstall: true, dbExists: false, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: true, dbExists: true, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: false, dbExists: true, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: false, dbExists: true, markerExists: true }, 'https'],
+    [{ previousInstall: true, dbExists: true, markerExists: true }, 'https']
+  ])('%j → %s', (input, expected) => {
+    expect(decideInitialMode(input)).toBe(expected);
+  });
+});
+
+describe('init --mode auto', () => {
+  const withDb = (context: TestContext, marker = false) => {
+    mkdirSync(join(dir, 'data'), { recursive: true });
+    writeFileSync(join(dir, 'data', 'pipulse.sqlite'), '');
+    if (marker) writeFileSync(join(dir, 'data', 'tls-installed'), '');
+    context.env['PIPULSE_DB_PATH'] = join(dir, 'data', 'pipulse.sqlite');
+    return context;
+  };
+
+  it('fresh install: makes the CA, then selects https', async () => {
+    expect(await main(['init', '--mode', 'auto', '--first-install'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
+  it('upgrade: prepares a names-only CA and stays on HTTP, honouring a subnet setting', async () => {
+    ctx.env['PIPULSE_TLS_SUBNETS'] = '192.168.1.0/24';
+    expect(await main(['init', '--mode', 'auto', '--yes'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+  });
+
+  it('never touches an existing state.json', async () => {
+    await main(['init', '--mode', 'auto', '--first-install'], ctx);
+    const again = testContext(dir);
+    expect(await main(['init', '--mode', 'auto'], withDb(again))).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
+  it('a lost TLS folder on data that served HTTPS goes back to https, with a warning', async () => {
+    const run = withDb(testContext(dir), true);
+    expect(await main(['init', '--mode', 'auto'], run)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+    expect(run.errors.join('\n')).toContain('every device must trust the new CA');
+  });
+
+  it('an upgrade whose material fails still selects legacy-http; a fresh install fails with no state', async () => {
+    const broken = withDb(testContext(dir, { openssl: join(dir, 'no-openssl') }));
+    expect(await main(['init', '--mode', 'auto'], broken)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(broken.errors.join('\n')).toContain('HTTPS is not prepared');
+    rmSync(join(dir, 'state.json'));
+    rmSync(join(dir, 'data'), { recursive: true });
+    const fresh = testContext(dir, { openssl: join(dir, 'no-openssl') });
+    expect(await main(['init', '--mode', 'auto', '--first-install'], fresh)).toBe(1);
+    expect(readState(ctx.layout)).toBeUndefined();
+  });
+
+  it('--quiet leaves out the CA fingerprint block; a bad --mode is a usage error', async () => {
+    const quiet = testContext(dir);
+    await main(['init', '--mode', 'auto', '--first-install', '--quiet'], quiet);
+    expect(quiet.lines.join('\n')).not.toContain('SHA-256');
+    expect(await main(['init', '--mode', 'manual'], testContext(dir))).not.toBe(0);
   });
 });
