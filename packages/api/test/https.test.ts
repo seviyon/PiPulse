@@ -124,16 +124,19 @@ describe('HTTPS server', () => {
     expect(res.headers['strict-transport-security']).toBeUndefined();
   });
 
-  it('a plain HTTP request to the HTTPS port is dropped and the server keeps serving', async () => {
+  it('a plain HTTP request to the HTTPS port gets the hint page and the server keeps serving', async () => {
     const port = await start();
-    await new Promise<void>((resolve) => {
+    const answer = await new Promise<string>((resolve) => {
       const socket = connect(port, '127.0.0.1', () =>
         socket.write('GET /api/health HTTP/1.1\r\nHost: x\r\n\r\n')
       );
-      socket.on('close', () => resolve());
-      socket.on('error', () => resolve());
-      socket.resume();
+      let got = '';
+      socket.on('data', (d) => (got += d.toString()));
+      socket.on('close', () => resolve(got));
+      socket.on('error', () => resolve(got));
     });
+    expect(answer).toMatch(/^HTTP\/1\.1 400 Bad Request/);
+    expect(answer).toContain('https://');
     expect((await get(port, '/api/health')).status).toBe(200);
   });
 

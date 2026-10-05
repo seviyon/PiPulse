@@ -1,4 +1,5 @@
 import { hostname, uptime } from 'node:os';
+import type { Server as HttpsServer } from 'node:https';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
@@ -22,6 +23,7 @@ import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedOrigin } from './origin.js';
+import { answerPlainHttp } from './plain-http.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
 
 export {
@@ -193,6 +195,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   const app = (options.https
     ? Fastify({ logger: false, https: { ...options.https, minVersion: 'TLSv1.2' } })
     : Fastify({ logger: false })) as unknown as FastifyInstance;
+  // An old http:// bookmark gets a fixed hint page instead of a dropped connection.
+  if (options.https) (app.server as unknown as HttpsServer).on('tlsClientError', answerPlainHttp);
   if (options.https && options.hstsSeconds !== undefined) {
     const hsts = `max-age=${options.hstsSeconds}`;
     app.addHook('onSend', async (_request, reply, payload) => {
