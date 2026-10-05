@@ -109,7 +109,7 @@ export function paths(layout: Layout) {
 export const pub = (layout: Layout): Owner => ({ uid: layout.uid, gid: layout.gid });
 export const priv = (layout: Layout): Owner => ({ uid: layout.uid, gid: layout.privateGid });
 
-const FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
+export const FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
 export const BACKUP_NAME = /^ca\.old-\d{8}T\d{6}Z$/;
 
 type Json = Record<string, unknown>;

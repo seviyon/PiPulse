@@ -16,7 +16,12 @@ import {
   type RenewStatus
 } from './layout.js';
 import { parseCertificateFile } from './pem.js';
-import { DEFAULT_RUNTIME_DIR, readRuntimeStatus, type RuntimeView } from './runtime-status.js';
+import {
+  DEFAULT_RUNTIME_DIR,
+  printable,
+  readRuntimeStatus,
+  type RuntimeView
+} from './runtime-status.js';
 import {
   isoDate,
   isoMinute,
@@ -234,7 +239,7 @@ export function activeLines(active: ActiveView): string[] {
           `  serving SHA-256 ${c.fingerprint} (${c.source}, ${c.class}, valid until ${isoMinute(c.notAfter)})`
         );
         lines.push(
-          `  reload: ${c.reload.state}${c.reload.lastError ? `: ${c.reload.lastError}` : ''}`
+          `  reload: ${c.reload.state}${c.reload.lastError ? `: ${printable(c.reload.lastError)}` : ''}`
         );
       }
       return lines;

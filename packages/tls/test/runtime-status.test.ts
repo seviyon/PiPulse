@@ -15,12 +15,18 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+// The status file is untrusted JSON; tests edit it loosely.
+type Doc = { certificate: { reload: Record<string, unknown> } & Record<string, unknown> } & Record<
+  string,
+  unknown
+>;
+const FP = Array.from({ length: 32 }, (_, i) => (i + 16).toString(16).toUpperCase()).join(':');
 const status: RuntimeStatus = {
   version: 1,
   transport: 'https',
   certificate: {
     source: 'generated',
-    fingerprint: 'AB',
+    fingerprint: FP,
     class: 'valid',
     notAfter: 5,
     reload: { state: 'ok', lastAttempt: null, lastError: null }
@@ -90,6 +96,47 @@ describe('readRuntimeStatus', () => {
     chmodSync(join(dir, 'tls-status.json'), 0o640);
     expect(readRuntimeStatus(dir, { ...running, expectUid: process.getuid!() + 1 })).toMatchObject({
       state: 'status-file-corrupt'
+    });
+  });
+  describe('a status file written by the service is not trusted', () => {
+    const read = (mutate: (copy: Doc) => void) => {
+      const copy = JSON.parse(JSON.stringify(status));
+      mutate(copy);
+      writeFileSync(join(dir, 'tls-status.json'), JSON.stringify(copy), { mode: 0o640 });
+      return readRuntimeStatus(dir, running);
+    };
+    it.each([
+      [
+        'a fingerprint with an escape sequence',
+        (c: Doc) => (c.certificate.fingerprint = `${FP}\u001b[2J`)
+      ],
+      ['a fingerprint that is not 32 hex pairs', (c: Doc) => (c.certificate.fingerprint = 'AB')],
+      ['an unknown class', (c: Doc) => (c.certificate.class = 'fine')],
+      ['an unknown reload state', (c: Doc) => (c.certificate.reload.state = 'great')],
+      ['a non-string lastError', (c: Doc) => (c.certificate.reload.lastError = { a: 1 })],
+      ['a non-numeric lastAttempt', (c: Doc) => (c.certificate.reload.lastAttempt = 'x')],
+      ['a bootId with a newline', (c: Doc) => (c.bootId = 'a\nb')]
+    ])('rejects %s', (_name, mutate) => {
+      expect(read(mutate)).toMatchObject({ state: 'status-file-corrupt' });
+    });
+    it('strips control characters from lastError and drops unknown fields', () => {
+      const view = read((c) => {
+        c.certificate.reload = {
+          state: 'failing',
+          lastAttempt: 1,
+          lastError: 'bad\u001b[2K\rline\nnext',
+          extra: 'x'
+        };
+        c.extra = 'y';
+      });
+      expect(view.state).toBe('running');
+      if (view.state !== 'running') return;
+      const reload = view.status.certificate!.reload;
+      // eslint-disable-next-line no-control-regex
+      expect(reload.lastError).not.toMatch(/[\u0000-\u001f]/);
+      expect(reload.lastError).toBe('bad?[2K?line?next');
+      expect(reload).not.toHaveProperty('extra');
+      expect(view.status).not.toHaveProperty('extra');
     });
   });
   it('writes atomically: no temp file is left and the mode is 0640', () => {
