@@ -1,5 +1,5 @@
 # Build once on the build machine's CPU: the output is plain JavaScript.
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS build
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:eae779f20e0cdf264247f6f3b4e62510d91f168a615117ed38430ba295f55590 AS build
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
@@ -10,7 +10,7 @@ RUN mkdir /app && cp package.json package-lock.json /app/ \
  && cd /app && npm ci --omit=dev --ignore-scripts --no-audit --no-fund && find node_modules -type d -empty -delete \
  && printf '{"version":"%s"}\n' "$VERSION" > /app/version.json
 
-FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+FROM node:24-bookworm-slim@sha256:eae779f20e0cdf264247f6f3b4e62510d91f168a615117ed38430ba295f55590
 RUN groupadd --system pipulse && useradd --system --gid pipulse --home /data --shell /usr/sbin/nologin pipulse \
  && mkdir /data && chown pipulse:pipulse /data
 COPY --from=build /app /opt/pipulse/app
