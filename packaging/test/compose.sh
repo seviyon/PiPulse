@@ -23,6 +23,12 @@ for _ in $(seq 1 120); do healthy pipulse && break; sleep 1; done
 healthy pipulse && ok 'compose up: the server is healthy' || { dc logs; bad 'compose up: the server is healthy'; }
 healthy pipulse-tls && ok 'the sidecar is healthy' || bad 'the sidecar is healthy'
 [ "$(dc exec -T pipulse-tls stat -c '%U:%G %a' /tls /tls-ca /tls-ca/ca/ca.key /tls/leaf.pem | tr '\n' ' ')" = 'root:pipulse 2750 root:root 700 root:root 600 root:pipulse 640 ' ] && ok 'volume owners and modes' || bad "volume owners and modes ($(dc exec -T pipulse-tls stat -c '%n %U:%G %a' /tls /tls-ca /tls-ca/ca/ca.key /tls/leaf.pem | tr '\n' ' '))"
+# Host networking makes Docker give the container the host's name (not its own container id): the
+# certificate's default name and the dashboard header rely on it, so a `hostname:` added to a service
+# would break both.
+host=$(docker info -f '{{.Name}}')
+[ "$(dc exec -T pipulse-tls hostname)" = "$host" ] && [ "$(dc exec -T pipulse hostname)" = "$host" ] && ok 'both containers see the host name' || bad "both containers see the host name (host $host)"
+dc exec -T pipulse pipulse tls status | grep -q "DNS:.*$host" && ok "the certificate covers the host name ($host)" || bad "the certificate covers the host name ($host)"
 dc exec -T pipulse test ! -e /tls-ca && ok 'the server has no CA volume' || bad 'the server has no CA volume'
 if dc exec -T pipulse touch /tls/intruder 2>/dev/null; then bad 'the server cannot write /tls'; else ok 'the server cannot write /tls'; fi
 dc exec -T pipulse cat /tls/leaf.pem >/dev/null && ok 'the server reads leaf.pem' || bad 'the server reads leaf.pem'
