@@ -111,4 +111,23 @@ rm -rf /etc/pipulse/tls
 if sh "$stub/packaging/setup.sh" --no-start --first-install > /tmp/y.log 2>&1; then bad 'a first install whose init died fails'; else ok 'a first install whose init died fails'; fi
 [ -z "$(state)" ] && ok 'and writes no state' || bad 'and writes no state'
 sh "$repo/packaging/install.sh" --purge >/dev/null
+
+# The installer's subnet helpers (Task 23).
+sed -n '/^network_of()/,/^}/p;/^candidate_subnet()/,/^}/p' "$repo/packaging/install.sh" > /tmp/net.sh
+# shellcheck source=/dev/null
+. /tmp/net.sh
+[ "$(network_of 192.168.1.35/24)" = 192.168.1.0/24 ] && [ "$(network_of 10.20.30.40/16)" = 10.20.0.0/16 ] && [ "$(network_of 192.168.1.131/25)" = 192.168.1.128/25 ] && ok 'network_of' || bad 'network_of'
+fakeip=$(mktemp -d)
+cat > "$fakeip/ip" <<'SH'
+#!/bin/sh
+case "$*" in
+  *route*) echo "default via 192.168.1.1 dev $DEV proto dhcp" ;;
+  *addr*) echo "2: $DEV    inet $CIDR brd 192.168.1.255 scope global $DEV" ;;
+esac
+SH
+chmod +x "$fakeip/ip"
+cand() { PATH="$fakeip:$PATH" DEV=$1 CIDR=$2 candidate_subnet; }
+[ "$(cand eth0 192.168.1.35/24)" = 192.168.1.0/24 ] && ok 'candidate_subnet offers the default-route network' || bad 'candidate_subnet offers the default-route network'
+! cand docker0 172.17.0.1/16 >/dev/null && ! cand wg0 10.8.0.2/24 >/dev/null && ok 'candidate_subnet skips bridges and VPNs' || bad 'candidate_subnet skips bridges and VPNs'
+! cand eth0 192.168.1.35/32 >/dev/null && ! cand eth0 10.0.0.1/0 >/dev/null && ok 'candidate_subnet skips prefixes it would not offer' || bad 'candidate_subnet skips prefixes it would not offer'
 exit $fail

@@ -51,6 +51,7 @@ install_apt() {
   fi
 
   # 3. Install. Never prompt (stdin is the curl pipe): keep an existing pipulse.env.
+  # PIPULSE_TLS_INIT_SUBNET (from ask_subnet) reaches setup.sh through dpkg's environment.
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null; then
     restore_apt_source
@@ -364,6 +365,51 @@ uninstall() { # uninstall PURGE
   fi
 }
 
+# network_of 192.168.1.35/24 → 192.168.1.0/24
+network_of() {
+  echo "$1" | awk -F'[./]' '{ p = $5; ip = (($1 * 256 + $2) * 256 + $3) * 256 + $4; b = 2 ^ (32 - p); n = ip - (ip % b);
+    printf "%d.%d.%d.%d/%d\n", int(n / 16777216) % 256, int(n / 65536) % 256, int(n / 256) % 256, n % 256, p }'
+}
+
+# The default-route interface's IPv4 network, unless it is a bridge or VPN, or a prefix not worth offering.
+candidate_subnet() {
+  dev=$(ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n 1)
+  [ -n "$dev" ] || return 1
+  case $dev in docker* | br-* | veth* | tun* | wg*) return 1 ;; esac
+  cidr=$(ip -4 -o addr show dev "$dev" scope global 2>/dev/null | awk '{ print $4 }' | head -n 1)
+  [ -n "$cidr" ] || return 1
+  prefix=${cidr#*/}
+  { [ "$prefix" -ge 8 ] && [ "$prefix" -le 30 ]; } 2>/dev/null || return 1
+  network_of "$cidr"
+}
+
+# Fresh install with a terminal: offer IP access for the LAN (default No). Never waits without
+# a terminal, on an upgrade, or when the operator already chose a subnet.
+ask_subnet() {
+  [ -z "${PIPULSE_TLS_INIT_SUBNET:-}" ] || return 0
+  [ -e /opt/pipulse/app/version.json ] && return 0
+  [ -e /etc/pipulse/tls/state.json ] && return 0
+  (: </dev/tty) 2>/dev/null || return 0
+  cidr=$(candidate_subnet) || return 0
+  cat >/dev/tty <<EOF
+
+[pipulse] HTTPS: PiPulse makes its own certificate authority (CA) for this Pi.
+By default it covers the Pi's names ($(hostname), $(hostname).local, localhost), not IP addresses.
+
+This CA will be trusted for the following DNS names and IP ranges. Anyone holding its private key can impersonate hosts within those ranges.
+
+Accepting $cidr allows this CA to issue certificates for any IP in that subnet. A stolen CA key could impersonate other devices there.
+
+EOF
+  printf 'Also cover https://<IP address> in %s? [y/N] ' "$cidr" >/dev/tty
+  answer=
+  read -r answer </dev/tty || answer=
+  case $answer in
+    y | Y | yes | YES) PIPULSE_TLS_INIT_SUBNET=$cidr; export PIPULSE_TLS_INIT_SUBNET ;;
+    *) printf '[pipulse] names only; to add it later: sudo pipulse tls new-ca --subnet %s\n' "$cidr" >/dev/tty ;;
+  esac
+}
+
 main() {
   mode=apt version='' from='' no_start=no
   while [ "$#" -gt 0 ]; do
@@ -380,6 +426,7 @@ main() {
     shift
   done
   [ "$(id -u)" -eq 0 ] || die 'run as root (sudo)'
+  case $mode in apt | tarball) [ "$no_start" = yes ] || ask_subnet ;; esac
   case $mode in
     apt) install_apt ;;
     uninstall) refuse_over_apt; uninstall no ;;
