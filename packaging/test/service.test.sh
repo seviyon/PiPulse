@@ -1,6 +1,7 @@
 #!/bin/sh
 # setup.sh and the service's state: enable on first install only; afterwards
-# restart only an enabled service and leave a disabled or masked one alone.
+# restart only an enabled service and leave a disabled or masked one alone. The renewal
+# timer is enabled once, then its state is the operator's.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 fail=0
@@ -26,21 +27,37 @@ case $1 in
 esac
 SH
 chmod +x "$fake/systemctl"
-run() { : > /tmp/systemctl.log; STATE=$1 PATH="$fake:$PATH" sh "$here/setup.sh" --unit-dir none ${2:+"$2"} > /tmp/setup.out 2>&1; }
+run() { : > /tmp/systemctl.log; STATE=$1 PATH="$fake:$PATH" sh "$here/setup.sh" --unit-dir "${UNIT_DIR:-none}" ${2:+"$2"} > /tmp/setup.out 2>&1; }
+timer_on() { grep -qx 'enable --now pipulse-tls-renew.timer' /tmp/systemctl.log; }
 
 run disabled --first-install || bad 'first install ran'
 grep -qx 'enable pipulse' /tmp/systemctl.log && grep -qx 'restart pipulse' /tmp/systemctl.log && ok 'first install enables and starts' || bad 'first install enables and starts'
+timer_on && [ -e /etc/pipulse/.renew-timer-enabled ] && ok 'first install enables the renewal timer once' || bad 'first install enables the renewal timer once'
 
 run enabled '' || bad 'upgrade ran'
 grep -qx 'restart pipulse' /tmp/systemctl.log && ! grep -qx 'enable pipulse' /tmp/systemctl.log && ok 'upgrade restarts an enabled service' || bad 'upgrade restarts an enabled service'
 
 run disabled '' || bad 'upgrade of a disabled service ran'
 ! grep -qx 'enable pipulse' /tmp/systemctl.log && ! grep -qx 'restart pipulse' /tmp/systemctl.log && grep -q 'disabled' /tmp/setup.out && ok 'leaves a disabled service alone, and says so' || bad 'leaves a disabled service alone, and says so'
-grep -qx 'enable --now pipulse-tls-renew.timer' /tmp/systemctl.log && ok 'enables the renewal timer' || bad 'enables the renewal timer'
+! timer_on && grep -q 'pipulse-tls-renew.timer is not enabled: left as it is' /tmp/setup.out && ok 'an upgrade leaves a disabled timer disabled, and says so' || bad 'an upgrade leaves a disabled timer disabled, and says so'
 
 if run masked ''; then ok 'a masked service does not fail the upgrade'; else bad 'a masked service does not fail the upgrade'; fi
 ! grep -qx 'enable pipulse' /tmp/systemctl.log && ! grep -qx 'restart pipulse' /tmp/systemctl.log && ok 'leaves a masked service alone' || bad 'leaves a masked service alone'
-! grep -qx 'enable --now pipulse-tls-renew.timer' /tmp/systemctl.log && grep -q 'pipulse-tls-renew.timer is masked' /tmp/setup.out && ok 'leaves a masked timer alone, and says so' || bad 'leaves a masked timer alone, and says so'
+! timer_on && grep -q 'pipulse-tls-renew.timer is masked' /tmp/setup.out && ok 'leaves a masked timer alone, and says so' || bad 'leaves a masked timer alone, and says so'
+
+# An upgrade from a release without the timer (no marker) enables it once.
+rm -f /etc/pipulse/.renew-timer-enabled
+run disabled '' || bad 'upgrade from a release without the timer ran'
+timer_on && [ -e /etc/pipulse/.renew-timer-enabled ] && ok 'the first upgrade that has the timer enables it once' || bad 'the first upgrade that has the timer enables it once'
+run disabled '' || bad 'second upgrade ran'
+! timer_on && ok 'the next upgrade keeps it disabled' || bad 'the next upgrade keeps it disabled'
+
+# A real mask (a link to /dev/null in the unit folder) must not abort setup or be replaced.
+units=$(mktemp -d)
+ln -s /dev/null "$units/pipulse-tls-renew.timer"
+rm -f /etc/pipulse/.renew-timer-enabled
+if UNIT_DIR=$units run disabled ''; then ok 'a masked timer file does not fail the upgrade'; else bad 'a masked timer file does not fail the upgrade'; fi
+[ "$(readlink "$units/pipulse-tls-renew.timer")" = /dev/null ] && [ -f "$units/pipulse-tls-renew.service" ] && ok 'the mask is left in place and the other units are installed' || bad 'the mask is left in place and the other units are installed'
 
 rm -rf /run/systemd/system /opt/pipulse
 exit $fail

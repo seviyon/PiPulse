@@ -2,7 +2,8 @@
 # setup.sh [--no-start] [--first-install] [--unit-dir DIR|none] — the one setup
 # both install paths run: user, folders, settings file, service, and warnings.
 # Idempotent. The service is enabled only on a first install; after that an
-# enabled service is restarted and a disabled or masked one is left alone.
+# enabled service is restarted and a disabled or masked one is left alone. The
+# renewal timer is enabled once (first install, or first upgrade that has it).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib.sh"
@@ -18,6 +19,11 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ "$(id -u)" -eq 0 ] || die 'run as root'
+# True when the operator masked the unit (systemd says so, or its file is a link to /dev/null).
+unit_masked() {
+  [ "$(systemctl is-enabled "$1" 2>/dev/null || true)" = masked ] && return 0
+  [ "$unit_dir" != none ] && [ -L "$unit_dir/$1" ] && [ "$(readlink "$unit_dir/$1")" = /dev/null ]
+}
 
 # 1. User
 if ! getent passwd pipulse >/dev/null; then
@@ -86,8 +92,14 @@ port=${port:-8889}
 # 4. Service
 if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
   if [ "$unit_dir" != none ]; then
+    # A masked unit (a symlink to /dev/null) is the operator's: install would replace
+    # it or fail under set -e, so leave it and say so.
     for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
-      install -m 644 "$here/$unit" "$unit_dir/$unit"
+      if unit_masked "$unit"; then
+        warn "$unit is masked: its unit file was left as it is"
+      else
+        install -m 644 "$here/$unit" "$unit_dir/$unit"
+      fi
     done
   fi
   systemctl daemon-reload || true
@@ -129,12 +141,21 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
       *) warn "the pipulse service is ${state:-not enabled}: left as it is, not started (sudo systemctl enable --now pipulse)" ;;
     esac
   fi
-  # Hourly check; renews only a generated certificate that is due. Enabled on
-  # every install and upgrade unless the operator masked it.
-  case $(systemctl is-enabled pipulse-tls-renew.timer 2>/dev/null || true) in
-    masked) warn 'pipulse-tls-renew.timer is masked: a generated HTTPS certificate will not renew by itself' ;;
-    *) systemctl enable --now pipulse-tls-renew.timer >/dev/null 2>&1 || warn 'could not enable pipulse-tls-renew.timer' ;;
-  esac
+  # Hourly check; renews only a generated certificate that is due. Enabled once: on a
+  # first install, or on the first upgrade from a release without it (no marker yet).
+  # After that an operator's enabled, disabled or masked choice is left as it is.
+  timer_marker=/etc/pipulse/.renew-timer-enabled
+  if unit_masked pipulse-tls-renew.timer; then
+    warn 'pipulse-tls-renew.timer is masked: a generated HTTPS certificate will not renew by itself'
+  elif [ ! -e "$timer_marker" ]; then
+    if systemctl enable --now pipulse-tls-renew.timer >/dev/null 2>&1; then
+      : > "$timer_marker"
+    else
+      warn 'could not enable pipulse-tls-renew.timer'
+    fi
+  elif [ "$(systemctl is-enabled pipulse-tls-renew.timer 2>/dev/null || true)" != enabled ]; then
+    warn 'pipulse-tls-renew.timer is not enabled: left as it is (a generated HTTPS certificate will not renew by itself; sudo systemctl enable --now pipulse-tls-renew.timer)'
+  fi
 else
   log 'no systemd running (or --no-start): service not started'
   # Nothing starts here, so the material made and state.json written are the success gate.
