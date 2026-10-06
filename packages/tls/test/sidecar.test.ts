@@ -83,32 +83,68 @@ describe('sidecarStart', () => {
 });
 
 describe('sidecarHealth', () => {
-  it('is unhealthy before ready, healthy after, unhealthy when renewal failed', async () => {
+  it('is unhealthy before ready and healthy after, whatever the last renewal did', async () => {
     const ctx = docker();
     expect(sidecarHealth(ctx, ready)).toBe(1);
     await sidecarStart(ctx, ready);
     expect(sidecarHealth(ctx, ready)).toBe(0);
-    writeRenewStatus(ctx.layout, {
-      version: 1,
-      lastAttempt: ctx.now(),
-      result: 'waiting-clock',
-      reason: 'clock unknown'
-    });
-    expect(sidecarHealth(ctx, ready)).toBe(0);
-    writeRenewStatus(ctx.layout, {
-      version: 1,
-      lastAttempt: ctx.now(),
-      result: 'failed',
-      reason: 'x'
-    });
-    expect(sidecarHealth(ctx, ready)).toBe(1);
+    for (const result of ['waiting-clock', 'failed'] as const) {
+      writeRenewStatus(ctx.layout, {
+        version: 1,
+        lastAttempt: ctx.now(),
+        result,
+        reason: 'x'
+      });
+      // A failed renewal must never keep the server from starting (depends_on: service_healthy).
+      expect(sidecarHealth(ctx, ready)).toBe(0);
+    }
   });
 
-  it('is unhealthy once the leaf has expired', async () => {
+  it('stays healthy once the leaf has expired (it is a certificate problem, not readiness)', async () => {
     const ctx = docker();
     await sidecarStart(ctx, ready);
     ctx.setNow(ctx.now() + 100 * 86_400_000);
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+  });
+
+  it('does not look at the CA key, and is unhealthy when the leaf or the public CA is gone', async () => {
+    const ctx = docker();
+    await sidecarStart(ctx, ready);
+    rmSync(paths(ctx.layout).caDir, { recursive: true });
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+    rmSync(paths(ctx.layout).publicCa);
     expect(sidecarHealth(ctx, ready)).toBe(1);
+  });
+
+  it('is unhealthy when the leaf is gone', async () => {
+    const ctx = docker();
+    await sidecarStart(ctx, ready);
+    rmSync(paths(ctx.layout).bundle);
+    expect(sidecarHealth(ctx, ready)).toBe(1);
+  });
+});
+
+describe('PIPULSE_TLS=off', () => {
+  it('makes no CA, records legacy-http on a fresh volume and is ready and healthy', async () => {
+    const ctx = docker();
+    ctx.env['PIPULSE_TLS'] = 'off';
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(existsSync(join(dir, 'tls-ca', 'ca'))).toBe(false);
+    expect(existsSync(paths(ctx.layout).bundle)).toBe(false);
+    expect(existsSync(ready)).toBe(true);
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+  });
+
+  it('the loop idles without renewing and stops when told to', async () => {
+    const ctx = docker();
+    ctx.env['PIPULSE_TLS'] = 'off';
+    const stop = new AbortController();
+    const running = sidecar(ctx, [], { readyFile: ready, intervalMs: 20, stop: stop.signal });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    stop.abort();
+    expect(await running).toBe(0);
+    expect(existsSync(paths(ctx.layout).renewStatus)).toBe(false);
   });
 });
 

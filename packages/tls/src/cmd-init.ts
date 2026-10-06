@@ -28,6 +28,7 @@ import {
   ensureTlsDirs,
   nativeLayoutProblem,
   operatorConfigured,
+  tlsOff,
   printCa,
   reportOutside,
   usage,
@@ -73,8 +74,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
   if (values.mode !== 'auto') throw new UsageError(`--mode must be auto, not ${values.mode}`);
   // PIPULSE_TLS=off overrides everything: an install or upgrade makes no CA and, on a first
   // run, records legacy-http (so removing the setting later never flips the transport by itself).
-  const off = ctx.env['PIPULSE_TLS']?.trim() === 'off';
-  if (off) {
+  if (tlsOff(ctx.env)) {
     ctx.out('PIPULSE_TLS=off: plain HTTP; no CA made');
     if (readState(ctx.layout) === undefined) {
       ensureTlsDirs(ctx.layout, ctx.hook);

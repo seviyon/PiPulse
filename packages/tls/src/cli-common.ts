@@ -53,6 +53,9 @@ export function usage<T>(parse: () => T): T {
   }
 }
 
+/** PIPULSE_TLS=off: plain HTTP, and nothing is issued for it. */
+export const tlsOff = (env: NodeJS.ProcessEnv) => env['PIPULSE_TLS']?.trim() === 'off';
+
 export const operatorConfigured = (env: NodeJS.ProcessEnv) =>
   Boolean(env['PIPULSE_TLS_CERT']?.trim() && env['PIPULSE_TLS_KEY']?.trim());
 

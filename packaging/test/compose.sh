@@ -36,10 +36,11 @@ dc restart pipulse-tls >/dev/null 2>&1
 for _ in $(seq 1 60); do healthy pipulse-tls && break; sleep 1; done
 [ "$(dc logs pipulse-tls | sed -n 's/.*CA SHA-256 fingerprint: //p' | sort -u | wc -l | tr -d ' ')" = 1 ] && [ -n "$fp1" ] && ok 'a restart keeps and reprints the same CA' || bad 'a restart keeps and reprints the same CA'
 
-# A failing sidecar (unreadable CA key: root has no DAC override there) doesn't touch the server.
+# A failing renewal (unreadable CA key: root has no DAC override there) is a certificate problem:
+# the sidecar stays healthy (so `compose up` still starts the server) and the server keeps serving.
 dc exec -T pipulse-tls chmod 000 /tls-ca/ca/ca.key
 dc exec -T pipulse-tls pipulse tls renew --force >/dev/null 2>&1 || true
-if dc exec -T pipulse-tls pipulse tls sidecar-health >/dev/null 2>&1; then bad 'a failing renewal makes the sidecar unhealthy'; else ok 'a failing renewal makes the sidecar unhealthy'; fi
+if dc exec -T pipulse-tls pipulse tls sidecar-health >/dev/null 2>&1; then ok 'a failing renewal does not make the sidecar unhealthy'; else bad 'a failing renewal does not make the sidecar unhealthy'; fi
 restarts=$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q pipulse)")
 dc exec -T pipulse node /opt/pipulse/app/packages/tls/dist/health-check.js && ok 'the server keeps serving' || bad 'the server keeps serving'
 dc exec -T pipulse-tls chmod 600 /tls-ca/ca/ca.key

@@ -1,14 +1,13 @@
-import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { printCa, usage, type Context } from './cli-common.js';
+import { printCa, tlsOff, usage, type Context } from './cli-common.js';
 import { decideInitialMode, init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
 import { ensureDir } from './files.js';
-import { validityOf } from './inspect.js';
-import { MODES, paths, priv, pub, readRenewStatus, readState, writeState } from './layout.js';
+import { MODES, paths, priv, pub, readState, writeState } from './layout.js';
 import { withLock } from './lock.js';
-import { checkCa, checkLeaf } from './material.js';
+import { checkLeaf } from './material.js';
 
 /** On the sidecar's tmpfs, so a restart starts unready. */
 export const READY_FILE = '/tmp/pipulse-sidecar-ready';
@@ -48,13 +47,20 @@ const exists = (path: string, whenUnsure: boolean) => {
  */
 export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promise<number> {
   rmSync(readyFile, { force: true });
+  // PIPULSE_TLS=off overrides everything (the sidecar reads the same env_file as the server):
+  // no CA, legacy-http on a fresh volume, so dropping the setting later never flips the transport.
+  const off = tlsOff(ctx.env);
   // The same lock as the CLI: `docker compose run pipulse-tls pipulse tls new-ca` may run meanwhile.
   const code = await withLock(
     ctx.layout,
-    () => init(ctx, ['--yes', '--quiet']),
+    () => init(ctx, off ? ['--mode', 'auto', '--yes', '--quiet'] : ['--yes', '--quiet']),
     lockOptions(ctx, true)
   );
   if (code !== 0) return code;
+  if (off) {
+    writeFileSync(readyFile, `${ctx.now()}\n`, { mode: 0o600 });
+    return 0;
+  }
   if (readState(ctx.layout) === undefined) {
     const db = ctx.env['PIPULSE_DB_PATH']?.trim() || '/data/pipulse.sqlite';
     const mode = decideInitialMode({
@@ -103,6 +109,13 @@ export async function sidecar(
     ctx.err('pipulse-tls is not ready; the server will not start until this is fixed');
     return code;
   }
+  if (tlsOff(ctx.env)) {
+    ctx.out('PIPULSE_TLS=off: nothing to renew');
+    while (!(await wait(options.intervalMs ?? SIDECAR_INTERVAL_MS, options.stop))) {
+      // idle until told to stop
+    }
+    return 0;
+  }
   for (;;) {
     try {
       await withLock(ctx.layout, () => renew(ctx, []), lockOptions(ctx, false));
@@ -113,24 +126,29 @@ export async function sidecar(
   }
 }
 
+/**
+ * Readiness only: the ready file, and a leaf that verifies against the public CA certificate in
+ * the TLS folder. Never the CA key, a failed renewal or an expired leaf: `depends_on:
+ * service_healthy` would then keep the server from starting, and a certificate problem never
+ * stops it. Renewal failures show in the sidecar's log, `pipulse tls status` and /api/health
+ * ("renewal-failing").
+ */
 export function sidecarHealth(ctx: Context, readyFile = READY_FILE): number {
   if (!existsSync(readyFile)) {
     ctx.err('not ready yet');
     return 1;
   }
-  const ca = checkCa(paths(ctx.layout).caDir);
-  if (ca.kind !== 'ok') {
-    ctx.err(`no usable CA: ${ca.kind === 'partial' ? ca.problem : 'missing'}`);
+  if (tlsOff(ctx.env)) return 0;
+  let certPem: string;
+  try {
+    certPem = readFileSync(paths(ctx.layout).publicCa, 'utf8');
+  } catch (error) {
+    ctx.err(`no CA certificate: ${(error as Error).message}`);
     return 1;
   }
-  const leaf = checkLeaf(paths(ctx.layout).bundle, ca.ca, pub(ctx.layout));
-  if (leaf.kind !== 'ok' || validityOf(leaf, ctx.now(), 0) === 'expired') {
-    ctx.err('no valid certificate');
-    return 1;
-  }
-  const renewal = readRenewStatus(paths(ctx.layout).renewStatus);
-  if (renewal?.result === 'failed') {
-    ctx.err(`renewal failing: ${renewal.reason}`);
+  const leaf = checkLeaf(paths(ctx.layout).bundle, { certPem }, pub(ctx.layout));
+  if (leaf.kind !== 'ok') {
+    ctx.err('no usable certificate');
     return 1;
   }
   return 0;
