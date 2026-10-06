@@ -110,7 +110,14 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
       # Success on a first install is the service answering and, over HTTPS, the server
       # having marked its data (see tls-installed): without the marker, losing the TLS
       # folder later would make this install look like an HTTP one.
-      if pipulse_health; then
+      health=0
+      pipulse_health || health=$?
+      if [ "$health" -ne 1 ]; then
+        # 2: running, but its certificate failed the client check (install.sh keeps such an
+        # install too: rolling back can't fix a certificate). Warn, then finish as usual.
+        if [ "$health" -eq 2 ]; then
+          warn "PiPulse is running, but its HTTPS certificate failed verification${HEALTH_MSG:+ ($HEALTH_MSG)}; see Settings → Certificate and journalctl -u pipulse"
+        fi
         db=$(env_value PIPULSE_DB_PATH)
         marker="$(dirname "${db:-/var/lib/pipulse/pipulse.sqlite}")/tls-installed"
         i=0

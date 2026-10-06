@@ -34,6 +34,18 @@ run disabled --first-install || bad 'first install ran'
 grep -qx 'enable pipulse' /tmp/systemctl.log && grep -qx 'restart pipulse' /tmp/systemctl.log && ok 'first install enables and starts' || bad 'first install enables and starts'
 timer_on && [ -e /etc/pipulse/.renew-timer-enabled ] && ok 'first install enables the renewal timer once' || bad 'first install enables the renewal timer once'
 
+# Running but its certificate fails the client check (exit 2): warn and finish, like install.sh.
+printf '%s\n' 'process.stderr.write("[pipulse] health check: unable to get local issuer certificate\n"); process.exit(2);' > /opt/pipulse/app/packages/tls/dist/health-check.js
+touch /etc/pipulse/.first-install-pending
+if run disabled --first-install; then ok 'a certificate that fails verification does not abort a first install'; else bad 'a certificate that fails verification does not abort a first install'; fi
+grep -q 'failed verification (unable to get local issuer certificate)' /tmp/setup.out && [ ! -e /etc/pipulse/.first-install-pending ] && ok 'it warns with the reason and clears the pending marker' || bad 'it warns with the reason and clears the pending marker'
+echo 'process.exit(1);' > /opt/pipulse/app/packages/tls/dist/health-check.js
+touch /etc/pipulse/.first-install-pending
+if PIPULSE_HEALTH_WAIT=1 run disabled --first-install; then bad 'an unhealthy first install fails'; else ok 'an unhealthy first install fails'; fi
+[ -e /etc/pipulse/.first-install-pending ] && ok 'and stays pending' || bad 'and stays pending'
+rm -f /etc/pipulse/.first-install-pending
+echo 'process.exit(0);' > /opt/pipulse/app/packages/tls/dist/health-check.js
+
 run enabled '' || bad 'upgrade ran'
 grep -qx 'restart pipulse' /tmp/systemctl.log && ! grep -qx 'enable pipulse' /tmp/systemctl.log && ok 'upgrade restarts an enabled service' || bad 'upgrade restarts an enabled service'
 

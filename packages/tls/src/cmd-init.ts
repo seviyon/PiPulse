@@ -71,6 +71,17 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
   );
   if (values.mode === undefined) return material(ctx, values);
   if (values.mode !== 'auto') throw new UsageError(`--mode must be auto, not ${values.mode}`);
+  // PIPULSE_TLS=off overrides everything: an install or upgrade makes no CA and, on a first
+  // run, records legacy-http (so removing the setting later never flips the transport by itself).
+  const off = ctx.env['PIPULSE_TLS']?.trim() === 'off';
+  if (off) {
+    ctx.out('PIPULSE_TLS=off: plain HTTP; no CA made');
+    if (readState(ctx.layout) === undefined) {
+      ensureTlsDirs(ctx.layout, ctx.hook);
+      writeState(ctx.layout, 'legacy-http', ctx.hook);
+    }
+    return 0;
+  }
   // Mode already chosen (by an earlier install or by the operator): only fill in material.
   if (readState(ctx.layout) !== undefined) return material(ctx, values);
   const db = ctx.env['PIPULSE_DB_PATH']?.trim() || '/var/lib/pipulse/pipulse.sqlite';

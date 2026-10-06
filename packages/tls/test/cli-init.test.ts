@@ -424,6 +424,19 @@ describe('init --mode auto', () => {
     expect(readState(ctx.layout)).toBe('https');
   });
 
+  it('PIPULSE_TLS=off makes no CA: a first run records legacy-http, an existing state stays', async () => {
+    ctx.env['PIPULSE_TLS'] = 'off';
+    expect(await main(['init', '--mode', 'auto', '--first-install'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(existsSync(join(dir, 'ca'))).toBe(false);
+    expect(existsSync(join(dir, 'ca-meta.json'))).toBe(false);
+    expect(ctx.lines.join('\n')).not.toContain('SHA-256');
+    writeState(ctx.layout, 'https');
+    expect(await main(['init', '--mode', 'auto'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+    expect(existsSync(join(dir, 'ca'))).toBe(false);
+  });
+
   it('a lost TLS folder on data that served HTTPS goes back to https, with a warning', async () => {
     const run = withDb(testContext(dir), true);
     expect(await main(['init', '--mode', 'auto'], run)).toBe(0);
