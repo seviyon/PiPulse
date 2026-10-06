@@ -80,6 +80,9 @@ jobs:
             lintian --fail-on error "out/pipulse_${V}_${arch}.deb"
           done
           cp packaging/install.sh compose.yaml out/
+          # The shipped compose file runs this release's image (the repository copy follows :latest).
+          sed -i "s#ghcr.io/seviyon/pipulse:latest#ghcr.io/seviyon/pipulse:$V#" out/compose.yaml
+          grep -c "ghcr.io/seviyon/pipulse:$V" out/compose.yaml | grep -qx 3
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release
