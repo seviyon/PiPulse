@@ -46,7 +46,7 @@ jobs:
   packaging:
     # Installs, upgrades, rolls back and removes PiPulse in a clean Debian container.
     runs-on: ubuntu-24.04
-    container: node:22-bookworm-slim@sha256:1b3abbc0bf2421c8733f58c6fd7bbb961a960f37e05ed7369eccd1fbb0edcc84
+    container: node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Tools the tests need
