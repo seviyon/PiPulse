@@ -17,6 +17,7 @@ import { settingsEnv } from './envfile.js';
 import { OPENSSL } from './issue.js';
 import { LOCK_WAIT_MS, LockError, withLock } from './lock.js';
 import { layoutFrom, type Layout } from './layout.js';
+import { sidecar, sidecarHealth, sidecarInit } from './sidecar.js';
 
 export const USAGE = `usage: pipulse tls <command>
   status [--json]              what is configured, what the server serves, the last renewal
@@ -78,7 +79,12 @@ async function dispatch(
       return await enable(ctx, args);
     case 'disable':
       return await disable(ctx, args);
-    // Task 24 adds: sidecar-init, sidecar, sidecar-health.
+    case 'sidecar-init':
+      return sidecarInit(ctx);
+    case 'sidecar':
+      return await sidecar(ctx, args);
+    case 'sidecar-health':
+      return sidecarHealth(ctx);
     default:
       throw new UsageError(
         command === undefined ? 'no command given' : `unknown command: ${command}`
