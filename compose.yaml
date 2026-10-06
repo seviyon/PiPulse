@@ -1,6 +1,6 @@
 services:
   pipulse:
-    image: ghcr.io/seviyon/pipulse:latest@sha256:d7e603290dd847cbd9b1c4dddf2f4525fef8258429d087029a08c4ed43b895c9
+    image: ghcr.io/seviyon/pipulse:latest@sha256:d77aff1d925d2760ebc5bef14ddd46f7b839318035cf545dc2902052b5e97e02
     restart: unless-stopped
     network_mode: host # the host's network counters and hostname; set PIPULSE_PORT in pipulse.env
     env_file:
