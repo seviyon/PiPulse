@@ -18,7 +18,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 2. builds `pipulse_<version>_{armhf,arm64,amd64}.deb`, each with its Node (downloaded and GPG-verified), and runs `lintian` on them;
 3. pushes `ghcr.io/seviyon/pipulse:<version>` and `:latest` (`linux/arm64`, `linux/amd64`);
 4. adds the `.deb`s to the apt repository on the `gh-pages` branch (keeping the newest 3 per CPU), signs its indexes, and force-pushes the branch as a single fresh commit, so old packages don't pile up in its history;
-5. writes and signs `SHA256SUMS`, tags `v<version>`, and publishes the GitHub Release with the tarball, `.deb`s, `install.sh`, `compose.yaml` and the checksums;
+5. writes and signs `SHA256SUMS`, tags `v<version>`, and publishes the GitHub Release with the tarball, `.deb`s, `install.sh`, `compose.yaml` and the checksums (the shipped `compose.yaml` is rewritten to this release's image tag; the copy in the repository follows `:latest`, so until a release finishes its image can be older than the file, and a Renovate digest PR opened in that window would pin the old one: close it or let the next release's PR replace it);
 6. installs the new version from the apt repository in a clean Debian container, exactly as the README tells users to.
 
 A PR that changes `packaging/`, the Dockerfile, `compose.yaml` or a workflow also runs _Release dry run_, which builds all of the above without signing or publishing.
