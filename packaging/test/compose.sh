@@ -10,9 +10,12 @@ fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
 mkdir -p "$work/timesync" "$work/config" && touch "$work/timesync/synchronized"
+# A host name no engine would give a container by itself: proves the name comes from the mounted file.
+host=pulse-host-test
+printf '%s\n' "$host" > "$work/hostname"
 printf 'PIPULSE_PORT=18891\n' > "$work/pipulse.env"
 # The test compose file: the test image, a fake clock signal, no Pi-only host files.
-sed -e "s#ghcr.io/seviyon/pipulse:[^ ]*#$image#" -e "s#/run/systemd/timesync#$work/timesync#" \
+sed -e "s#ghcr.io/seviyon/pipulse:[^ ]*#$image#" -e "s#/run/systemd/timesync#$work/timesync#" -e "s#- /etc/hostname:#- $work/hostname:#" \
   -e '/\/boot\/firmware/d' -e '/os-release/d' -e '/device-tree/d' "$repo/compose.yaml" > "$work/compose.yaml"
 dc() { docker compose -p pipulse-test -f "$work/compose.yaml" "$@"; }
 trap 'dc down -v >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
@@ -23,17 +26,17 @@ for _ in $(seq 1 120); do healthy pipulse && break; sleep 1; done
 healthy pipulse && ok 'compose up: the server is healthy' || { dc logs; bad 'compose up: the server is healthy'; }
 healthy pipulse-tls && ok 'the sidecar is healthy' || bad 'the sidecar is healthy'
 [ "$(dc exec -T pipulse-tls stat -c '%U:%G %a' /tls /tls-ca /tls-ca/ca/ca.key /tls/leaf.pem | tr '\n' ' ')" = 'root:pipulse 2750 root:root 700 root:root 600 root:pipulse 640 ' ] && ok 'volume owners and modes' || bad "volume owners and modes ($(dc exec -T pipulse-tls stat -c '%n %U:%G %a' /tls /tls-ca /tls-ca/ca/ca.key /tls/leaf.pem | tr '\n' ' '))"
-# Host networking makes Docker give the container the host's name (not its own container id): the
-# certificate's default name and the dashboard header rely on it, so a `hostname:` added to a service
-# would break both.
-host=$(docker info -f '{{.Name}}')
-[ "$(dc exec -T pipulse-tls hostname)" = "$host" ] && [ "$(dc exec -T pipulse hostname)" = "$host" ] && ok 'both containers see the host name' || bad "both containers see the host name (host $host)"
+# The host's name comes from the mounted /etc/hostname (PIPULSE_HOST_ROOT), not from the engine: a
+# container's own name differs from the host's on Docker Desktop and Colima.
+[ "$(dc exec -T pipulse-tls hostname)" != "$host" ] && ok 'the container itself has another name' || bad 'the container itself has another name'
+dc exec -T pipulse node -e "import('/opt/pipulse/app/packages/tls/dist/index.js').then(m=>process.stdout.write(m.hostName()))" 2>/dev/null | grep -qx "$host" && ok 'the server resolves the host name from the mount' || bad 'the server resolves the host name from the mount'
 dc exec -T pipulse pipulse tls status | grep -q "DNS:.*$host" && ok "the certificate covers the host name ($host)" || bad "the certificate covers the host name ($host)"
 dc exec -T pipulse test ! -e /tls-ca && ok 'the server has no CA volume' || bad 'the server has no CA volume'
 if dc exec -T pipulse touch /tls/intruder 2>/dev/null; then bad 'the server cannot write /tls'; else ok 'the server cannot write /tls'; fi
 dc exec -T pipulse cat /tls/leaf.pem >/dev/null && ok 'the server reads leaf.pem' || bad 'the server reads leaf.pem'
 dc exec -T pipulse test -e /data/tls-installed && ok 'the server marked the data as served over HTTPS' || bad 'tls-installed marker'
 dc exec -T pipulse node /opt/pipulse/app/packages/tls/dist/health-check.js && ok 'verified HTTPS from inside' || bad 'verified HTTPS from inside'
+dc exec -T -e NODE_EXTRA_CA_CERTS=/tls/ca.crt pipulse node -e "fetch('https://localhost:'+(process.env.PIPULSE_PORT||8889)+'/api/config').then(r=>r.json()).then(j=>process.stdout.write(j.device.hostname))" 2>/dev/null | grep -qx "$host" && ok 'the dashboard header shows the host name' || bad 'the dashboard header shows the host name'
 dc exec -T pipulse pipulse tls status | grep -q 'HTTPS, pid' && ok 'status sees the running server' || bad 'status sees the running server'
 [ "$(dc exec -T pipulse-tls grep CapEff /proc/1/status | awk '{print $2}')" = 0000000000000000 ] && ok 'the sidecar has no capabilities' || bad 'the sidecar has no capabilities'
 [ "$(docker inspect -f '{{.HostConfig.CapAdd}}' "$(dc ps -aq pipulse-tls-init)" | sed 's/CAP_//')" = '[CHOWN]' ] && ok 'the init service has only CHOWN' || bad 'the init service has only CHOWN'

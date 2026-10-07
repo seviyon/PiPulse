@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { dbPathOf } from './config.js';
 import { parseArgs } from 'node:util';
 import { printCa, tlsOff, usage, type Context } from './cli-common.js';
 import { decideInitialMode, init } from './cmd-init.js';
@@ -62,7 +63,7 @@ export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promis
     return 0;
   }
   if (readState(ctx.layout) === undefined) {
-    const db = ctx.env['PIPULSE_DB_PATH']?.trim() || '/data/pipulse.sqlite';
+    const db = dbPathOf(ctx.env, '/data/pipulse.sqlite', '/data');
     const mode = decideInitialMode({
       previousInstall: false,
       dbExists: exists(db, true),

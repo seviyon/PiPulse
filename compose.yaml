@@ -1,6 +1,8 @@
 # PiPulse with HTTPS. A one-shot service prepares the volumes, the pipulse-tls
 # sidecar holds the CA key and renews the certificate, and the server only
 # ever reads the certificate. Settings go in ./pipulse.env (see packaging/pipulse.env).
+# As written it suits a Linux host: it mounts the host's /etc/hostname. On Docker Desktop or
+# Colima (no such file) remove those two mounts and set PIPULSE_HOSTNAME in pipulse.env.
 # First start: `docker compose logs pipulse-tls` shows the CA fingerprint to check
 # before you trust the CA (docker compose exec pipulse pipulse tls export-ca).
 x-timesync: &timesync
@@ -36,7 +38,7 @@ services:
     security_opt: ['no-new-privileges:true']
     read_only: true
     tmpfs: [/tmp]
-    network_mode: host # the host's hostname and default-route address
+    network_mode: host # the host's default-route address (the name comes from /host/etc/hostname)
     env_file:
       - path: ./pipulse.env
         required: false
@@ -44,6 +46,7 @@ services:
       - tls-ca:/tls-ca # the CA key: this service only
       - tls:/tls # certificate, state, metadata
       - pipulse-data:/data:ro # only to tell an upgrade (existing data) from a fresh install
+      - /etc/hostname:/host/etc/hostname:ro # the host's name, not the engine VM's
       - *timesync
     depends_on:
       pipulse-tls-init: { condition: service_completed_successfully }
@@ -58,7 +61,7 @@ services:
   pipulse:
     image: ghcr.io/seviyon/pipulse:latest
     restart: unless-stopped
-    network_mode: host # the host's network counters and hostname; set PIPULSE_PORT in pipulse.env
+    network_mode: host # the host's network counters; set PIPULSE_PORT in pipulse.env
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
     read_only: true
@@ -74,6 +77,7 @@ services:
       - *timesync
       - ./config:/etc/pipulse:ro # password hash, rules, notify file, CA certificate
       - /boot/firmware:/boot/firmware:ro # the /boot usage tile (use /boot on older Pi OS)
+      - /etc/hostname:/host/etc/hostname:ro # the host's name for the header, notifications and the certificate
       - /etc/os-release:/host/etc/os-release:ro # the host's OS name, not the image's
       - /proc/device-tree/model:/host/model:ro # the Pi model (Docker hides /sys/firmware)
     depends_on:

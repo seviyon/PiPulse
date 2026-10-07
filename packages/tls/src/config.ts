@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 export type Mode = 'https' | 'http';
 /** What decided the mode: PIPULSE_TLS, state.json, or the release default. */
@@ -179,4 +179,19 @@ export function readTlsConfig(
     timesyncDir: setting(env, 'PIPULSE_TLS_TIMESYNC_DIR') ?? DEFAULT_TIMESYNC_DIR,
     warnings
   };
+}
+
+/**
+ * The database path as the server sees it: a relative PIPULSE_DB_PATH is resolved from the
+ * service's working directory (the unit's WorkingDirectory=, /var/lib/pipulse), never from
+ * wherever `pipulse tls` or setup happens to run, so the tls-installed marker is found.
+ */
+export function dbPathOf(
+  env: NodeJS.ProcessEnv,
+  fallback = '/var/lib/pipulse/pipulse.sqlite',
+  base = '/var/lib/pipulse'
+): string {
+  const raw = env['PIPULSE_DB_PATH']?.trim();
+  if (!raw) return fallback;
+  return isAbsolute(raw) ? raw : resolve(base, raw);
 }

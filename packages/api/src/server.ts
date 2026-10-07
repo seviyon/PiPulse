@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server as HttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
-import { cpus, hostname } from 'node:os';
+import { cpus } from 'node:os';
 import {
   openDb,
   policyOf,
@@ -38,6 +38,7 @@ import {
   readTlsConfig,
   startReloader,
   statSignature,
+  hostName,
   validityOf,
   writeRuntimeStatus,
   type CertSource,
@@ -276,7 +277,7 @@ function readWebhooks(): WebhookConfig[] {
 // in order, retrying for up to 6 h; survives restarts through the outbox.
 const notifications = startNotifications(db, {
   webhooks: readWebhooks(),
-  hostname: hostname(),
+  hostname: hostName(),
   metrics: [
     ...builtinPlugins.map(({ id, label, unit }) => ({ id, label, unit })),
     // Certificate alerts have no plugin: the metric id is the one the alerts package stores.
@@ -348,7 +349,11 @@ let markerProblem: string | undefined;
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
-  device: await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {}),
+  // readDeviceInfo reads the process's own name; the host's (mounted) one wins, as for the certificate.
+  device: {
+    ...(await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {})),
+    hostname: hostName()
+  },
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({

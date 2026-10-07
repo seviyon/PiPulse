@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClockState } from './clock.js';
-import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from './config.js';
+import { RELEASE_DEFAULT, dbPathOf, readTlsConfig, type StateMode } from './config.js';
 import { pathExists } from './files.js';
 import { consequenceText, formatAddress, parseAddress } from './constraints.js';
 import { EXPIRING_SOON_MS, parseSans, validityOf, type Validity } from './inspect.js';
@@ -349,10 +349,7 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   if (report.active.state === 'running' && report.active.status.transport === 'https') {
     // The server writes tls-installed next to its database once it serves HTTPS; without it,
     // setup would take this install for an HTTP one if the TLS folder were ever lost.
-    const marker = join(
-      dirname(ctx.env['PIPULSE_DB_PATH']?.trim() || '/var/lib/pipulse/pipulse.sqlite'),
-      'tls-installed'
-    );
+    const marker = join(dirname(dbPathOf(ctx.env)), 'tls-installed');
     // `status` isn't root-only: a user who can read the runtime file may not be able to look
     // inside the data folder (700, owned by the service), and that must not fail the command.
     try {

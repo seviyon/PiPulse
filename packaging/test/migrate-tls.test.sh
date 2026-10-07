@@ -110,6 +110,19 @@ grep -q 'stays on plain HTTP' /tmp/x.log && ok 'and says so' || bad 'and says so
 rm -rf /etc/pipulse/tls
 if sh "$stub/packaging/setup.sh" --no-start --first-install > /tmp/y.log 2>&1; then bad 'a first install whose init died fails'; else ok 'a first install whose init died fails'; fi
 [ -z "$(state)" ] && ok 'and writes no state' || bad 'and writes no state'
+# ... but data already served over HTTPS (the marker) never falls back to HTTP: no state.json, a warning.
+rm -rf /etc/pipulse/tls
+mkdir -p /var/lib/pipulse && touch /var/lib/pipulse/tls-installed
+sh "$stub/packaging/setup.sh" --no-start > /tmp/z.log 2>&1 || { cat /tmp/z.log; bad 'a marked upgrade whose init died still completes'; }
+[ -z "$(state)" ] && ok 'a marked install whose init died writes no state (stays closed)' || bad "a marked install whose init died writes no state (got $(state))"
+grep -q 'will not start' /tmp/z.log && ok 'and says it will not start' || bad 'and says it will not start'
+# ... also when PIPULSE_DB_PATH is relative: the marker is the server's (WorkingDirectory), not the caller's.
+rm -rf /etc/pipulse/tls
+echo 'PIPULSE_DB_PATH=pipulse.sqlite' >> /etc/pipulse/pipulse.env
+(cd / && sh "$stub/packaging/setup.sh" --no-start > /tmp/w.log 2>&1) || { cat /tmp/w.log; bad 'a relative-path upgrade still completes'; }
+[ -z "$(state)" ] && ok 'a relative PIPULSE_DB_PATH still finds the marker (stays closed)' || bad "a relative PIPULSE_DB_PATH still finds the marker (got $(state))"
+sed -i '/^PIPULSE_DB_PATH=pipulse.sqlite$/d' /etc/pipulse/pipulse.env
+rm -f /var/lib/pipulse/tls-installed
 sh "$repo/packaging/install.sh" --purge >/dev/null
 
 # The installer's subnet helpers (Task 23).

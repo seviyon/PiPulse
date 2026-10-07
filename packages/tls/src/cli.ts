@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { hostname, networkInterfaces } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli-common.js';
@@ -9,6 +9,7 @@ import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
 import { disable, enable } from './cmd-mode.js';
 import { init } from './cmd-init.js';
+import { hostName } from './hostname.js';
 import { recordRenewLockFailure, renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
 import { DEFAULT_TIMESYNC_DIR, DEFAULT_TLS_DIR } from './config.js';
@@ -123,7 +124,7 @@ export function defaultContext(): Context {
     },
     openssl: OPENSSL,
     now: Date.now,
-    hostname,
+    hostname: () => hostName(env),
     addresses: () => defaultRouteAddresses(routes(), networkInterfaces()),
     candidate: () => candidateSubnet(routes(), networkInterfaces()),
     interfaces: networkInterfaces,

@@ -26,6 +26,15 @@ env_value() {
   sed -n "s/^$1=//p" "${2:-/etc/pipulse/pipulse.env}" 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
+# served_marker — where the server leaves tls-installed: next to its database. A relative
+# PIPULSE_DB_PATH is the server's, resolved from the unit's WorkingDirectory (/var/lib/pipulse).
+served_marker() {
+  db=$(env_value PIPULSE_DB_PATH)
+  db=${db:-/var/lib/pipulse/pipulse.sqlite}
+  case $db in /*) ;; *) db=/var/lib/pipulse/$db ;; esac
+  printf '%s/tls-installed\n' "$(dirname "$db")"
+}
+
 # node_version ARCH — the pinned Node version for that CPU.
 node_version() {
   sed -n "s/.*\"$1\": *\"\([0-9.]*\)\".*/\1/p" "${PIPULSE_NODE_VERSIONS:-$(dirname "$0")/node-versions.json}"

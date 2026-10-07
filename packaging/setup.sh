@@ -76,7 +76,13 @@ fi
 # back to the previous behaviour, plain HTTP, which `sudo pipulse tls enable` can still undo.
 tls_dir=$(env_value PIPULSE_TLS_DIR)
 tls_dir=${tls_dir:-/etc/pipulse/tls}
-if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ]; then
+served=$(served_marker)
+if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ] && [ -e "$served" ] && [ "$(env_value PIPULSE_TLS)" != off ]; then
+  # This data was served over HTTPS and its TLS material is gone and could not be remade
+  # (no openssl, a full disk): stay closed. The server refuses to start rather than fall
+  # back to plain HTTP behind the operator's back.
+  warn "this install served HTTPS but its certificate could not be recreated (see above): PiPulse will not start until you run: sudo pipulse tls init --mode auto (or serve plain HTTP: sudo pipulse tls disable --allow-insecure)"
+elif [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ]; then
   warn "HTTPS could not be prepared (see above): PiPulse stays on plain HTTP until you run: sudo pipulse tls init"
   install -d -o root -g pipulse -m 2750 "$tls_dir" 2>/dev/null || true
   if printf '{"version":1,"mode":"legacy-http"}\n' > "$tls_dir/state.json" 2>/dev/null; then
@@ -118,8 +124,7 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
         if [ "$health" -eq 2 ]; then
           warn "PiPulse is running, but its HTTPS certificate failed verification${HEALTH_MSG:+ ($HEALTH_MSG)}; see Settings → Certificate and journalctl -u pipulse"
         fi
-        db=$(env_value PIPULSE_DB_PATH)
-        marker="$(dirname "${db:-/var/lib/pipulse/pipulse.sqlite}")/tls-installed"
+        marker=$(served_marker)
         i=0
         while [ ! -e "$marker" ] && [ "$i" -lt 5 ]; do i=$((i + 1)); sleep 1; done
         if grep -q '"https"' /etc/pipulse/tls/state.json 2>/dev/null && [ "$(env_value PIPULSE_TLS)" != off ] && [ ! -e "$marker" ]; then

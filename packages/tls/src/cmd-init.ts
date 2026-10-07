@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { StateMode } from './config.js';
+import { dbPathOf, type StateMode } from './config.js';
 import { opensslVersion } from './issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import { buildConstraints, checkSubnet, consequenceText, subnetWarning } from './constraints.js';
@@ -84,7 +84,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
   }
   // Mode already chosen (by an earlier install or by the operator): only fill in material.
   if (readState(ctx.layout) !== undefined) return material(ctx, values);
-  const db = ctx.env['PIPULSE_DB_PATH']?.trim() || '/var/lib/pipulse/pipulse.sqlite';
+  const db = dbPathOf(ctx.env);
   const exists = (path: string, whenUnsure: boolean) => {
     try {
       statSync(path);
