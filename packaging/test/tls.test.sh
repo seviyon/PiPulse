@@ -16,7 +16,9 @@ as_pipulse() { setpriv --reuid=pipulse --regid=pipulse --init-groups "$@"; }
 tls=/etc/pipulse/tls
 
 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.1.tar.gz" --no-start >/dev/null
-[ ! -e "$tls" ] && ok 'installing makes no CA and no state.json' || bad 'installing makes no CA and no state.json'
+# A fresh install now makes the CA and selects HTTPS (6b-2c); the rest of this test starts from none.
+grep -q '"https"' "$tls/state.json" && [ -e "$tls/ca/ca.key" ] && ok 'a fresh install makes the CA and selects https' || bad 'a fresh install makes the CA and selects https'
+rm -rf "$tls"
 # No timesyncd in a container: trust the clock, as a chrony host would.
 printf 'PIPULSE_TLS_CLOCK=trust\nPIPULSE_PORT=18889\n' >> /etc/pipulse/pipulse.env
 

@@ -13,3 +13,4 @@ coverage/
 *.swp
 .playwright-mcp/
 /out/
+.compose-test.*

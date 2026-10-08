@@ -6,6 +6,10 @@ sh "$repo/packaging/install.sh" --purge >/dev/null 2>&1 || true
 out=$(mktemp -d)
 "$repo/packaging/build-tarball.sh" 0.0.1 "$out" >/dev/null
 "$repo/packaging/build-tarball.sh" 0.0.2 "$out" >/dev/null
+# 0.0.1 stands for a release from before the renewal timer: it ships no timer unit.
+work1=$(mktemp -d); tar -xzf "$out/pipulse-0.0.1.tar.gz" -C "$work1"
+rm -f "$work1"/pipulse-0.0.1/packaging/pipulse-tls-renew.*
+tar -czf "$out/pipulse-0.0.1.tar.gz" -C "$work1" pipulse-0.0.1
 # Break 0.0.2: it starts, but /api/health answers 503.
 work=$(mktemp -d); tar -xzf "$out/pipulse-0.0.2.tar.gz" -C "$work"
 # Like a real upgrade, it migrates the database first — which the old version then refuses.
@@ -27,17 +31,20 @@ SH
 cat > /usr/local/bin/fake-restart <<'SH'
 #!/bin/sh
 fake-stop
-PIPULSE_PORT=18889 PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist \
+PIPULSE_TLS=off PIPULSE_PORT=18889 PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist \
   nohup /opt/pipulse/node/bin/node --disable-warning=ExperimentalWarning /opt/pipulse/app/packages/api/dist/server.js >/tmp/rb.log 2>&1 &
 SH
 chmod +x /usr/local/bin/fake-restart /usr/local/bin/fake-stop
 # The health check reads the port from pipulse.env, quoted as systemd allows.
-mkdir -p /etc/pipulse && printf 'PIPULSE_PORT="18889"\n' > /etc/pipulse/pipulse.env
+mkdir -p /etc/pipulse && printf 'PIPULSE_PORT="18889"\nPIPULSE_TLS=off\n' > /etc/pipulse/pipulse.env
 export PIPULSE_RESTART_CMD=fake-restart PIPULSE_STOP_CMD=fake-stop PIPULSE_HEALTH_WAIT=20 PIPULSE_FORCE_RESTART=1
 fail=0
 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.1.tar.gz" && echo 'ok - good version installs' || { echo 'not ok - good version installs'; fail=1; }
+# What the failed new version's setup would have left: its timer units and the "enabled once" marker.
+mkdir -p /etc/systemd/system && : > /etc/systemd/system/pipulse-tls-renew.timer && : > /etc/systemd/system/pipulse-tls-renew.service && : > /etc/pipulse/.renew-timer-enabled
 if sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.2.tar.gz"; then echo 'not ok - broken version reported success'; fail=1; else echo 'ok - broken version refused'; fi
 grep -q '"0.0.1"' /opt/pipulse/app/version.json && echo 'ok - rolled back to 0.0.1' || { echo 'not ok - rolled back to 0.0.1'; fail=1; }
+[ ! -e /etc/systemd/system/pipulse-tls-renew.timer ] && [ ! -e /etc/systemd/system/pipulse-tls-renew.service ] && [ ! -e /etc/pipulse/.renew-timer-enabled ] && echo 'ok - a rollback to a version without the timer removes its units and marker' || { echo 'not ok - a rollback to a version without the timer removes its units and marker'; fail=1; }
 up=no; for _ in $(seq 1 20); do curl -fs http://127.0.0.1:18889/api/health >/dev/null 2>&1 && { up=yes; break; }; sleep 1; done
 [ "$up" = yes ] && echo 'ok - 0.0.1 running again' || { echo 'not ok - 0.0.1 running again'; fail=1; }
 # A version that accepts connections but never answers must not hang the installer.

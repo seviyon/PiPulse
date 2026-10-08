@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { hostname, networkInterfaces } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli-common.js';
@@ -9,6 +9,7 @@ import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
 import { disable, enable } from './cmd-mode.js';
 import { init } from './cmd-init.js';
+import { hostName } from './hostname.js';
 import { recordRenewLockFailure, renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
 import { DEFAULT_TIMESYNC_DIR, DEFAULT_TLS_DIR } from './config.js';
@@ -17,10 +18,11 @@ import { settingsEnv } from './envfile.js';
 import { OPENSSL } from './issue.js';
 import { LOCK_WAIT_MS, LockError, withLock } from './lock.js';
 import { layoutFrom, type Layout } from './layout.js';
+import { sidecar, sidecarHealth, sidecarInit } from './sidecar.js';
 
 export const USAGE = `usage: pipulse tls <command>
   status [--json]              what is configured, what the server serves, the last renewal
-  init [--subnet CIDR]... [--yes]
+  init [--subnet CIDR]... [--yes] [--mode auto [--first-install] [--quiet]]
                                make the CA and certificate if they are missing (never replaces a CA)
   renew [--force]              renew the certificate when it is due (the hourly timer runs this)
   new-ca [--subnet CIDR]... [--name NAME]... [--prune-oldest ca.old-…] [--yes]
@@ -78,7 +80,12 @@ async function dispatch(
       return await enable(ctx, args);
     case 'disable':
       return await disable(ctx, args);
-    // Task 24 adds: sidecar-init, sidecar, sidecar-health.
+    case 'sidecar-init':
+      return sidecarInit(ctx);
+    case 'sidecar':
+      return await sidecar(ctx, args);
+    case 'sidecar-health':
+      return sidecarHealth(ctx);
     default:
       throw new UsageError(
         command === undefined ? 'no command given' : `unknown command: ${command}`
@@ -117,7 +124,7 @@ export function defaultContext(): Context {
     },
     openssl: OPENSSL,
     now: Date.now,
-    hostname,
+    hostname: () => hostName(env),
     addresses: () => defaultRouteAddresses(routes(), networkInterfaces()),
     candidate: () => candidateSubnet(routes(), networkInterfaces()),
     interfaces: networkInterfaces,

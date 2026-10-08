@@ -240,10 +240,14 @@ export function ensureDir(
   }
   const stat = lstatSync(path);
   if (!stat.isDirectory()) throw new TlsFileError(`${path} is not a directory`);
+  // Mode first, then owner, and no chmod when the mode already matches: a process without
+  // CAP_FSETID that isn't in the directory's group (the Docker init and sidecar hold only
+  // CHOWN or nothing) has the kernel drop setgid from every chmod. Applied while the group is
+  // still root's it keeps it, and chown never clears setgid on a directory.
+  if ((stat.mode & 0o7777) !== options.mode) chmodSync(path, options.mode);
   if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
     chownSync(path, options.owner.uid, options.owner.gid);
   }
-  chmodSync(path, options.mode);
 }
 
 /**

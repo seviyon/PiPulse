@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cmd-renew.js';
 import { CLOCK_FLOOR_MS } from '../src/clock.js';
-import { paths, readMeta, readRenewStatus, writeState } from '../src/layout.js';
+import { decideInitialMode } from '../src/cmd-init.js';
+import { paths, readMeta, readRenewStatus, readState, writeState } from '../src/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -83,6 +84,23 @@ describe('init', () => {
     expect(await main(['init', '--subnet', '10.0.0.0/8', '--yes'], ctx)).toBe(1);
     expect(ctx.errors.join('\n')).toContain('broader than /16');
     expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('a host name that cannot be in a certificate says where it comes from and how to change it', async () => {
+    ctx.hostname = () => 'my_pi';
+    expect(await main(['init', '--yes'], ctx)).toBe(1);
+    const errors = ctx.errors.join('\n');
+    expect(errors).toContain('"my_pi" is not a valid host name');
+    expect(errors).toContain('PIPULSE_HOSTNAME');
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
+  it('auto mode: an unreadable marker is not a reason to fall back to HTTP', async () => {
+    // A path below a regular file fails with ENOTDIR, not ENOENT.
+    writeFileSync(join(dir, 'notadir'), '');
+    ctx.env['PIPULSE_DB_PATH'] = join(dir, 'notadir', 'pipulse.sqlite');
+    expect(await main(['init', '--mode', 'auto', '--yes'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
   });
 
   it('does nothing when an operator certificate is configured', async () => {
@@ -370,5 +388,95 @@ describe('renewDue', () => {
         wanted: wanted(['2001:db8::1'])
       })
     ).toContain('2001:db8::1');
+  });
+});
+
+describe('decideInitialMode', () => {
+  it.each([
+    [{ previousInstall: false, dbExists: false, markerExists: false }, 'https'],
+    [{ previousInstall: true, dbExists: false, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: true, dbExists: true, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: false, dbExists: true, markerExists: false }, 'legacy-http'],
+    [{ previousInstall: false, dbExists: true, markerExists: true }, 'https'],
+    [{ previousInstall: true, dbExists: true, markerExists: true }, 'https']
+  ])('%j → %s', (input, expected) => {
+    expect(decideInitialMode(input)).toBe(expected);
+  });
+});
+
+describe('init --mode auto', () => {
+  const withDb = (context: TestContext, marker = false) => {
+    mkdirSync(join(dir, 'data'), { recursive: true });
+    writeFileSync(join(dir, 'data', 'pipulse.sqlite'), '');
+    if (marker) writeFileSync(join(dir, 'data', 'tls-installed'), '');
+    context.env['PIPULSE_DB_PATH'] = join(dir, 'data', 'pipulse.sqlite');
+    return context;
+  };
+
+  it('fresh install: makes the CA, then selects https', async () => {
+    expect(await main(['init', '--mode', 'auto', '--first-install'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
+  it('upgrade: prepares a names-only CA and stays on HTTP, honouring a subnet setting', async () => {
+    ctx.env['PIPULSE_TLS_SUBNETS'] = '192.168.1.0/24';
+    expect(await main(['init', '--mode', 'auto', '--yes'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
+    expect(ctx.lines.join('\n')).toContain('sudo pipulse tls enable');
+  });
+
+  it('an upgrade with an operator certificate does not say HTTPS is "not switched on"', async () => {
+    ctx.env['PIPULSE_TLS_CERT'] = '/etc/pipulse/cert.pem';
+    ctx.env['PIPULSE_TLS_KEY'] = '/etc/pipulse/key.pem';
+    expect(await main(['init', '--mode', 'auto', '--yes'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(ctx.lines.join('\n')).not.toContain('not switched on');
+  });
+
+  it('never touches an existing state.json', async () => {
+    await main(['init', '--mode', 'auto', '--first-install'], ctx);
+    const again = testContext(dir);
+    expect(await main(['init', '--mode', 'auto'], withDb(again))).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
+  it('PIPULSE_TLS=off makes no CA: a first run records legacy-http, an existing state stays', async () => {
+    ctx.env['PIPULSE_TLS'] = 'off';
+    expect(await main(['init', '--mode', 'auto', '--first-install'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(existsSync(join(dir, 'ca'))).toBe(false);
+    expect(existsSync(join(dir, 'ca-meta.json'))).toBe(false);
+    expect(ctx.lines.join('\n')).not.toContain('SHA-256');
+    writeState(ctx.layout, 'https');
+    expect(await main(['init', '--mode', 'auto'], withDb(ctx))).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+    expect(existsSync(join(dir, 'ca'))).toBe(false);
+  });
+
+  it('a lost TLS folder on data that served HTTPS goes back to https, with a warning', async () => {
+    const run = withDb(testContext(dir), true);
+    expect(await main(['init', '--mode', 'auto'], run)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+    expect(run.errors.join('\n')).toContain('every device must trust the new CA');
+  });
+
+  it('an upgrade whose material fails still selects legacy-http; a fresh install fails with no state', async () => {
+    const broken = withDb(testContext(dir, { openssl: join(dir, 'no-openssl') }));
+    expect(await main(['init', '--mode', 'auto'], broken)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(broken.errors.join('\n')).toContain('HTTPS is not prepared');
+    rmSync(join(dir, 'state.json'));
+    rmSync(join(dir, 'data'), { recursive: true });
+    const fresh = testContext(dir, { openssl: join(dir, 'no-openssl') });
+    expect(await main(['init', '--mode', 'auto', '--first-install'], fresh)).toBe(1);
+    expect(readState(ctx.layout)).toBeUndefined();
+  });
+
+  it('--quiet leaves out the CA fingerprint block; a bad --mode is a usage error', async () => {
+    const quiet = testContext(dir);
+    await main(['init', '--mode', 'auto', '--first-install', '--quiet'], quiet);
+    expect(quiet.lines.join('\n')).not.toContain('SHA-256');
+    expect(await main(['init', '--mode', 'manual'], testContext(dir))).not.toBe(0);
   });
 });

@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server as HttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
-import { cpus, hostname } from 'node:os';
+import { cpus } from 'node:os';
 import {
   openDb,
   policyOf,
@@ -37,6 +38,7 @@ import {
   readTlsConfig,
   startReloader,
   statSignature,
+  hostName,
   validityOf,
   writeRuntimeStatus,
   type CertSource,
@@ -47,7 +49,7 @@ import {
 import { readAuthConfig, type AuthConfig } from './auth.js';
 import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
-import { readGeneratedExtras, tlsView } from './tls-status.js';
+import { readGeneratedExtras, tlsView, writeTlsMarker } from './tls-status.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
@@ -275,7 +277,7 @@ function readWebhooks(): WebhookConfig[] {
 // in order, retrying for up to 6 h; survives restarts through the outbox.
 const notifications = startNotifications(db, {
   webhooks: readWebhooks(),
-  hostname: hostname(),
+  hostname: hostName(),
   metrics: [
     ...builtinPlugins.map(({ id, label, unit }) => ({ id, label, unit })),
     // Certificate alerts have no plugin: the metric id is the one the alerts package stores.
@@ -342,10 +344,16 @@ function publishRuntime(): void {
     runtimeWarned = true;
   }
 }
+// Set once the server listens over HTTPS and the data folder's marker could not be written.
+let markerProblem: string | undefined;
 const engine: { alerts?: { check(): void; stop(): void } } = {};
 const app = buildServer(db, {
   live,
-  device: await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {}),
+  // readDeviceInfo reads the process's own name; the host's (mounted) one wins, as for the certificate.
+  device: {
+    ...(await readDeviceInfo(HOST_ROOT ? { hostRoot: HOST_ROOT } : {})),
+    hostname: hostName()
+  },
   allowedOrigins: ALLOWED_ORIGINS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
@@ -366,6 +374,7 @@ const app = buildServer(db, {
   tls: () =>
     tlsView(TLS, tls.provider, Date.now(), {
       ...(TLS.source?.kind === 'generated' ? { extras: readGeneratedExtras(TLS.dir) } : {}),
+      ...(markerProblem ? { markerProblem } : {}),
       inContainer: IN_CONTAINER
     }),
   version: VERSION,
@@ -446,6 +455,16 @@ app
   .listen({ port: PORT, host: HOST })
   .then(() => {
     publishRuntime();
+    if (CERT) {
+      // Keeps a lost TLS folder from turning an HTTPS install into an HTTP "upgrade" later, so a
+      // failed write is loud, in health and in Settings, never swallowed.
+      markerProblem = writeTlsMarker(dirname(DB_PATH));
+      if (markerProblem) {
+        console.error(
+          `[pipulse] ERROR: ${markerProblem}: if the TLS folder is ever lost, setup would take this install for an HTTP one. Check the data folder's owner and permissions.`
+        );
+      }
+    }
     const { port } = app.server.address() as AddressInfo;
     const where = CERT
       ? `https://${HOST}:${port} (certificate: ${CERT.source}, valid until ${new Date(CERT.notAfter).toISOString().slice(0, 10)}, SHA-256 ${CERT.fingerprint})`
@@ -461,6 +480,13 @@ app
         (PASSWORD_HASH ? '' : ' (read-only: PIPULSE_ADMIN_PASSWORD_HASH_FILE not set)') +
         (PROTECT_READS ? ' (reads need sign-in)' : '')
     );
+    if (!CERT && TLS.stateMode === 'legacy-http' && TLS.modeReason === 'state') {
+      console.log(
+        IN_CONTAINER
+          ? '[pipulse] HTTPS is ready: docker compose run --rm pipulse-tls pipulse tls enable --yes, then docker compose restart pipulse'
+          : '[pipulse] HTTPS is ready: sudo pipulse tls enable'
+      );
+    }
     if (!CERT && PASSWORD_HASH) {
       console.warn(
         '[pipulse] warning: sign-in is on but HTTPS is off; the password and the session cookie cross the network unencrypted'

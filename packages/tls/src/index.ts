@@ -26,3 +26,4 @@ export * from './cli-common.js';
 export { collectStatus, formatStatus, type StatusReport } from './cmd-status.js';
 export * from './clock-gate.js';
 export { renewDue, RENEW_BEFORE_MS } from './cmd-renew.js';
+export { hostName } from './hostname.js';

@@ -1,10 +1,13 @@
+import { statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { dbPathOf, type StateMode } from './config.js';
 import { opensslVersion } from './issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import { buildConstraints, checkSubnet, consequenceText, subnetWarning } from './constraints.js';
 import { removeTree } from './files.js';
 import { runTransaction } from './journal.js';
-import { listBackups, paths, pub } from './layout.js';
+import { listBackups, paths, pub, readState, writeState } from './layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -25,20 +28,123 @@ import {
   ensureTlsDirs,
   nativeLayoutProblem,
   operatorConfigured,
+  tlsOff,
   printCa,
   reportOutside,
   usage,
+  UsageError,
   type Context
 } from './cli-common.js';
+
+/**
+ * The mode for an install without state.json: an upgrade (a previous install, or data from
+ * one) stays on HTTP until the operator enables HTTPS — unless that data was already served
+ * over HTTPS (the marker the server writes), so a lost TLS folder never silently falls back
+ * to HTTP.
+ */
+export function decideInitialMode(input: {
+  previousInstall: boolean;
+  dbExists: boolean;
+  markerExists: boolean;
+}): StateMode {
+  return (input.previousInstall || input.dbExists) && !input.markerExists ? 'legacy-http' : 'https';
+}
+
+type InitValues = {
+  subnet?: string[] | undefined;
+  yes?: boolean | undefined;
+  quiet?: boolean | undefined;
+};
 
 export async function init(ctx: Context, args: string[]): Promise<number> {
   const { values } = usage(() =>
     parseArgs({
       args,
-      options: { subnet: { type: 'string', multiple: true }, yes: { type: 'boolean' } },
+      options: {
+        subnet: { type: 'string', multiple: true },
+        yes: { type: 'boolean' },
+        mode: { type: 'string' },
+        'first-install': { type: 'boolean' },
+        quiet: { type: 'boolean' }
+      },
       strict: true
     })
   );
+  if (values.mode === undefined) return material(ctx, values);
+  if (values.mode !== 'auto') throw new UsageError(`--mode must be auto, not ${values.mode}`);
+  // PIPULSE_TLS=off overrides everything: an install or upgrade makes no CA and, on a first
+  // run, records legacy-http (so removing the setting later never flips the transport by itself).
+  if (tlsOff(ctx.env)) {
+    ctx.out('PIPULSE_TLS=off: plain HTTP; no CA made');
+    if (readState(ctx.layout) === undefined) {
+      ensureTlsDirs(ctx.layout, ctx.hook);
+      writeState(ctx.layout, 'legacy-http', ctx.hook);
+    }
+    return 0;
+  }
+  // Mode already chosen (by an earlier install or by the operator): only fill in material.
+  if (readState(ctx.layout) !== undefined) return material(ctx, values);
+  const db = dbPathOf(ctx.env);
+  const exists = (path: string, whenUnsure: boolean) => {
+    try {
+      statSync(path);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : whenUnsure;
+    }
+  };
+  // Only ENOENT means "never served over HTTPS". Any other error (a permission or I/O problem)
+  // is unsure, and unsure counts as served: an install that may have served HTTPS must stay
+  // closed rather than silently fall back to plain HTTP.
+  const markerExists = exists(join(dirname(db), 'tls-installed'), true);
+  const mode = decideInitialMode({
+    previousInstall: !values['first-install'],
+    dbExists: exists(db, true),
+    markerExists
+  });
+  const hadCa = checkCa(paths(ctx.layout).caDir).kind === 'ok';
+  let code: number;
+  try {
+    code = await material(ctx, values);
+  } catch (error) {
+    // e.g. openssl missing: an upgrade must still land on legacy-http.
+    ctx.err(`pipulse tls: ${(error as Error).message}`);
+    code = 1;
+  }
+  if (mode === 'https') {
+    // No state.json on failure: the server refuses rather than serve something half-made.
+    if (code !== 0) return code;
+    if (markerExists && !hadCa) {
+      ctx.err(
+        `warning: this data was served over HTTPS before but its TLS folder is gone: a new CA was made, so every device must trust the new CA (${
+          ctx.inContainer
+            ? 'docker compose exec pipulse pipulse tls export-ca'
+            : 'sudo pipulse tls export-ca'
+        })`
+      );
+    }
+    writeState(ctx.layout, 'https', ctx.hook);
+    return 0;
+  }
+  if (code !== 0) {
+    ctx.err(
+      'warning: HTTPS is not prepared (see above); PiPulse stays on plain HTTP. Try again later with: sudo pipulse tls init'
+    );
+  }
+  writeState(ctx.layout, 'legacy-http', ctx.hook);
+  // With an operator certificate configured the environment decides the transport, so
+  // "not switched on" would be wrong (a 6b-1 install with PIPULSE_TLS=on keeps serving HTTPS).
+  if (code === 0 && !operatorConfigured(ctx.env)) {
+    ctx.out(
+      ctx.inContainer
+        ? 'HTTPS is ready but not switched on (this is an upgrade): docker compose run --rm pipulse-tls pipulse tls enable --yes'
+        : 'HTTPS is ready but not switched on (this is an upgrade): sudo pipulse tls enable'
+    );
+  }
+  return 0;
+}
+
+async function material(ctx: Context, values: InitValues): Promise<number> {
   const layout = ctx.layout;
   if (operatorConfigured(ctx.env)) {
     ctx.out(
@@ -71,7 +177,13 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
           subnets
         });
       } catch (error) {
-        ctx.err(`not creating a CA: ${(error as Error).message}`);
+        const message = (error as Error).message;
+        ctx.err(`not creating a CA: ${message}`);
+        if (message.includes('is not a valid host name')) {
+          ctx.err(
+            'the host name comes from PIPULSE_HOSTNAME, else from the system (letters, digits and hyphens only); set PIPULSE_HOSTNAME in pipulse.env to a valid name, and fix PIPULSE_TLS_NAMES if it lists the bad one'
+          );
+        }
         return 1;
       }
       const { constraints, warnings } = built;
@@ -106,7 +218,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
         }
       });
       reportOutside(ctx, outside);
-      printCa(ctx);
+      if (!values.quiet) printCa(ctx);
       return 0;
     }
 

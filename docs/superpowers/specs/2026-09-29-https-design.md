@@ -45,6 +45,8 @@ Out of scope:
 
 ## Mode resolution
 
+> **Correction (6b-2):** under `refuse` (the release default from 0.7.0), a configured `PIPULSE_TLS_CERT` + `PIPULSE_TLS_KEY` pair means HTTPS, and `state.json` still wins over it. The fix line is `REFUSE_LINE`, which also names `sudo pipulse tls init`. `PIPULSE_TLS=off` overrides everything, including `init --mode auto` and the Docker sidecar: they make no CA and record `legacy-http` on a first run.
+
 The mode is `https` or `http`, resolved once at startup:
 
 1. `PIPULSE_TLS=on|off` in the environment (process environment, `Environment=`, `pipulse.env` — anything the operator controls). Any other value refuses startup.
@@ -155,6 +157,8 @@ Generated leaves are verified against the generated CA before activation. For op
 
 ### Clock
 
+> **Correction (6b-2):** `init`, `new-ca`, `restore-ca` and the sidecar's first start accept an `unknown` clock once it is past `CLOCK_FLOOR_MS`, with a warning; `renew` stays strict (only a `synced` clock issues, otherwise it records `waiting-clock`). Without this a chrony host or a container without the timesync mount could never make its first CA.
+
 - `synced`: `/run/systemd/timesync/synchronized` exists (Pi OS uses systemd-timesyncd; Docker mounts the host's directory read-only at `/host-timesync`) **and** `now` is not before `CLOCK_FLOOR_MS` (2026-09-01) in `packages/tls/src/clock.ts` **and**, when a leaf exists, not before its `notBefore`.
 - `unsynced`: the file is absent but timesyncd is present, or `now` fails the floor.
 - `unknown`: no timesyncd at all (chrony, ntpd, or a container without the mount). **Treated as not synced everywhere** — renewal waits, certificate alerts stay undecided.
@@ -183,6 +187,8 @@ Generated leaves are verified against the generated CA before activation. For op
 - HTTP mode keeps the existing `curl` check.
 
 ## Server changes (`packages/api`)
+
+> **Correction (6b-2):** plain HTTP on the HTTPS port is no longer out of scope: the server answers it with a fixed 400 hint page (sent on `tlsClientError`/`ERR_SSL_HTTP_REQUEST` without reading the request; decision D1, yes). `/api/health`'s `renewal` is `ok | waiting-clock | failing | unknown` (`unknown` = none recorded yet, not degraded; omitted for operator certificates; `failing` adds the reason `renewal-failing`).
 
 Startup order in `server.ts` — TLS is checked before anything else starts, so a refusal is immediate and clean:
 
@@ -235,6 +241,8 @@ Off by default. RFC 6797 ignores the port: HSTS from `https://io:8889` forces ev
 
 ### `/api/config`
 
+> **Correction (6b-2):** `ca-meta.json` is shown only when its fingerprint equals the served certificate's CA (`ca.state`: `ok | transitional | unavailable`); `/api/health`'s `certificate` gains `metadata: ok | transitional | unreadable`. `unreadable` (any read error except a missing `renew-status.json`, or any parse failure) adds the reason `generated-metadata-unreadable` (degraded). File names and messages appear only in `/api/config` (`metadataProblems`).
+
 Gains `tls` (subject to read protection): mode, source, leaf SANs, leaf and CA SHA-256, `notBefore`/`notAfter`, class and reasons, certificate age, reload state and last error, renewal status, clock state; in 6b-2 also CA constraints, CA backups and the coverage lines.
 
 ### Settings page — Certificate section
@@ -248,6 +256,8 @@ Gains `tls` (subject to read protection): mode, source, leaf SANs, leaf and CA S
   - How to change scope: `sudo pipulse tls new-ca --subnet <cidr>`
 
 ## Certificate expiry alerts (6b-2)
+
+> **Correction (6b-2):** the alerts use the pseudo-metric `certificate` in `alerts.metric` (no migration). `ruleHash` appends certificate fields only when present, so no existing alert closes as `rule_changed` on upgrade.
 
 `packages/alerts` gains a second input family, evaluated outside the metric-window code:
 
@@ -288,6 +298,8 @@ interface AlertContext {
 
 ### Layout (native)
 
+> **Correction (6b-2):** generated material lives only in `/etc/pipulse/tls`, the one folder the renewal unit's sandbox can write. `pipulse tls` refuses a non-default `PIPULSE_TLS_DIR` and any `PIPULSE_TLS_CA_DIR` on a native install; containers set their own folders (operator certificates are unaffected). Journal stages are split per filesystem (`<caRoot>/ca.next-*`, `<tlsDir>/.next-*`) because a rename can't cross Docker's two volumes; `PIPULSE_TLS_CA_DIR` (Docker `/tls-ca`, native = `PIPULSE_TLS_DIR`) is in the settings table.
+
 | Path                  | Owner          | Mode            | Content                                              |
 | --------------------- | -------------- | --------------- | ---------------------------------------------------- |
 | `/etc/pipulse/tls/`   | `root:pipulse` | `2750` (setgid) |                                                      |
@@ -310,9 +322,9 @@ Critical `nameConstraints` on the CA, fixed for its lifetime:
 - **Always permitted DNS:** `<hostname>`, `<hostname>.local`, `localhost`, plus `PIPULSE_TLS_NAMES` (read at CA creation).
 - **Always permitted IP:** `127.0.0.1/32`, `::1/128`.
 - **Subnets:** only by explicit operator choice — the interactive prompt, `--subnet`, or `PIPULSE_TLS_SUBNETS` (Docker: the only way). At most what the operator accepted.
-- **Names-only default:** every other IPv4 and IPv6 address is excluded (`excludedSubtrees` `0.0.0.0/0` and `::/0` after the permits; RFC 5280 applies constraints per name type, so leaving IPs out would leave them unconstrained).
+- **Names-only default:** the permitted IP list holds only `127.0.0.1/32` and `::1/128`, so IP SANs are confined to them. There are **no IP exclusions**: an excluded subtree beats every permit, so `0.0.0.0/0` and `::/0` would reject those two addresses and every accepted subnet (see the correction below).
 
-  > **Correction (found while planning 6b-2):** do not add the `0.0.0.0/0` and `::/0` exclusions. An excluded subtree beats every permit, so they reject `127.0.0.1` and every accepted subnet (verified with OpenSSL 1.1.1w and 3.6.4). The permitted list always holds `127.0.0.1/32` and `::1/128`, so IP SANs are already confined to it; there are no IP exclusions. Likewise `permitted;DNS:io` permits all of `*.io` (RFC 5280 suffix matching); whether to exclude names below a single-label host is decision D2, off until a browser check is recorded. The 6b-2 plan's "Spec corrections needed" section (21 items) lists every departure from this spec and is applied here in full by its Task 26; until then the plan wins where they differ.
+  > **Correction (found while planning 6b-2):** do not add the `0.0.0.0/0` and `::/0` exclusions. An excluded subtree beats every permit, so they reject `127.0.0.1` and every accepted subnet (verified with OpenSSL 1.1.1w and 3.6.4). The permitted list always holds `127.0.0.1/32` and `::1/128`, so IP SANs are already confined to it; there are no IP exclusions. Likewise `permitted;DNS:io` permits all of `*.io` (RFC 5280 suffix matching); names below a single-label host are therefore excluded (decision D2, on since 2026-10-04, after Safari, Chrome and Firefox were checked to load `https://io` and refuse `https://x.io`). The 6b-2 plan's "Spec corrections needed" section (21 items) lists every departure from this spec; each is applied as a short correction in the section it belongs to.
 
 - **Rejected subnets:** broader than `/16` (IPv4) or `/48` (IPv6), `/0`, unspecified, multicast, broadcast, loopback beyond the fixed entries, link-local, IPv4-mapped or unusual IPv6 forms (checked after canonicalising). Container bridges (`docker*`, `br-*`, `veth*`), VPNs (`tun*`, `wg*`) are skipped by detection; an explicit override naming one is accepted with a warning.
 - **Candidate detection:** the interface holding the default route (`/proc/net/route`, `/proc/net/ipv6_route`); its IPv4 network (normally `/24`).
@@ -326,6 +338,8 @@ Critical `nameConstraints` on the CA, fixed for its lifetime:
 - Constraints never change. Widening means `new-ca`: old vs new constraints shown, confirmation, a new CA and leaf, and a notice that every client must trust the new CA.
 
 ### Issuance
+
+> **Correction (6b-2):** serials are random 128-bit values, and the CA subject carries a random install id (`PiPulse CA <host> <6 hex>`), so Firefox never sees two certificates with the same issuer and serial and two Pis with the same host name don't collide.
 
 - Names become canonical LDH labels (IDNs as punycode) and IPs are parsed and re-serialised; only those canonical values reach the generated `openssl` config. Tests cover hostile names (spaces, commas, `=`, newlines, `$`, very long labels).
 - `openssl` runs via `execFile` with a fixed argv and a 30 s timeout; never through a shell.
@@ -365,6 +379,8 @@ Everything except `status` needs root. Anything that changes trust or mode asks 
 
 ### CA transactions (journal)
 
+> **Correction (6b-2):** one `pipulse tls` command runs at a time: an interprocess lock (`<caRoot>/.pipulse-tls.lock`, with a token, boot id, PID namespace and a heartbeat) is taken before journal recovery by every command that changes material or mode, the timer's `renew` and the sidecar included. A holder whose pid and start time verify is never broken, whatever its age (the wall clock jumps on a Pi when NTP syncs); only a holder whose identity can't be verified is judged by age, and one in another PID namespace (Docker) only after its heartbeat stays unchanged for 45 s on the waiter's monotonic clock. A `new-ca` left at its prompt therefore holds the lock and the hourly renew fails until it is answered.
+
 `txn.json` records the state; each step is idempotent:
 
 `staged` → `validated` → `active-ca-moved` → `new-ca-installed` → `leaf-installed` → `committed`
@@ -387,12 +403,16 @@ Everything except `status` needs root. Anything that changes trust or mode asks 
 
 ### Local status channel
 
+> **Correction (6b-2):** the runtime folder is `PIPULSE_RUNTIME_DIR` (default `/run/pipulse`; the unit's `RuntimeDirectory=pipulse`, Docker's tmpfs). The status file gains `transport`, and `certificate` is `null` over HTTP. The service user writes it and root reads it, so every field is validated before printing.
+
 - The unit gets `RuntimeDirectory=pipulse` (`0750`). The server atomically writes `/run/pipulse/tls-status.json`: active source, fingerprint, class, `notAfter`, reload state, last error, `pid`, process start time (`/proc/<pid>/stat` field 22), `bootId`.
 - The CLI checks owner and mode (per deployment), then treats the file as stale if the boot ID differs, the pid isn't running, or its start time differs (pid reuse). A running server with an unreadable or corrupt file is reported as `status-file-corrupt`, never as partial data.
 - `/run` is tmpfs and `RuntimeDirectory` is removed when the service stops, crashes included.
 - No session, no HTTP: `PIPULSE_PROTECT_READS` doesn't affect the CLI.
 
 ### Setup and migration (`setup.sh`)
+
+> **Correction (6b-2):** the `tls-installed` marker applies natively too (`/var/lib/pipulse/tls-installed`). An install is an upgrade if there was a previous `version.json` **or** a database, and no marker; that covers a reinstall over data kept by `--uninstall`. A failed fresh install stays fresh: `/etc/pipulse/.first-install-pending` makes every retry a first install, and only `setup.sh`'s success gate (the service healthy, and over HTTPS the `tls-installed` marker written) removes it; a server that can't write the marker says so (log `ERROR`, health `tls-marker-unwritten`, config, `status`). In the `.deb` path a failed health check on a first install fails `postinst` (dpkg keeps it half-configured; `apt-get -f install` reruns setup); upgrades never fail on health. A certificate that only fails client verification (`/api/health` check exit 2) warns and does not fail setup, as in the installer.
 
 Transactional: TLS material is made and validated first, `state.json` is written last, then the service is enabled or restarted.
 
@@ -406,7 +426,9 @@ Transactional: TLS material is made and validated first, `state.json` is written
 
 ### Renewal units (native)
 
-- `pipulse-tls-renew.timer`: `OnBootSec=5min`, `OnCalendar=daily`, `RandomizedDelaySec=6h`, `Persistent=true` (catch-up runs go through the same clock gate).
+> **Correction (6b-2):** the timer is hourly (`OnCalendar=hourly`, `RandomizedDelaySec=15min`), not daily, so a renewal waiting for the clock after a reboot runs within about an hour. The renew unit has `ReadWritePaths=-/etc/pipulse/tls` and `BindPaths=-/etc/pipulse/tls` (a missing folder is ignored, so it reports "nothing to renew" on a Pi with none) and `ProtectHome=yes`. The timer is enabled once: on a first install, or the first upgrade from a release without it (marker `/etc/pipulse/.renew-timer-enabled`); after that an operator's enabled, disabled or masked choice is kept, and a masked unit file is never replaced.
+
+- `pipulse-tls-renew.timer`: `OnBootSec=5min`, `OnCalendar=hourly`, `RandomizedDelaySec=15min`, `Persistent=true` (catch-up runs go through the same clock gate).
 - `pipulse-tls-renew.service`: `Type=oneshot`, `User=root`, `ExecStart=/usr/bin/pipulse tls renew`, `After=time-sync.target network-online.target`, `TimeoutStartSec=2min`, and:
   - `UMask=0077`, `NoNewPrivileges=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`, `CapabilityBoundingSet=` (empty — setgid directory, root-owned files)
   - `IPAddressDeny=any`, `RestrictAddressFamilies=AF_UNIX AF_NETLINK` (netlink to read interfaces)
@@ -415,6 +437,8 @@ Transactional: TLS material is made and validated first, `state.json` is written
 - A renewal failure shows in `renew-status.json`, `status`, Settings and health (`renewal: failing` → `degraded`); expiry alerts fire only as real expiry approaches.
 
 ## Docker (6b-2)
+
+> **Correction (6b-2):** the server container also mounts the timesync folder (its health and certificate alerts read the clock) with `create_host_path: false`, so chrony/ntpd hosts delete the mount and set `PIPULSE_TLS_CLOCK=trust` instead of getting an empty folder that reads as "unsynced" forever. In a container `enable`/`disable` only write `state.json` and ask for `docker compose restart pipulse` (a container can't restart its sibling). The init service and the sidecar join the image's `pipulse` group (`group_add: ['999']`): without `CAP_FSETID` a `chmod` by a non-member drops setgid from `/tls`, which would leave the sidecar's files `root:root`. `sidecar-health` is readiness only (the ready file, and `leaf.pem` verifying against the public `ca.crt`): a failed renewal, an expired leaf or an unreadable CA key never keeps the server from starting, and show instead in the sidecar log, `pipulse tls status` and `/api/health`. The shipped `compose.yaml` is stamped with that release's image tag; the repository copy follows `:latest`.
 
 ```yaml
 services:
@@ -460,9 +484,9 @@ volumes: { pipulse-data, tls, tls-ca }
 
 - **The server container never runs as root and never mounts `tls-ca`.** The image sets `PIPULSE_TLS_DIR=/tls` and ships `/usr/bin/pipulse`.
 - **Capabilities:** `CHOWN` only in the one-shot init (makes `/tls` `root:pipulse 2750` and `/tls-ca` `root 0700`); the recurring sidecar has none. Tests prove both run with exactly these; a missing permission is fixed through ownership, never by adding capabilities.
-- **Sidecar first start, in order:** (1) recover any journal; (2) stage CA and leaf (names-only, or `PIPULSE_TLS_SUBNETS`; never inferred); (3) validate the complete set; (4) activate atomically; (5) write `state.json`; (6) mark ready — only then is it `healthy`, so the server starts. It fails before readiness → the server doesn't start. Then every 6 h it runs `renew`.
+- **Sidecar first start, in order:** (1) recover any journal; (2) stage CA and leaf (names-only, or `PIPULSE_TLS_SUBNETS`; never inferred); (3) validate the complete set; (4) activate atomically; (5) write `state.json` (`init --mode auto --first-install`: HTTPS for fresh data, plain HTTP beside an existing database, recorded even if the material can't be made); (6) mark ready — only then is it `healthy`, so the server starts. If the material can't be prepared but `/tls` can still be served (a valid leaf, or plain HTTP), it warns and still marks ready; with nothing to serve it stays unready and the server doesn't start. Then every 6 h it runs `renew`.
 - **Out-of-band channel:** the sidecar prints the CA fingerprint, constraints and `export-ca` instructions to `docker compose logs pipulse-tls` on every start (identical each time; the CA persists in `tls-ca`).
-- **Sidecar health:** `healthy` = a valid leaf and renewal `ok` or `waiting-clock` (waiting is visible in its log and `status`); `unhealthy` = renewal `failing` or no valid leaf. Compose doesn't stop or restart the server for that (documented); the server keeps serving the last valid leaf if the sidecar exits.
+- **Sidecar health is readiness only:** `healthy` = the ready file, and (for generated HTTPS) a leaf that verifies against the public `ca.crt`; plain HTTP, `PIPULSE_TLS=off` and an operator certificate need no check. A failed renewal, an expired leaf or an unreadable CA key never make it unhealthy, because `compose.yaml` gates the server on `service_healthy` and a certificate problem must not keep it from starting; they show in the sidecar log, `pipulse tls status` and `/api/health` (`renewal-failing`). The server keeps serving the last valid leaf if the sidecar exits.
 - **Network trust note (docs):** the sidecar shares the host network to see the hostname and default-route address. It opens no sockets, but nothing in Docker prevents a compromised sidecar from connecting out — a code-level guarantee, not a container boundary. Tests: no `net`/`http`/`https`/`fetch`/`dgram` in its module graph, and `strace -f -e trace=socket,connect` over `init`/`renew` shows no `AF_INET`/`AF_INET6` sockets (netlink only).
 - **Clock:** no mounted timesync → `unknown` → renewal waits; `PIPULSE_TLS_CLOCK=trust` in `pipulse.env` for chrony/ntpd hosts.
 - **Legacy marker:** the sidecar decides the mode only when `/tls/state.json` is absent: `/data/pipulse.sqlite` exists **and** `/data/tls-installed` doesn't → `legacy-http`; otherwise `https`. The server writes `/data/tls-installed` (its own writable data volume) only after TLS is validated and it is listening. The marker's only job: a lost `tls` volume with surviving data must not silently fall back to HTTP. It checks file existence only, never opens SQLite. Copying an old database into a fresh setup copies its migration history and is treated as an upgrade (documented).
@@ -472,6 +496,8 @@ volumes: { pipulse-data, tls, tls-ca }
 - **Plain `docker run`** (no sidecar, no `/tls`): refuses with the fix line; the README shows mounting an operator certificate read-only, or `PIPULSE_TLS=off`.
 
 ## Testing
+
+> **Correction (6b-2):** the sidecar's module-graph test allows `node:net` only for `isIP` and `node:tls` (for `rootCertificates`); the real no-sockets guarantee is the `strace` test in `packaging/test/tls.test.sh`.
 
 Vitest unless noted. Real Telegram delivery is never part of the automated suite.
 
@@ -531,15 +557,17 @@ On `Io` (port 8889) unless noted. Before deleting any scratch state, capture `/a
 
 ## Settings reference
 
-| Setting                               | Default                            | Meaning                                                                 |
-| ------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------- |
-| `PIPULSE_TLS`                         | unset                              | `on`/`off`; overrides `state.json`                                      |
-| `PIPULSE_TLS_DIR`                     | `/etc/pipulse/tls` (Docker `/tls`) | generated material and state                                            |
-| `PIPULSE_TLS_CERT`, `PIPULSE_TLS_KEY` | unset                              | operator certificate (both or neither)                                  |
-| `PIPULSE_TLS_CA`                      | unset                              | trust for operator certificates (health check, chain class)             |
-| `PIPULSE_TLS_NAMES`                   | unset                              | extra DNS names (read at CA creation; leaf limited to constraints)      |
-| `PIPULSE_TLS_SUBNETS`                 | unset                              | accepted subnets at CA creation (Docker: the only way)                  |
-| `PIPULSE_TLS_CLOCK`                   | unset                              | `trust`: treat an `unknown` clock as synced                             |
-| `PIPULSE_TLS_TIMESYNC_DIR`            | `/run/systemd/timesync`            | where the clock signal is read (the Docker image sets `/host-timesync`) |
-| `PIPULSE_TLS_HSTS`                    | unset                              | opt-in HSTS `max-age`                                                   |
-| `PIPULSE_TLS_REQUIRE_VALID_CERT`      | `false`                            | refuse to start on an expired / not-yet-valid certificate               |
+| Setting                               | Default                                               | Meaning                                                                    |
+| ------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| `PIPULSE_TLS`                         | unset                                                 | `on`/`off`; overrides `state.json`                                         |
+| `PIPULSE_TLS_DIR`                     | `/etc/pipulse/tls` (Docker `/tls`)                    | generated material and state                                               |
+| `PIPULSE_TLS_CA_DIR`                  | unset (native: same as the TLS dir; Docker `/tls-ca`) | where the CA key lives; a native install refuses any value but the default |
+| `PIPULSE_RUNTIME_DIR`                 | `/run/pipulse`                                        | where the server writes `tls-status.json` for `pipulse tls status`         |
+| `PIPULSE_TLS_CERT`, `PIPULSE_TLS_KEY` | unset                                                 | operator certificate (both or neither)                                     |
+| `PIPULSE_TLS_CA`                      | unset                                                 | trust for operator certificates (health check, chain class)                |
+| `PIPULSE_TLS_NAMES`                   | unset                                                 | extra DNS names (read at CA creation; leaf limited to constraints)         |
+| `PIPULSE_TLS_SUBNETS`                 | unset                                                 | accepted subnets at CA creation (Docker: the only way)                     |
+| `PIPULSE_TLS_CLOCK`                   | unset                                                 | `trust`: treat an `unknown` clock as synced                                |
+| `PIPULSE_TLS_TIMESYNC_DIR`            | `/run/systemd/timesync`                               | where the clock signal is read (the Docker image sets `/host-timesync`)    |
+| `PIPULSE_TLS_HSTS`                    | unset                                                 | opt-in HSTS `max-age`                                                      |
+| `PIPULSE_TLS_REQUIRE_VALID_CERT`      | `false`                                               | refuse to start on an expired / not-yet-valid certificate                  |

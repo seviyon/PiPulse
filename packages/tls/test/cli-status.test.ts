@@ -1,10 +1,19 @@
 import { X509Certificate } from 'node:crypto';
-import { readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cli, ignoreClosedPipe, lockFor, main } from '../src/cli.js';
 import { collectStatus, formatStatus } from '../src/cmd-status.js';
+import { REFUSE_LINE } from '../src/config.js';
 import { buildConstraints } from '../src/constraints.js';
 import { runTransaction } from '../src/journal.js';
 import { paths, pub, writeState } from '../src/layout.js';
@@ -126,8 +135,18 @@ describe('cli entry', () => {
 
 describe('status', () => {
   describe('a newer certificate on disk than the one served', () => {
-    const served = (reload: { state: 'ok' | 'failing'; lastError: string | null }) => {
+    const served = (
+      reload: { state: 'ok' | 'failing'; lastError: string | null },
+      renewal?: { result: 'failed' | 'renewed'; reason?: string }
+    ) => {
       const report = collectStatus(ctx);
+      if (renewal)
+        report.renewal = {
+          version: 1,
+          lastAttempt: ctx.now(),
+          result: renewal.result,
+          ...(renewal.reason ? { reason: renewal.reason } : {})
+        };
       report.active = {
         state: 'running',
         status: {
@@ -154,6 +173,24 @@ describe('status', () => {
         'the server picks it up within about two minutes'
       );
     });
+    it('does not promise pickup when the last renewal failed after writing leaf.crt', async () => {
+      // The renewal wrote leaf.crt but failed before leaf.pem: the served file never changes, the
+      // reloader never runs, so the reload stays "ok" and nothing is going to pick it up.
+      await makeCa();
+      const text = served(
+        { state: 'ok', lastError: null },
+        { result: 'failed', reason: 'EPERM: operation not permitted' }
+      );
+      expect(text).not.toContain('within about two minutes');
+      expect(text).toContain('the served certificate was not replaced');
+      expect(text).toContain('the next successful renewal repairs it');
+    });
+    it('still promises pickup after a renewal that succeeded', async () => {
+      await makeCa();
+      expect(served({ state: 'ok', lastError: null }, { result: 'renewed' })).toContain(
+        'the server picks it up within about two minutes'
+      );
+    });
     it('says it was not applied, and why to look above, when the reload is failing', async () => {
       await makeCa();
       const text = served({ state: 'failing', lastError: 'the replacement is expired' });
@@ -163,6 +200,66 @@ describe('status', () => {
       expect(text).not.toContain('within about two minutes');
     });
   });
+  describe('the tls-installed marker', () => {
+    const running = (transport: 'https' | 'http') => {
+      ctx.env['PIPULSE_DB_PATH'] = join(dir, 'pipulse.sqlite');
+      const report = collectStatus(ctx);
+      report.active = {
+        state: 'running',
+        status: {
+          version: 1,
+          transport,
+          certificate: null,
+          pid: 1,
+          startTime: '1',
+          bootId: 'b',
+          writtenAt: ctx.now()
+        }
+      };
+      return formatStatus(report, ctx).join('\n');
+    };
+    it('is reported missing while the server serves HTTPS, naming the path', () => {
+      expect(running('https')).toContain(
+        `problem: ${join(dir, 'tls-installed')} is missing although the server serves HTTPS: see journalctl -u pipulse`
+      );
+    });
+    it.skipIf(process.getuid?.() === 0)(
+      'a data folder this user cannot enter is "can\'t check", not "missing" and not a crash',
+      () => {
+        const data = join(dir, 'data');
+        mkdirSync(data);
+        ctx.env['PIPULSE_DB_PATH'] = join(data, 'pipulse.sqlite');
+        const report = collectStatus(ctx);
+        report.active = {
+          state: 'running',
+          status: {
+            version: 1,
+            transport: 'https',
+            certificate: null,
+            pid: 1,
+            startTime: '1',
+            bootId: 'b',
+            writtenAt: ctx.now()
+          }
+        };
+        chmodSync(data, 0o000);
+        try {
+          const text = formatStatus(report, ctx).join('\n');
+          expect(text).toContain(`can't check ${join(data, 'tls-installed')} (EACCES)`);
+          expect(text).not.toContain('is missing although');
+        } finally {
+          chmodSync(data, 0o700);
+        }
+      }
+    );
+    it('is silent when it is there, and when the server serves HTTP', () => {
+      writeFileSync(join(dir, 'tls-installed'), '2026-10-05T00:00:00.000Z\n');
+      expect(running('https')).not.toContain('tls-installed');
+      rmSync(join(dir, 'tls-installed'));
+      expect(running('http')).not.toContain('tls-installed');
+    });
+  });
+
   it('shows the running server from the status file, and "not running" without one', async () => {
     ctx.env['PIPULSE_RUNTIME_DIR'] = join(dir, 'run');
     await main(['status'], ctx);
@@ -174,7 +271,9 @@ describe('status', () => {
     expect(await main(['status'], ctx)).toBe(0);
     const text = ctx.lines.join('\n');
     expect(text).toContain(`Configured (${dir})`);
-    expect(text).toMatch(/Mode: +HTTP — not chosen \(no state\.json\)/);
+    // The release default is to refuse: status says so and prints the fix line.
+    expect(text).toMatch(/Mode: +PiPulse would refuse to start — not chosen \(no state\.json\)/);
+    expect(text).toContain(`problem: ${REFUSE_LINE}`);
     expect(text).toContain('none yet (sudo pipulse tls init)');
     expect(text).toMatch(/Last renewal\n {2}none recorded/);
   });

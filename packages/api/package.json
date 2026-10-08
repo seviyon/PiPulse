@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
-    "dev": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server.ts"
+    "dev": "PIPULSE_TLS=${PIPULSE_TLS:-off} NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.4",

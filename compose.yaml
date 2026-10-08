@@ -1,16 +1,89 @@
+# PiPulse with HTTPS. A one-shot service prepares the volumes, the pipulse-tls
+# sidecar holds the CA key and renews the certificate, and the server only
+# ever reads the certificate. Settings go in ./pipulse.env (see packaging/pipulse.env).
+# As written it suits a Linux host: it mounts the host's /etc/hostname. On Docker Desktop or
+# Colima (no such file) remove those two mounts and set PIPULSE_HOSTNAME in pipulse.env.
+# First start: `docker compose logs pipulse-tls` shows the CA fingerprint to check
+# before you trust the CA (docker compose exec pipulse pipulse tls export-ca).
+x-timesync: &timesync
+  # The host's clock signal (systemd-timesyncd). On a chrony or ntpd host, delete this
+  # mount (here and below) and set PIPULSE_TLS_CLOCK=trust in pipulse.env.
+  type: bind
+  source: /run/systemd/timesync
+  target: /host-timesync
+  read_only: true
+  bind: { create_host_path: false }
+
 services:
-  pipulse:
-    image: ghcr.io/seviyon/pipulse:latest@sha256:d9e843c5ab55503f73aee6172c50d754b27366889666a7d8f2ef3357fb896dfc
+  pipulse-tls-init: # one-shot: volume owners and modes (the only service with a capability)
+    image: ghcr.io/seviyon/pipulse:latest
+    command: ['pipulse', 'tls', 'sidecar-init']
+    user: '0:0'
+    group_add: ['999'] # the image's pipulse group: with no capability, root may then keep setgid on /tls
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ['no-new-privileges:true']
+    read_only: true
+    network_mode: none
+    restart: 'no'
+    healthcheck: { disable: true }
+    volumes: [tls-ca:/tls-ca, tls:/tls]
+
+  pipulse-tls: # the CA, the certificate and its renewal; opens no sockets
+    image: ghcr.io/seviyon/pipulse:latest
+    command: ['pipulse', 'tls', 'sidecar']
+    user: '0:0'
+    group_add: ['999'] # lets it give files in /tls the pipulse group without CAP_CHOWN
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    read_only: true
+    tmpfs: [/tmp]
+    network_mode: host # the host's default-route address (the name comes from /host/etc/hostname)
+    env_file:
+      - path: ./pipulse.env
+        required: false
+    volumes:
+      - tls-ca:/tls-ca # the CA key: this service only
+      - tls:/tls # certificate, state, metadata
+      - pipulse-data:/data:ro # only to tell an upgrade (existing data) from a fresh install
+      - /etc/hostname:/host/etc/hostname:ro # the host's name, not the engine VM's
+      - *timesync
+    depends_on:
+      pipulse-tls-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD', 'pipulse', 'tls', 'sidecar-health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     restart: unless-stopped
-    network_mode: host # the host's network counters and hostname; set PIPULSE_PORT in pipulse.env
+
+  pipulse:
+    image: ghcr.io/seviyon/pipulse:latest
+    restart: unless-stopped
+    network_mode: host # the host's network counters; set PIPULSE_PORT in pipulse.env
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/pipulse:uid=999,gid=999,mode=0750
     env_file:
       - path: ./pipulse.env # your settings (see packaging/pipulse.env); optional until you need one
         required: false
     volumes:
       - pipulse-data:/data
+      - tls:/tls:ro
+      - *timesync
       - ./config:/etc/pipulse:ro # password hash, rules, notify file, CA certificate
       - /boot/firmware:/boot/firmware:ro # the /boot usage tile (use /boot on older Pi OS)
+      - /etc/hostname:/host/etc/hostname:ro # the host's name for the header, notifications and the certificate
       - /etc/os-release:/host/etc/os-release:ro # the host's OS name, not the image's
       - /proc/device-tree/model:/host/model:ro # the Pi model (Docker hides /sys/firmware)
+    depends_on:
+      pipulse-tls: { condition: service_healthy }
+
 volumes:
   pipulse-data:
+  tls:
+  tls-ca:

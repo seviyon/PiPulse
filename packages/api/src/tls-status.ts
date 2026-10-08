@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   EXPIRING_SOON_MS,
@@ -35,6 +35,30 @@ export interface GeneratedExtras {
 const shortMessage = (error: unknown): string =>
   (error as NodeJS.ErrnoException).code ??
   (error instanceof Error ? error.message : String(error)).slice(0, 120);
+
+export const TLS_MARKER = 'tls-installed';
+
+/**
+ * Marks the data folder as served over HTTPS (setup and the Docker sidecar read it, so a lost TLS
+ * folder never turns this install into an HTTP "upgrade"). A one-line problem (an errno code, never
+ * a path), or undefined.
+ */
+export function writeTlsMarker(dataDir: string, now = Date.now()): string | undefined {
+  try {
+    // Already there (for instance a data folder restored as root, which the service can't
+    // rewrite): it does its job, so leave it alone instead of failing on every start.
+    lstatSync(join(dataDir, TLS_MARKER));
+    return undefined;
+  } catch {
+    // Absent or not visible: fall through and let the write report what is wrong.
+  }
+  try {
+    writeFileSync(join(dataDir, TLS_MARKER), `${new Date(now).toISOString()}\n`, { mode: 0o640 });
+    return undefined;
+  } catch (error) {
+    return `${TLS_MARKER} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})`;
+  }
+}
 
 /**
  * Public facts about a generated CA and its renewal, read per request (two
@@ -118,13 +142,15 @@ export type TlsView =
       };
       metadata?: 'ok' | 'transitional' | 'unreadable';
       metadataProblems?: MetadataProblem[];
+      /** The data folder's tls-installed marker could not be written (one line, no path). */
+      markerProblem?: string;
     };
 
 export function tlsView(
   config: TlsConfig,
   provider: CertificateProvider | undefined,
   now: number,
-  options: { extras?: GeneratedExtras; inContainer?: boolean } = {}
+  options: { extras?: GeneratedExtras; inContainer?: boolean; markerProblem?: string } = {}
 ): TlsView {
   const inContainer = options.inContainer ?? false;
   if (config.mode === 'http' || !provider) {
@@ -204,7 +230,8 @@ export function tlsView(
       : {}),
     ...(renewal ? { renewal } : {}),
     ...(metadata ? { metadata } : {}),
-    ...(extras && extras.problems.length > 0 ? { metadataProblems: extras.problems } : {})
+    ...(extras && extras.problems.length > 0 ? { metadataProblems: extras.problems } : {}),
+    ...(options.markerProblem ? { markerProblem: options.markerProblem } : {})
   };
 }
 
@@ -253,6 +280,7 @@ export function healthBody(
     if (tls.source === 'generated' && !tls.clockSynced) reasons.push(`clock-${tls.clock}`);
     if (tls.renewal?.state === 'failing') reasons.push('renewal-failing');
     if (tls.metadata === 'unreadable') reasons.push('generated-metadata-unreadable');
+    if (tls.markerProblem) reasons.push('tls-marker-unwritten');
     certificate = {
       source: tls.source,
       validity: tls.validity,

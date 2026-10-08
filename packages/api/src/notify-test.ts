@@ -1,4 +1,4 @@
-import { hostname } from 'node:os';
+import { hostName } from '@pipulse/tls';
 import {
   createWebhookAction,
   parseNotifyConfig,
@@ -45,7 +45,7 @@ const sample: Alert = {
   ruleHash: null
 };
 const context = {
-  hostname: hostname(),
+  hostname: hostName(),
   metrics: [{ id: 'cpu_temperature', label: 'CPU temperature', unit: '°C' }]
 };
 let failed = false;

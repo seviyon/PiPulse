@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 export type Mode = 'https' | 'http';
 /** What decided the mode: PIPULSE_TLS, state.json, or the release default. */
@@ -37,11 +37,19 @@ export const DEFAULT_TLS_DIR = '/etc/pipulse/tls';
 export const DEFAULT_TIMESYNC_DIR = '/run/systemd/timesync';
 
 /**
- * What happens with neither PIPULSE_TLS nor state.json: plain HTTP until
- * 6b-2c, then 'refuse' (stop with the fix line). The server, the health check
- * and the CLI all read this one constant.
+ * What happens with neither PIPULSE_TLS nor state.json: 'refuse' (stop with
+ * the fix line, unless an operator certificate pair is set, which is what
+ * the fix line asks for). The server, the health check and the CLI all read
+ * this one constant.
  */
-export const RELEASE_DEFAULT: Mode | 'refuse' = 'http';
+export const RELEASE_DEFAULT: Mode | 'refuse' = 'refuse';
+
+export const REFUSE_LINE =
+  'no HTTPS certificate is set up: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY (on a Pi install: sudo pipulse tls init), or PIPULSE_TLS=off';
+
+/** The same refusal inside the image, where `pipulse tls init` is not the way out. */
+export const REFUSE_LINE_CONTAINER =
+  'no HTTPS certificate is set up: use the current compose.yaml (its pipulse-tls service makes one), set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY, or set PIPULSE_TLS=off';
 
 /**
  * state.json is data, never sourced by a shell: exactly
@@ -118,6 +126,12 @@ export function readTlsConfig(
     }
   }
 
+  const certPath = setting(env, 'PIPULSE_TLS_CERT');
+  const keyPath = setting(env, 'PIPULSE_TLS_KEY');
+  if ((certPath === undefined) !== (keyPath === undefined)) {
+    throw new TlsConfigError('PIPULSE_TLS_CERT and PIPULSE_TLS_KEY must be set together');
+  }
+
   let mode: Mode;
   let modeReason: ModeReason;
   if (flag === 'on' || flag === 'off') {
@@ -129,19 +143,19 @@ export function readTlsConfig(
     mode = stateMode === 'https' ? 'https' : 'http';
     modeReason = 'state';
   } else if (options.releaseDefault === 'refuse') {
-    throw new TlsConfigError(
-      'no HTTPS certificate configured: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY, or PIPULSE_TLS=off'
-    );
+    // An operator certificate is exactly what the fix line asks for: serve it.
+    if (certPath === undefined) {
+      throw new TlsConfigError(
+        env['PIPULSE_IN_CONTAINER'] === 'true' ? REFUSE_LINE_CONTAINER : REFUSE_LINE
+      );
+    }
+    mode = 'https';
+    modeReason = 'default';
   } else {
     mode = options.releaseDefault;
     modeReason = 'default';
   }
 
-  const certPath = setting(env, 'PIPULSE_TLS_CERT');
-  const keyPath = setting(env, 'PIPULSE_TLS_KEY');
-  if ((certPath === undefined) !== (keyPath === undefined)) {
-    throw new TlsConfigError('PIPULSE_TLS_CERT and PIPULSE_TLS_KEY must be set together');
-  }
   const caPath = setting(env, 'PIPULSE_TLS_CA');
   const source: CertSource =
     certPath !== undefined && keyPath !== undefined
@@ -173,4 +187,19 @@ export function readTlsConfig(
     timesyncDir: setting(env, 'PIPULSE_TLS_TIMESYNC_DIR') ?? DEFAULT_TIMESYNC_DIR,
     warnings
   };
+}
+
+/**
+ * The database path as the server sees it: a relative PIPULSE_DB_PATH is resolved from the
+ * service's working directory (the unit's WorkingDirectory=, /var/lib/pipulse), never from
+ * wherever `pipulse tls` or setup happens to run, so the tls-installed marker is found.
+ */
+export function dbPathOf(
+  env: NodeJS.ProcessEnv,
+  fallback = '/var/lib/pipulse/pipulse.sqlite',
+  base = '/var/lib/pipulse'
+): string {
+  const raw = env['PIPULSE_DB_PATH']?.trim();
+  if (!raw) return fallback;
+  return isAbsolute(raw) ? raw : resolve(base, raw);
 }

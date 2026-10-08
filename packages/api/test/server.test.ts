@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { openDb, saveSettings } from '@pipulse/storage';
 import { SAVED_RULES_KEY } from '@pipulse/alerts';
+import { REFUSE_LINE } from '@pipulse/tls';
 import { fixture } from '../../tls/test/helpers.js';
 
 // Runs the built server (root `pretest` builds it) as a real process — the
@@ -29,7 +30,8 @@ describe('api server process', () => {
         ...process.env,
         PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
         PIPULSE_HOST: '127.0.0.1',
-        PIPULSE_PORT: '0'
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -201,7 +203,13 @@ describe('api server process', () => {
       get(url, { rejectUnauthorized: false }, (res) => {
         let body = '';
         res.on('data', (chunk: Buffer) => (body += chunk.toString()));
-        res.on('end', () => resolve(JSON.parse(body)));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (error) {
+            reject(error);
+          }
+        });
       }).on('error', reject);
     });
 
@@ -265,7 +273,8 @@ describe('api server process', () => {
         ...process.env,
         PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
         PIPULSE_HOST: '127.0.0.1',
-        PIPULSE_PORT: '0'
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -353,6 +362,7 @@ describe('api server process', () => {
           PIPULSE_DB_PATH: dbPath,
           PIPULSE_HOST: '127.0.0.1',
           PIPULSE_PORT: '0',
+          PIPULSE_TLS: 'off',
           PIPULSE_ALERTS_FILE: rulesPath
         },
         stdio: ['ignore', 'pipe', 'pipe']
@@ -392,6 +402,7 @@ describe('api server process', () => {
         ...process.env,
         PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
         PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off',
         PIPULSE_RETENTION_RAW: '10m'
       },
       stdio: ['ignore', 'pipe', 'pipe']
@@ -404,5 +415,27 @@ describe('api server process', () => {
     expect(stderr).toContain('[pipulse] PIPULSE_RETENTION_RAW must be a duration like');
     // A readable message, not a stack trace.
     expect(stderr).not.toContain('    at ');
+  });
+
+  it('refuses to start with neither a certificate nor PIPULSE_TLS=off, with the fix line', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+      PIPULSE_PORT: '0',
+      PIPULSE_TLS_DIR: join(dir, 'tls')
+    };
+    for (const name of ['PIPULSE_TLS', 'PIPULSE_TLS_CERT', 'PIPULSE_TLS_KEY']) delete env[name];
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const [exitCode] = await once(child, 'exit');
+
+    expect(exitCode).toBe(1);
+    expect(stderr.trim().split('\n')).toHaveLength(1);
+    expect(stderr).toContain(`[pipulse] ${REFUSE_LINE}`);
   });
 });

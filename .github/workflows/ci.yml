@@ -71,3 +71,5 @@ jobs:
         run: docker compose -f compose.yaml config -q
       - name: Smoke test (healthy, firmware plugins unavailable)
         run: sh packaging/test/docker.sh pipulse:test
+      - name: Compose (sidecar, volumes, capabilities)
+        run: sh packaging/test/compose.sh pipulse:test

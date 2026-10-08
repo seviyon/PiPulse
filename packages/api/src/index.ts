@@ -1,5 +1,6 @@
-import { hostname, uptime } from 'node:os';
+import { uptime } from 'node:os';
 import type { Server as HttpsServer } from 'node:https';
+import { hostName } from '@pipulse/tls';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
@@ -209,7 +210,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   const notices = createFeed<Notice>();
   const plugins = options.plugins ?? [];
   const device = options.device ?? {
-    hostname: hostname(),
+    hostname: hostName(),
     platform: process.platform,
     arch: process.arch
   };

@@ -1,8 +1,10 @@
 import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClockState } from './clock.js';
-import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from './config.js';
+import { RELEASE_DEFAULT, dbPathOf, readTlsConfig, type StateMode } from './config.js';
+import { pathExists } from './files.js';
 import { consequenceText, formatAddress, parseAddress } from './constraints.js';
 import { EXPIRING_SOON_MS, parseSans, validityOf, type Validity } from './inspect.js';
 import { readTxn } from './journal.js';
@@ -333,11 +335,32 @@ export function formatStatus(report: StatusReport, ctx: Context): string[] {
   ) {
     // 'failing' means the replacement was refused (the reload line above says why); it is
     // retried only every RETRY_MS while its files stay the same, so no "two minutes" promise.
+    // A renewal that failed after writing leaf.crt (leaf.pem is written last) leaves the served
+    // file untouched: the reloader never runs, the reload stays "ok", and nothing picks it up
+    // until a renewal succeeds.
     lines.push(
-      report.active.status.certificate.reload.state === 'ok'
-        ? '  (a newer certificate is on disk; the server picks it up within about two minutes)'
-        : '  (a newer certificate is on disk but was not applied: see the reload line above; it is retried every 10 minutes while the files stay the same)'
+      report.active.status.certificate.reload.state !== 'ok'
+        ? '  (a newer certificate is on disk but was not applied: see the reload line above; it is retried every 10 minutes while the files stay the same)'
+        : report.renewal?.result === 'failed'
+          ? '  (leaf.crt holds a newer certificate, but the served certificate was not replaced because the last renewal failed; the next successful renewal repairs it)'
+          : '  (a newer certificate is on disk; the server picks it up within about two minutes)'
     );
+  }
+  if (report.active.state === 'running' && report.active.status.transport === 'https') {
+    // The server writes tls-installed next to its database once it serves HTTPS; without it,
+    // setup would take this install for an HTTP one if the TLS folder were ever lost.
+    const marker = join(dirname(dbPathOf(ctx.env)), 'tls-installed');
+    // `status` isn't root-only: a user who can read the runtime file may not be able to look
+    // inside the data folder (700, owned by the service), and that must not fail the command.
+    try {
+      if (!pathExists(marker))
+        lines.push(
+          `  problem: ${marker} is missing although the server serves HTTPS: see journalctl -u pipulse`
+        );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? 'error';
+      lines.push(`  can't check ${marker} (${code}): run sudo pipulse tls status`);
+    }
   }
   lines.push('Last renewal', `  ${report.renewal ? renewalLine(report.renewal) : 'none recorded'}`);
   if (

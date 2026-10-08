@@ -27,6 +27,8 @@ echo 'PIPULSE_PORT=8889' >> /etc/pipulse/pipulse.env
 echo data > /var/lib/pipulse/pipulse.sqlite
 mkdir -p /etc/systemd/system && cp "$repo/packaging/pipulse.service" /etc/systemd/system/pipulse.service
 touch /opt/pipulse/app/tarball-only-leftover
+# A 0.7 tarball install has enabled its renewal timer once (setup.sh writes this on systemd hosts).
+touch /etc/pipulse/.renew-timer-enabled
 
 tarball_intact() {
   grep -q '"0.0.1"' /opt/pipulse/app/version.json 2>/dev/null && [ -x /usr/bin/pipulse ] &&
@@ -38,6 +40,7 @@ tarball_intact() {
 if PIPULSE_APT_URL="file:///nonexistent/apt" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 'fails when the repository is unreachable'; else ok 'fails when the repository is unreachable'; fi
 tarball_intact && ok 'unreachable repository: tarball install untouched' || bad 'unreachable repository: tarball install untouched'
 [ ! -e /etc/apt/sources.list.d/pipulse.list ] && ok 'unreachable repository: no apt source left behind' || bad 'unreachable repository: no apt source left behind'
+[ -e /etc/pipulse/.renew-timer-enabled ] && ok 'unreachable repository: timer marker untouched' || bad 'unreachable repository: timer marker untouched'
 
 # 2. The package fails to install (its preinst fails): the tarball install comes back.
 bad_dir=$(mktemp -d)
@@ -50,6 +53,7 @@ chmod -R a+rX "$bad_repo"
 if PIPULSE_APT_URL="file://$bad_repo" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 'fails when the package fails to install'; else ok 'fails when the package fails to install'; fi
 tarball_intact && ok 'failed package: tarball install restored' || { cat /tmp/migrate.log; bad 'failed package: tarball install restored'; }
 [ ! -e /etc/apt/sources.list.d/pipulse.list ] && ok 'failed package: no apt source left behind' || bad 'failed package: no apt source left behind'
+[ -e /etc/pipulse/.renew-timer-enabled ] && ok 'failed package: timer marker restored' || bad 'failed package: timer marker restored'
 
 # 2b. It fails later, in postinst (after unpacking): the settings and data must survive
 #     the clean-up too, not only the tarball.
@@ -64,6 +68,7 @@ if PIPULSE_APT_URL="file://$bad_repo" sh "$repo/packaging/install.sh" < /dev/nul
 tarball_intact && ok 'failed postinst: tarball install restored' || { cat /tmp/migrate.log; bad 'failed postinst: tarball install restored'; }
 grep -q '^PIPULSE_PORT=8889$' /etc/pipulse/pipulse.env 2>/dev/null && ok 'failed postinst: settings kept' || bad 'failed postinst: settings kept'
 grep -q '^data$' /var/lib/pipulse/pipulse.sqlite 2>/dev/null && ok 'failed postinst: data kept' || bad 'failed postinst: data kept'
+[ -e /etc/pipulse/.renew-timer-enabled ] && ok 'failed postinst: timer marker restored' || bad 'failed postinst: timer marker restored'
 rm -rf /var/lib/apt/lists/*_nonexistent_* /var/lib/apt/lists/_tmp_* 2>/dev/null || true
 
 # 3. The one-liner, run the way curl | sudo sh runs it: stdin is not a terminal.
@@ -74,6 +79,9 @@ grep -q '"0.0.2"' /opt/pipulse/app/version.json 2>/dev/null && ok 'the packaged 
 [ ! -e /opt/pipulse/app/tarball-only-leftover ] && ok 'no tarball leftovers in /opt/pipulse' || bad 'no tarball leftovers in /opt/pipulse'
 grep -q '^PIPULSE_PORT=8889$' /etc/pipulse/pipulse.env && ok 'edited settings kept' || bad 'edited settings kept'
 grep -q '^data$' /var/lib/pipulse/pipulse.sqlite && ok 'data kept' || bad 'data kept'
+# No systemd here to enable the timer, so the marker's absence is what lets the package's setup do it
+# (service.test.sh: no marker -> setup enables the timer).
+[ ! -e /etc/pipulse/.renew-timer-enabled ] && ok 'the timer marker is gone, so the package enables the renewal timer' || bad 'the timer marker is gone, so the package enables the renewal timer'
 
 # 4. The one-liner again on this apt-installed Pi, but the repository can't be reached:
 #    the existing source, key and package must survive.

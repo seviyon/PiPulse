@@ -51,6 +51,7 @@ install_apt() {
   fi
 
   # 3. Install. Never prompt (stdin is the curl pipe): keep an existing pipulse.env.
+  # PIPULSE_TLS_INIT_SUBNET (from ask_subnet) reaches setup.sh through dpkg's environment.
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pipulse </dev/null; then
     restore_apt_source
@@ -110,6 +111,9 @@ set_aside_tarball() {
   for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
     if [ -e "/etc/systemd/system/$unit" ]; then mv "/etc/systemd/system/$unit" "$ASIDE/$unit"; fi
   done
+  # The timer is off now, so the package's setup must enable it again: left in place, this
+  # marker reads as "the operator disabled it". Kept aside for a rollback.
+  if [ -e /etc/pipulse/.renew-timer-enabled ]; then mv /etc/pipulse/.renew-timer-enabled "$ASIDE/renew-timer-enabled"; fi
   if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
 }
 
@@ -123,6 +127,9 @@ restore_tarball() {
     rm -f "/etc/systemd/system/$unit"
     if [ -e "$ASIDE/$unit" ]; then mv "$ASIDE/$unit" "/etc/systemd/system/$unit"; fi
   done
+  # The failed package may have written its own marker; the old install's is what counts.
+  rm -f /etc/pipulse/.renew-timer-enabled
+  if [ -e "$ASIDE/renew-timer-enabled" ]; then mv "$ASIDE/renew-timer-enabled" /etc/pipulse/.renew-timer-enabled; fi
   read -r was_enabled was_active < "$ASIDE/state" || true
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
@@ -239,7 +246,11 @@ stop_service() { sh -c "${PIPULSE_STOP_CMD:-systemctl stop pipulse}" >/dev/null 
 # Runs setup and (re)starts the service. FIRST is yes on a first install.
 start_service() {
   if [ -n "${PIPULSE_FORCE_RESTART:-}" ]; then # tests without systemd
-    sh /opt/pipulse/app/packaging/setup.sh --no-start
+    if [ "$1" = yes ]; then
+      sh /opt/pipulse/app/packaging/setup.sh --no-start --first-install
+    else
+      sh /opt/pipulse/app/packaging/setup.sh --no-start
+    fi
     restart
   elif [ "$1" = yes ]; then
     sh /opt/pipulse/app/packaging/setup.sh --first-install
@@ -266,6 +277,13 @@ install_tarball() { # install_tarball FILE NO_START
     [ -d /run/systemd/system ] || die 'systemd is not running: use --no-start'
   fi
   mkdir -p /opt/pipulse
+  # A fresh install stays fresh until setup has made HTTPS work (setup removes this), so a
+  # retry after any failure is never taken for an upgrade that stays on plain HTTP.
+  pending=/etc/pipulse/.first-install-pending
+  if [ ! -d /opt/pipulse/app ] && [ ! -e "$(db_path)" ] && [ ! -e /etc/pipulse/tls ]; then
+    install -d -m 750 /etc/pipulse
+    (umask 077 && : > "$pending")
+  fi
   rm -rf /opt/pipulse/app.new /opt/pipulse/node.new /opt/pipulse/app.previous /opt/pipulse/node.previous
   mv "$src" /opt/pipulse/app.new
   mv "$work/staged/node" /opt/pipulse/node.new
@@ -285,8 +303,13 @@ install_tarball() { # install_tarball FILE NO_START
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
   first=yes
   [ "$had_previous" = no ] || first=no
+  if [ -e "$pending" ]; then first=yes; fi
   if [ "$no_start" = yes ]; then
-    sh /opt/pipulse/app/packaging/setup.sh --no-start
+    if [ "$first" = yes ]; then
+      sh /opt/pipulse/app/packaging/setup.sh --no-start --first-install
+    else
+      sh /opt/pipulse/app/packaging/setup.sh --no-start
+    fi
     rm -rf /opt/pipulse/app.previous /opt/pipulse/node.previous
     log "installed $(installed) (not started)"
     return 0
@@ -304,7 +327,10 @@ install_tarball() { # install_tarball FILE NO_START
     log "running $(installed)"
     return 0
   fi
-  [ "$had_previous" = yes ] || die "PiPulse did not become healthy${HEALTH_MSG:+ ($HEALTH_MSG)}; see: journalctl -u pipulse"
+  # A pending fresh install has nothing good to go back to: its "previous" is a half-made first run.
+  if [ "$had_previous" != yes ] || [ -e "$pending" ]; then
+    die "PiPulse did not become healthy${HEALTH_MSG:+ ($HEALTH_MSG)}; see: journalctl -u pipulse"
+  fi
   failed=$(installed)
   reason=${HEALTH_MSG:+ ($HEALTH_MSG)}
   log "$failed did not become healthy: rolling back"
@@ -314,6 +340,14 @@ install_tarball() { # install_tarball FILE NO_START
   mv /opt/pipulse/app.previous /opt/pipulse/app
   mv /opt/pipulse/node.previous /opt/pipulse/node
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
+  # A version from before the renewal timer has no `pipulse tls` command, so the failed
+  # version's timer would fail every hour against it. Its marker goes too, so a later
+  # upgrade enables the timer again.
+  if [ ! -e /opt/pipulse/app/packaging/pipulse-tls-renew.timer ]; then
+    if [ -d /run/systemd/system ]; then systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true; fi
+    rm -f /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer /etc/pipulse/.renew-timer-enabled
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+  fi
   # The previous version's own setup puts its unit file back too.
   start_service no
   if health_ok; then die "$failed did not become healthy$reason; rolled back to $(installed), which is running"; fi
@@ -334,6 +368,9 @@ uninstall() { # uninstall PURGE
     rm -f /etc/systemd/system/pipulse.service /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer
     systemctl daemon-reload
   fi
+  # The timer is gone, so a reinstall over the kept /etc/pipulse must enable it again (setup.sh
+  # reads this marker as "the operator already decided").
+  rm -f /etc/pipulse/.renew-timer-enabled
   rm -rf /opt/pipulse /usr/bin/pipulse
   if [ "$1" = yes ]; then
     rm -rf /etc/pipulse /var/lib/pipulse
@@ -343,6 +380,52 @@ uninstall() { # uninstall PURGE
   else
     log 'removed PiPulse; kept /etc/pipulse and /var/lib/pipulse (use --purge to remove them)'
   fi
+}
+
+# network_of 192.168.1.35/24 → 192.168.1.0/24
+network_of() {
+  echo "$1" | awk -F'[./]' '{ p = $5; ip = (($1 * 256 + $2) * 256 + $3) * 256 + $4; b = 2 ^ (32 - p); n = ip - (ip % b);
+    printf "%d.%d.%d.%d/%d\n", int(n / 16777216) % 256, int(n / 65536) % 256, int(n / 256) % 256, n % 256, p }'
+}
+
+# The default-route interface's IPv4 network, unless it is a bridge or VPN, or a prefix not worth offering.
+candidate_subnet() {
+  dev=$(ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n 1)
+  [ -n "$dev" ] || return 1
+  case $dev in docker* | br-* | veth* | tun* | wg*) return 1 ;; esac
+  cidr=$(ip -4 -o addr show dev "$dev" scope global 2>/dev/null | awk '{ print $4 }' | head -n 1)
+  [ -n "$cidr" ] || return 1
+  prefix=${cidr#*/}
+  # The CLI refuses anything broader than a /16, so offering one only ends in a retry.
+  { [ "$prefix" -ge 16 ] && [ "$prefix" -le 30 ]; } 2>/dev/null || return 1
+  network_of "$cidr"
+}
+
+# Fresh install with a terminal: offer IP access for the LAN (default No). Never waits without
+# a terminal, on an upgrade, or when the operator already chose a subnet.
+ask_subnet() {
+  [ -z "${PIPULSE_TLS_INIT_SUBNET:-}" ] || return 0
+  [ -e /opt/pipulse/app/version.json ] && return 0
+  [ -e /etc/pipulse/tls/state.json ] && return 0
+  (: </dev/tty) 2>/dev/null || return 0
+  cidr=$(candidate_subnet) || return 0
+  cat >/dev/tty <<EOF
+
+[pipulse] HTTPS: PiPulse makes its own certificate authority (CA) for this Pi.
+By default it covers the Pi's names ($(hostname), $(hostname).local, localhost), not IP addresses.
+
+This CA will be trusted for the following DNS names and IP ranges. Anyone holding its private key can impersonate hosts within those ranges.
+
+Accepting $cidr allows this CA to issue certificates for any IP in that subnet. A stolen CA key could impersonate other devices there.
+
+EOF
+  printf 'Also cover https://<IP address> in %s? [y/N] ' "$cidr" >/dev/tty
+  answer=
+  read -r answer </dev/tty || answer=
+  case $answer in
+    y | Y | yes | YES) PIPULSE_TLS_INIT_SUBNET=$cidr; export PIPULSE_TLS_INIT_SUBNET ;;
+    *) printf '[pipulse] names only; to add it later: sudo pipulse tls new-ca --subnet %s\n' "$cidr" >/dev/tty ;;
+  esac
 }
 
 main() {
@@ -361,6 +444,7 @@ main() {
     shift
   done
   [ "$(id -u)" -eq 0 ] || die 'run as root (sudo)'
+  case $mode in apt | tarball) [ "$no_start" = yes ] || ask_subnet ;; esac
   case $mode in
     apt) install_apt ;;
     uninstall) refuse_over_apt; uninstall no ;;

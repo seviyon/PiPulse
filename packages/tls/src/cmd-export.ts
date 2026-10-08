@@ -9,7 +9,6 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs';
-import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { paths } from './layout.js';
 import { usage, type Context } from './cli-common.js';
@@ -74,7 +73,7 @@ export function exportCa(ctx: Context, args: string[]): number {
   } else {
     ctx.out(pem.trimEnd());
   }
-  ctx.err(`PiPulse CA on ${hostname()}: SHA-256 ${fingerprint}`);
+  ctx.err(`PiPulse CA on ${ctx.hostname()}: SHA-256 ${fingerprint}`);
   ctx.err(
     'Compare it with the fingerprint `sudo pipulse tls status` prints on the Pi itself (over SSH or at its console), never with one a web page shows.'
   );
