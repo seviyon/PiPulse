@@ -83,9 +83,18 @@ pkill -f /opt/pipulse/app/packages/api/dist/server.js || true
 sleep 1
 setpriv --reuid=pipulse --regid=pipulse --init-groups sh -c 'set -a; . /etc/pipulse/pipulse.env; set +a; cd /var/lib/pipulse; PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite exec /opt/pipulse/node/bin/node --disable-warning=ExperimentalWarning /opt/pipulse/app/packages/api/dist/server.js' >> /tmp/probe-server.log 2>&1 &
 SH
-chmod +x /usr/local/bin/pipulse-test-restart
+# Like `systemctl stop`, it returns only once the server has exited (it closes its database
+# on SIGTERM, which removes the -wal file): a bare pkill returns at once, and the installer's
+# database backup then races the server's shutdown.
+cat > /usr/local/bin/pipulse-test-stop <<'SH'
+#!/bin/sh
+pkill -f /opt/pipulse/app/packages/api/dist/server.js || true
+i=0
+while pgrep -f /opt/pipulse/app/packages/api/dist/server.js >/dev/null && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.2; done
+SH
+chmod +x /usr/local/bin/pipulse-test-restart /usr/local/bin/pipulse-test-stop
 : > /tmp/probe-server.log
-probe() { PIPULSE_FORCE_RESTART=1 PIPULSE_RESTART_CMD=/usr/local/bin/pipulse-test-restart PIPULSE_STOP_CMD='pkill -f /opt/pipulse/app/packages/api/dist/server.js' PIPULSE_HEALTH_WAIT=40 sh "$repo/packaging/install.sh" --from "$1" > /tmp/probe.log 2>&1; }
+probe() { PIPULSE_FORCE_RESTART=1 PIPULSE_RESTART_CMD=/usr/local/bin/pipulse-test-restart PIPULSE_STOP_CMD=/usr/local/bin/pipulse-test-stop PIPULSE_HEALTH_WAIT=40 sh "$repo/packaging/install.sh" --from "$1" > /tmp/probe.log 2>&1; }
 probe "$out/pipulse-0.0.1.tar.gz" || cat /tmp/probe.log
 grep -q 'running 0.0.1' /tmp/probe.log && grep -q 'listening on https://' /tmp/probe-server.log && ok 'the post-install probe passes over verified TLS' || bad 'the post-install probe passes over verified TLS'
 [ -e /var/lib/pipulse/tls-installed ] && ok 'the server marked its data as served over HTTPS' || bad 'the server marked its data as served over HTTPS'
@@ -93,7 +102,7 @@ echo 'PIPULSE_TLS=off' >> /etc/pipulse/pipulse.env
 probe "$out/pipulse-0.0.2.tar.gz" || cat /tmp/probe.log
 grep -q 'running 0.0.2' /tmp/probe.log && grep -q 'listening on http://' /tmp/probe-server.log && ok 'with PIPULSE_TLS=off the probe goes over HTTP' || bad 'with PIPULSE_TLS=off the probe goes over HTTP'
 pkill -f /opt/pipulse/app/packages/api/dist/server.js || true
-rm -f /usr/local/bin/pipulse-test-restart
+rm -f /usr/local/bin/pipulse-test-restart /usr/local/bin/pipulse-test-stop
 sh "$repo/packaging/install.sh" --purge >/dev/null
 # 10. init dying before it writes state.json (a full disk, a wrong owner): an upgrade falls back to
 #     plain HTTP instead of restarting into "no mode chosen"; a first install fails loudly.
