@@ -171,7 +171,13 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
           subnets
         });
       } catch (error) {
-        ctx.err(`not creating a CA: ${(error as Error).message}`);
+        const message = (error as Error).message;
+        ctx.err(`not creating a CA: ${message}`);
+        if (message.includes('is not a valid host name')) {
+          ctx.err(
+            'the host name comes from PIPULSE_HOSTNAME, else from the system (letters, digits and hyphens only); set PIPULSE_HOSTNAME in pipulse.env to a valid name, and fix PIPULSE_TLS_NAMES if it lists the bad one'
+          );
+        }
         return 1;
       }
       const { constraints, warnings } = built;

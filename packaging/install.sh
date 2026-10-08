@@ -340,6 +340,14 @@ install_tarball() { # install_tarball FILE NO_START
   mv /opt/pipulse/app.previous /opt/pipulse/app
   mv /opt/pipulse/node.previous /opt/pipulse/node
   install -m 755 /opt/pipulse/app/packaging/pipulse /usr/bin/pipulse
+  # A version from before the renewal timer has no `pipulse tls` command, so the failed
+  # version's timer would fail every hour against it. Its marker goes too, so a later
+  # upgrade enables the timer again.
+  if [ ! -e /opt/pipulse/app/packaging/pipulse-tls-renew.timer ]; then
+    if [ -d /run/systemd/system ]; then systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true; fi
+    rm -f /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer /etc/pipulse/.renew-timer-enabled
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+  fi
   # The previous version's own setup puts its unit file back too.
   start_service no
   if health_ok; then die "$failed did not become healthy$reason; rolled back to $(installed), which is running"; fi
@@ -388,7 +396,8 @@ candidate_subnet() {
   cidr=$(ip -4 -o addr show dev "$dev" scope global 2>/dev/null | awk '{ print $4 }' | head -n 1)
   [ -n "$cidr" ] || return 1
   prefix=${cidr#*/}
-  { [ "$prefix" -ge 8 ] && [ "$prefix" -le 30 ]; } 2>/dev/null || return 1
+  # The CLI refuses anything broader than a /16, so offering one only ends in a retry.
+  { [ "$prefix" -ge 16 ] && [ "$prefix" -le 30 ]; } 2>/dev/null || return 1
   network_of "$cidr"
 }
 

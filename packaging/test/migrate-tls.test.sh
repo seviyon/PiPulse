@@ -143,4 +143,6 @@ cand() { PATH="$fakeip:$PATH" DEV=$1 CIDR=$2 candidate_subnet; }
 [ "$(cand eth0 192.168.1.35/24)" = 192.168.1.0/24 ] && ok 'candidate_subnet offers the default-route network' || bad 'candidate_subnet offers the default-route network'
 ! cand docker0 172.17.0.1/16 >/dev/null && ! cand wg0 10.8.0.2/24 >/dev/null && ok 'candidate_subnet skips bridges and VPNs' || bad 'candidate_subnet skips bridges and VPNs'
 ! cand eth0 192.168.1.35/32 >/dev/null && ! cand eth0 10.0.0.1/0 >/dev/null && ok 'candidate_subnet skips prefixes it would not offer' || bad 'candidate_subnet skips prefixes it would not offer'
+# The CLI refuses anything broader than a /16, so a /8 or /12 LAN must not be offered.
+! cand eth0 10.1.2.3/8 >/dev/null && ! cand eth0 172.20.1.1/12 >/dev/null && [ "$(cand eth0 10.20.30.40/16)" = 10.20.0.0/16 ] && ok 'candidate_subnet offers nothing broader than a /16' || bad 'candidate_subnet offers nothing broader than a /16'
 exit $fail

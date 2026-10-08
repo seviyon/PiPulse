@@ -86,6 +86,15 @@ describe('init', () => {
     expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
   });
 
+  it('a host name that cannot be in a certificate says where it comes from and how to change it', async () => {
+    ctx.hostname = () => 'my_pi';
+    expect(await main(['init', '--yes'], ctx)).toBe(1);
+    const errors = ctx.errors.join('\n');
+    expect(errors).toContain('"my_pi" is not a valid host name');
+    expect(errors).toContain('PIPULSE_HOSTNAME');
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+  });
+
   it('does nothing when an operator certificate is configured', async () => {
     ctx.env['PIPULSE_TLS_CERT'] = '/x/cert.pem';
     ctx.env['PIPULSE_TLS_KEY'] = '/x/key.pem';

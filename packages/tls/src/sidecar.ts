@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { dbPathOf } from './config.js';
 import { parseArgs } from 'node:util';
-import { printCa, tlsOff, usage, type Context } from './cli-common.js';
+import { operatorConfigured, printCa, tlsOff, usage, type Context } from './cli-common.js';
 import { decideInitialMode, init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
 import { ensureDir } from './files.js';
@@ -40,11 +40,49 @@ const exists = (path: string, whenUnsure: boolean) => {
 };
 
 /**
+ * What the server can start with right now: plain HTTP needs no certificate, and HTTPS needs a
+ * leaf that verifies against the public CA certificate (the check sidecarHealth makes).
+ */
+function servable(ctx: Context): boolean {
+  try {
+    const state = readState(ctx.layout);
+    if (state === 'legacy-http') return true;
+    if (state !== 'https') return false;
+    const certPem = readFileSync(paths(ctx.layout).publicCa, 'utf8');
+    return checkLeaf(paths(ctx.layout).bundle, { certPem }, pub(ctx.layout)).kind === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+/** First start on this volume: HTTPS for fresh data, plain HTTP beside an existing database. */
+function decideState(ctx: Context): void {
+  if (readState(ctx.layout) !== undefined) return;
+  const db = dbPathOf(ctx.env, '/data/pipulse.sqlite', '/data');
+  const mode = decideInitialMode({
+    previousInstall: false,
+    dbExists: exists(db, true),
+    markerExists: exists(join(dirname(db), 'tls-installed'), false)
+  });
+  writeState(ctx.layout, mode, ctx.hook);
+  ctx.out(
+    mode === 'https'
+      ? 'state.json: https'
+      : 'state.json: legacy-http (this data comes from an HTTP install). HTTPS is ready: docker compose run --rm pipulse-tls pipulse tls enable --yes, then docker compose restart pipulse'
+  );
+}
+
+/**
  * First start, in order: recover a journal, stage and validate a CA and leaf
  * (names-only, or PIPULSE_TLS_SUBNETS; never inferred), activate them, write
  * state.json when absent, print the CA facts (the out-of-band channel,
  * identical on every start), and only then mark ready — the server waits
  * for that.
+ *
+ * A certificate problem never stops the server: if preparing the material fails (an incomplete
+ * CA, an expired CA or leaf, a clock that is not synchronized yet, another command holding the
+ * lock) but what is already on the volume can be served, this says so loudly and still marks
+ * ready. Only a volume with nothing to serve stays unready.
  */
 export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promise<number> {
   rmSync(readyFile, { force: true });
@@ -52,31 +90,43 @@ export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promis
   // no CA, legacy-http on a fresh volume, so dropping the setting later never flips the transport.
   const off = tlsOff(ctx.env);
   // The same lock as the CLI: `docker compose run pipulse-tls pipulse tls new-ca` may run meanwhile.
-  const code = await withLock(
-    ctx.layout,
-    () => init(ctx, off ? ['--mode', 'auto', '--yes', '--quiet'] : ['--yes', '--quiet']),
-    lockOptions(ctx, true)
-  );
-  if (code !== 0) return code;
+  // The mode decision is inside it, so an `enable` or `disable` landing now is never overwritten.
+  let code: number;
+  try {
+    code = await withLock(
+      ctx.layout,
+      async () => {
+        const result = await init(
+          ctx,
+          off ? ['--mode', 'auto', '--yes', '--quiet'] : ['--yes', '--quiet']
+        );
+        if (result === 0 && !off) decideState(ctx);
+        return result;
+      },
+      lockOptions(ctx, true)
+    );
+  } catch (error) {
+    ctx.err(`the HTTPS material was not prepared: ${(error as Error).message}`);
+    code = 1;
+  }
+  let degraded = false;
+  if (code !== 0) {
+    if (!servable(ctx)) return code;
+    degraded = true;
+    ctx.err(
+      'warning: the HTTPS material could not be prepared (see above); the server starts with what is already in /tls. Fix it, then: docker compose restart pipulse-tls'
+    );
+  }
   if (off) {
     writeFileSync(readyFile, `${ctx.now()}\n`, { mode: 0o600 });
     return 0;
   }
-  if (readState(ctx.layout) === undefined) {
-    const db = dbPathOf(ctx.env, '/data/pipulse.sqlite', '/data');
-    const mode = decideInitialMode({
-      previousInstall: false,
-      dbExists: exists(db, true),
-      markerExists: exists(join(dirname(db), 'tls-installed'), false)
-    });
-    writeState(ctx.layout, mode, ctx.hook);
-    ctx.out(
-      mode === 'https'
-        ? 'state.json: https'
-        : 'state.json: legacy-http (this data comes from an HTTP install). HTTPS is ready: docker compose run --rm pipulse-tls pipulse tls enable --yes, then docker compose restart pipulse'
-    );
+  try {
+    printCa(ctx);
+  } catch (error) {
+    if (!degraded) throw error;
+    ctx.err(`the CA facts can't be shown: ${(error as Error).message}`);
   }
-  printCa(ctx);
   const clock = ctx.clock();
   ctx.out(
     `clock: ${clock.state}${ctx.env['PIPULSE_TLS_CLOCK']?.trim() === 'trust' ? ' (PIPULSE_TLS_CLOCK=trust)' : ''}`
@@ -139,7 +189,15 @@ export function sidecarHealth(ctx: Context, readyFile = READY_FILE): number {
     ctx.err('not ready yet');
     return 1;
   }
-  if (tlsOff(ctx.env)) return 0;
+  // No generated certificate is involved: plain HTTP, or an operator's own pair (which the
+  // sidecar never makes or checks; the server loads it itself).
+  if (tlsOff(ctx.env) || operatorConfigured(ctx.env)) return 0;
+  try {
+    // Plain HTTP needs no certificate: a problem with the material must not keep it from starting.
+    if (readState(ctx.layout) === 'legacy-http') return 0;
+  } catch {
+    // an unreadable state.json is a problem for the server to report; check the certificate below
+  }
   let certPem: string;
   try {
     certPem = readFileSync(paths(ctx.layout).publicCa, 'utf8');

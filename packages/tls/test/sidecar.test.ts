@@ -70,6 +70,38 @@ describe('sidecarStart', () => {
     expect(existsSync(ready)).toBe(false);
   });
 
+  it('an operator certificate: no CA is made, and it is ready and healthy', async () => {
+    const ctx = docker();
+    ctx.env['PIPULSE_TLS_CERT'] = '/etc/pipulse/cert.pem';
+    ctx.env['PIPULSE_TLS_KEY'] = '/etc/pipulse/key.pem';
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
+    expect(existsSync(ready)).toBe(true);
+    // The server, not the sidecar, loads that pair: no ca.crt exists and none is needed.
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+  });
+
+  it('an incomplete CA never keeps a servable install from starting', async () => {
+    const first = docker();
+    await sidecarStart(first, ready);
+    rmSync(paths(first.layout).caConstraints);
+    const ctx = docker();
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(ctx.errors.join('\n')).toContain('the CA is incomplete');
+    expect(ctx.errors.join('\n')).toContain('starts with what is already in /tls');
+    expect(existsSync(ready)).toBe(true);
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+  });
+
+  it('a failed start with nothing to serve stays unready', async () => {
+    const first = docker();
+    await sidecarStart(first, ready);
+    rmSync(paths(first.layout).caConstraints);
+    rmSync(paths(first.layout).bundle);
+    expect(await sidecarStart(docker(), ready)).toBe(1);
+    expect(existsSync(ready)).toBe(false);
+  });
+
   it('new-ca works across the two volumes', async () => {
     const ctx = docker();
     await sidecarStart(ctx, ready);
@@ -114,6 +146,15 @@ describe('sidecarHealth', () => {
     expect(sidecarHealth(ctx, ready)).toBe(0);
     rmSync(paths(ctx.layout).publicCa);
     expect(sidecarHealth(ctx, ready)).toBe(1);
+  });
+
+  it('plain HTTP needs no certificate: healthy even with the leaf gone', async () => {
+    writeFileSync(join(dir, 'data', 'pipulse.sqlite'), '');
+    const ctx = docker();
+    await sidecarStart(ctx, ready);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    rmSync(paths(ctx.layout).bundle);
+    expect(sidecarHealth(ctx, ready)).toBe(0);
   });
 
   it('is unhealthy when the leaf is gone', async () => {
