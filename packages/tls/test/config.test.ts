@@ -6,6 +6,7 @@ import {
   readTlsConfig,
   RELEASE_DEFAULT,
   REFUSE_LINE,
+  REFUSE_LINE_CONTAINER,
   TlsConfigError
 } from '../src/config.js';
 import { tempDir } from './helpers.js';
@@ -68,6 +69,16 @@ describe('readTlsConfig mode resolution', () => {
     expect(() => readTlsConfig({}, { releaseDefault: 'refuse', readState: noState })).toThrow(
       REFUSE_LINE
     );
+  });
+
+  it('in the image the refusal names the compose file, not the Pi command', () => {
+    const env = { PIPULSE_IN_CONTAINER: 'true', PIPULSE_TLS_DIR: '/tls' };
+    expect(() => readTlsConfig(env, { releaseDefault: 'refuse', readState: noState })).toThrow(
+      REFUSE_LINE_CONTAINER
+    );
+    expect(REFUSE_LINE_CONTAINER).toContain('compose.yaml');
+    expect(REFUSE_LINE_CONTAINER).toContain('PIPULSE_TLS=off');
+    expect(REFUSE_LINE_CONTAINER).not.toContain('sudo pipulse');
   });
 
   it('the fix line names the Pi command and the way out', () => {

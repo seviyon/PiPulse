@@ -47,6 +47,10 @@ export const RELEASE_DEFAULT: Mode | 'refuse' = 'refuse';
 export const REFUSE_LINE =
   'no HTTPS certificate is set up: set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY (on a Pi install: sudo pipulse tls init), or PIPULSE_TLS=off';
 
+/** The same refusal inside the image, where `pipulse tls init` is not the way out. */
+export const REFUSE_LINE_CONTAINER =
+  'no HTTPS certificate is set up: use the current compose.yaml (its pipulse-tls service makes one), set PIPULSE_TLS_CERT and PIPULSE_TLS_KEY, or set PIPULSE_TLS=off';
+
 /**
  * state.json is data, never sourced by a shell: exactly
  * {"version":1,"mode":"https"|"legacy-http"}, nothing else, no key twice
@@ -140,7 +144,11 @@ export function readTlsConfig(
     modeReason = 'state';
   } else if (options.releaseDefault === 'refuse') {
     // An operator certificate is exactly what the fix line asks for: serve it.
-    if (certPath === undefined) throw new TlsConfigError(REFUSE_LINE);
+    if (certPath === undefined) {
+      throw new TlsConfigError(
+        env['PIPULSE_IN_CONTAINER'] === 'true' ? REFUSE_LINE_CONTAINER : REFUSE_LINE
+      );
+    }
     mode = 'https';
     modeReason = 'default';
   } else {

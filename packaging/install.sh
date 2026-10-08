@@ -111,6 +111,9 @@ set_aside_tarball() {
   for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
     if [ -e "/etc/systemd/system/$unit" ]; then mv "/etc/systemd/system/$unit" "$ASIDE/$unit"; fi
   done
+  # The timer is off now, so the package's setup must enable it again: left in place, this
+  # marker reads as "the operator disabled it". Kept aside for a rollback.
+  if [ -e /etc/pipulse/.renew-timer-enabled ]; then mv /etc/pipulse/.renew-timer-enabled "$ASIDE/renew-timer-enabled"; fi
   if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
 }
 
@@ -124,6 +127,9 @@ restore_tarball() {
     rm -f "/etc/systemd/system/$unit"
     if [ -e "$ASIDE/$unit" ]; then mv "$ASIDE/$unit" "/etc/systemd/system/$unit"; fi
   done
+  # The failed package may have written its own marker; the old install's is what counts.
+  rm -f /etc/pipulse/.renew-timer-enabled
+  if [ -e "$ASIDE/renew-timer-enabled" ]; then mv "$ASIDE/renew-timer-enabled" /etc/pipulse/.renew-timer-enabled; fi
   read -r was_enabled was_active < "$ASIDE/state" || true
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
