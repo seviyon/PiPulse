@@ -4,3 +4,6 @@ if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
   systemctl disable --now pipulse >/dev/null 2>&1 || true
   systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
 fi
+# The unit goes with the package: a reinstall must enable the timer again, not read this marker
+# as "the operator disabled it".
+if [ "$1" = remove ]; then rm -f /etc/pipulse/.renew-timer-enabled; fi

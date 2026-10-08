@@ -354,6 +354,9 @@ uninstall() { # uninstall PURGE
     rm -f /etc/systemd/system/pipulse.service /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer
     systemctl daemon-reload
   fi
+  # The timer is gone, so a reinstall over the kept /etc/pipulse must enable it again (setup.sh
+  # reads this marker as "the operator already decided").
+  rm -f /etc/pipulse/.renew-timer-enabled
   rm -rf /opt/pipulse /usr/bin/pipulse
   if [ "$1" = yes ]; then
     rm -rf /etc/pipulse /var/lib/pipulse

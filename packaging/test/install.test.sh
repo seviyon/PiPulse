@@ -19,7 +19,10 @@ su -s /bin/sh pipulse -c 'cd /var/lib/pipulse && PIPULSE_DB_PATH=/var/lib/pipuls
 for _ in $(seq 1 30); do curl -fs --cacert /etc/pipulse/tls/ca.crt https://localhost:18888/api/health >/dev/null 2>&1 && break; sleep 1; done
 curl -fs --cacert /etc/pipulse/tls/ca.crt https://localhost:18888/api/config | grep -q '"version":"0.0.0-test"' && ok 'serves the stamped version' || bad 'serves the stamped version'
 kill $pid; wait $pid 2>/dev/null || true
+# The renewal timer's "enabled once" marker (setup.sh writes it on systemd hosts).
+touch /etc/pipulse/.renew-timer-enabled
 sh "$repo/packaging/install.sh" --uninstall
+[ ! -e /etc/pipulse/.renew-timer-enabled ] && ok 'uninstall forgets the timer marker, so a reinstall enables the timer' || bad 'uninstall forgets the timer marker, so a reinstall enables the timer'
 [ ! -e /opt/pipulse ] && [ -d /var/lib/pipulse ] && [ -f /etc/pipulse/pipulse.env ] && ok 'uninstall keeps data and settings' || bad 'uninstall keeps data and settings'
 sh "$repo/packaging/install.sh" --purge
 ! getent passwd pipulse >/dev/null && [ ! -e /var/lib/pipulse ] && [ ! -e /etc/pipulse ] && ok 'purge removes everything' || bad 'purge removes everything'
