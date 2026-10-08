@@ -77,7 +77,15 @@ fi
 tls_dir=$(env_value PIPULSE_TLS_DIR)
 tls_dir=${tls_dir:-/etc/pipulse/tls}
 served=$(served_marker)
-if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ] && [ -e "$served" ] && [ "$(env_value PIPULSE_TLS)" != off ]; then
+# 0 when the marker exists, or when it can't be told (its folder exists but can't be searched):
+# unsure counts as "served over HTTPS", so the install stays closed rather than downgrades.
+marker_present() {
+  [ -e "$1" ] && return 0
+  d=$(dirname "$1")
+  [ -d "$d" ] && [ ! -x "$d" ] && return 0
+  return 1
+}
+if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ] && marker_present "$served" && [ "$(env_value PIPULSE_TLS)" != off ]; then
   # This data was served over HTTPS and its TLS material is gone and could not be remade
   # (no openssl, a full disk): stay closed. The server refuses to start rather than fall
   # back to plain HTTP behind the operator's back.

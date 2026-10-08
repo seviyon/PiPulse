@@ -95,6 +95,14 @@ describe('init', () => {
     expect(existsSync(paths(ctx.layout).caDir)).toBe(false);
   });
 
+  it('auto mode: an unreadable marker is not a reason to fall back to HTTP', async () => {
+    // A path below a regular file fails with ENOTDIR, not ENOENT.
+    writeFileSync(join(dir, 'notadir'), '');
+    ctx.env['PIPULSE_DB_PATH'] = join(dir, 'notadir', 'pipulse.sqlite');
+    expect(await main(['init', '--mode', 'auto', '--yes'], ctx)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
   it('does nothing when an operator certificate is configured', async () => {
     ctx.env['PIPULSE_TLS_CERT'] = '/x/cert.pem';
     ctx.env['PIPULSE_TLS_KEY'] = '/x/key.pem';

@@ -93,8 +93,10 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
       return (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : whenUnsure;
     }
   };
-  // Unsure (unreadable) means: data present, never served over HTTPS, the choice that keeps HTTP.
-  const markerExists = exists(join(dirname(db), 'tls-installed'), false);
+  // Only ENOENT means "never served over HTTPS". Any other error (a permission or I/O problem)
+  // is unsure, and unsure counts as served: an install that may have served HTTPS must stay
+  // closed rather than silently fall back to plain HTTP.
+  const markerExists = exists(join(dirname(db), 'tls-installed'), true);
   const mode = decideInitialMode({
     previousInstall: !values['first-install'],
     dbExists: exists(db, true),
@@ -114,7 +116,11 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
     if (code !== 0) return code;
     if (markerExists && !hadCa) {
       ctx.err(
-        'warning: this data was served over HTTPS before but its TLS folder is gone: a new CA was made, so every device must trust the new CA (sudo pipulse tls export-ca)'
+        `warning: this data was served over HTTPS before but its TLS folder is gone: a new CA was made, so every device must trust the new CA (${
+          ctx.inContainer
+            ? 'docker compose exec pipulse pipulse tls export-ca'
+            : 'sudo pipulse tls export-ca'
+        })`
       );
     }
     writeState(ctx.layout, 'https', ctx.hook);

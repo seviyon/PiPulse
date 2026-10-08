@@ -15,6 +15,19 @@ const docker = (overrides = {}): TestContext => {
   ctx.env['PIPULSE_DB_PATH'] = join(dir, 'data', 'pipulse.sqlite');
   return ctx;
 };
+/** Resolves once the context has printed a line matching `pattern` (output or error). */
+const printed = (ctx: TestContext, pattern: RegExp) =>
+  new Promise<void>((resolve) => {
+    const { out, err } = ctx;
+    ctx.out = (line) => {
+      out(line);
+      if (pattern.test(line)) resolve();
+    };
+    ctx.err = (line) => {
+      err(line);
+      if (pattern.test(line)) resolve();
+    };
+  });
 beforeEach(() => {
   dir = tempDir();
   for (const d of ['tls', 'tls-ca', 'data']) mkdirSync(join(dir, d));
@@ -102,6 +115,25 @@ describe('sidecarStart', () => {
     expect(existsSync(ready)).toBe(false);
   });
 
+  it('an unreadable marker counts as served over HTTPS, never as a reason to fall back to HTTP', async () => {
+    // A path below a regular file fails with ENOTDIR, not ENOENT: the marker can't be told apart
+    // from "present", and so can't the database.
+    writeFileSync(join(dir, 'notadir'), '');
+    const ctx = docker();
+    ctx.env['PIPULSE_DB_PATH'] = join(dir, 'notadir', 'pipulse.sqlite');
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(readState(ctx.layout)).toBe('https');
+  });
+
+  it('existing data stays on HTTP and the server starts even when the CA can’t be made', async () => {
+    writeFileSync(join(dir, 'data', 'pipulse.sqlite'), '');
+    const ctx = docker({ clock: () => ({ state: 'unsynced', synced: false }) });
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(readState(ctx.layout)).toBe('legacy-http');
+    expect(existsSync(ready)).toBe(true);
+    expect(sidecarHealth(ctx, ready)).toBe(0);
+  });
+
   it('new-ca works across the two volumes', async () => {
     const ctx = docker();
     await sidecarStart(ctx, ready);
@@ -181,8 +213,9 @@ describe('PIPULSE_TLS=off', () => {
     const ctx = docker();
     ctx.env['PIPULSE_TLS'] = 'off';
     const stop = new AbortController();
+    const idle = printed(ctx, /nothing to renew/);
     const running = sidecar(ctx, [], { readyFile: ready, intervalMs: 20, stop: stop.signal });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await idle;
     stop.abort();
     expect(await running).toBe(0);
     expect(existsSync(paths(ctx.layout).renewStatus)).toBe(false);
@@ -193,8 +226,10 @@ describe('sidecar loop', () => {
   it('starts, renews once, and stops when told to', async () => {
     const ctx = docker();
     const stop = new AbortController();
+    // renew records its result, then prints it: the first "not due" is after the first renewal.
+    const renewed = printed(ctx, /^not due/);
     const running = sidecar(ctx, [], { readyFile: ready, intervalMs: 50, stop: stop.signal });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await renewed;
     stop.abort();
     expect(await running).toBe(0);
     expect(existsSync(paths(ctx.layout).renewStatus)).toBe(true);

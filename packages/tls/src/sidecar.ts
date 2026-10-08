@@ -1,12 +1,10 @@
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { dbPathOf } from './config.js';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { operatorConfigured, printCa, tlsOff, usage, type Context } from './cli-common.js';
-import { decideInitialMode, init } from './cmd-init.js';
+import { init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
 import { ensureDir } from './files.js';
-import { MODES, paths, priv, pub, readState, writeState } from './layout.js';
+import { MODES, paths, priv, pub, readState } from './layout.js';
 import { withLock } from './lock.js';
 import { checkLeaf } from './material.js';
 
@@ -30,15 +28,6 @@ export function sidecarInit(ctx: Context): number {
   return 0;
 }
 
-const exists = (path: string, whenUnsure: boolean) => {
-  try {
-    statSync(path);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : whenUnsure;
-  }
-};
-
 /**
  * What the server can start with right now: plain HTTP needs no certificate, and HTTPS needs a
  * leaf that verifies against the public CA certificate (the check sidecarHealth makes).
@@ -53,23 +42,6 @@ function servable(ctx: Context): boolean {
   } catch {
     return false;
   }
-}
-
-/** First start on this volume: HTTPS for fresh data, plain HTTP beside an existing database. */
-function decideState(ctx: Context): void {
-  if (readState(ctx.layout) !== undefined) return;
-  const db = dbPathOf(ctx.env, '/data/pipulse.sqlite', '/data');
-  const mode = decideInitialMode({
-    previousInstall: false,
-    dbExists: exists(db, true),
-    markerExists: exists(join(dirname(db), 'tls-installed'), false)
-  });
-  writeState(ctx.layout, mode, ctx.hook);
-  ctx.out(
-    mode === 'https'
-      ? 'state.json: https'
-      : 'state.json: legacy-http (this data comes from an HTTP install). HTTPS is ready: docker compose run --rm pipulse-tls pipulse tls enable --yes, then docker compose restart pipulse'
-  );
 }
 
 /**
@@ -90,19 +62,14 @@ export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promis
   // no CA, legacy-http on a fresh volume, so dropping the setting later never flips the transport.
   const off = tlsOff(ctx.env);
   // The same lock as the CLI: `docker compose run pipulse-tls pipulse tls new-ca` may run meanwhile.
-  // The mode decision is inside it, so an `enable` or `disable` landing now is never overwritten.
+  // `--mode auto --first-install` is the native installer's decision too: HTTPS for fresh data,
+  // plain HTTP beside an existing database (recorded even when the material can't be made, so
+  // an upgrade still starts), all inside this lock.
   let code: number;
   try {
     code = await withLock(
       ctx.layout,
-      async () => {
-        const result = await init(
-          ctx,
-          off ? ['--mode', 'auto', '--yes', '--quiet'] : ['--yes', '--quiet']
-        );
-        if (result === 0 && !off) decideState(ctx);
-        return result;
-      },
+      () => init(ctx, ['--mode', 'auto', '--first-install', '--yes', '--quiet']),
       lockOptions(ctx, true)
     );
   } catch (error) {
