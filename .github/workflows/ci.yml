@@ -73,3 +73,5 @@ jobs:
         run: sh packaging/test/docker.sh pipulse:test
       - name: Compose (sidecar, volumes, capabilities)
         run: sh packaging/test/compose.sh pipulse:test
+      - name: Compose with an operator certificate
+        run: sh packaging/test/compose-operator.sh pipulse:test
