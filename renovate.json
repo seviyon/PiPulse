@@ -17,6 +17,12 @@
       "automerge": false
     },
     {
+      "description": "PiPulse's own image in compose.yaml follows :latest; the release stamps the shipped file with its tag, so a digest pin only goes stale.",
+      "matchManagers": ["docker-compose"],
+      "matchPackageNames": ["ghcr.io/seviyon/pipulse"],
+      "enabled": false
+    },
+    {
       "description": "The workflows and their containers run the Node that ships on the Pi (armhf stays on 22).",
       "matchManagers": ["github-actions"],
       "matchDepNames": ["node"],

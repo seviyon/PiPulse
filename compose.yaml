@@ -16,7 +16,7 @@ x-timesync: &timesync
 
 services:
   pipulse-tls-init: # one-shot: volume owners and modes (the only service with a capability)
-    image: ghcr.io/seviyon/pipulse:latest@sha256:4142b9902252001dba2130410639a260e2b76d6d72705c96df616b04e0ad0c6a
+    image: ghcr.io/seviyon/pipulse:latest
     command: ['pipulse', 'tls', 'sidecar-init']
     user: '0:0'
     group_add: ['999'] # the image's pipulse group: with no capability, root may then keep setgid on /tls
@@ -30,7 +30,7 @@ services:
     volumes: [tls-ca:/tls-ca, tls:/tls]
 
   pipulse-tls: # the CA, the certificate and its renewal; opens no sockets
-    image: ghcr.io/seviyon/pipulse:latest@sha256:4142b9902252001dba2130410639a260e2b76d6d72705c96df616b04e0ad0c6a
+    image: ghcr.io/seviyon/pipulse:latest
     command: ['pipulse', 'tls', 'sidecar']
     user: '0:0'
     group_add: ['999'] # lets it give files in /tls the pipulse group without CAP_CHOWN
@@ -59,7 +59,7 @@ services:
     restart: unless-stopped
 
   pipulse:
-    image: ghcr.io/seviyon/pipulse:latest@sha256:4142b9902252001dba2130410639a260e2b76d6d72705c96df616b04e0ad0c6a
+    image: ghcr.io/seviyon/pipulse:latest
     restart: unless-stopped
     network_mode: host # the host's network counters; set PIPULSE_PORT in pipulse.env
     cap_drop: [ALL]
