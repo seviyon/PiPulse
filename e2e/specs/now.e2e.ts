@@ -30,7 +30,13 @@ test('the Now page shows a tile per plugin and follows readings live', async ({ 
   const tile = page.getByRole('region', { name: memory.label, exact: true });
   await expect(tile).toContainText(formatValue(DEFAULT_READINGS['memory_used']!, memory.unit).text);
 
-  // A new reading reaches the tile over the WebSocket, with no reload.
+  // A new reading reaches the tile over the WebSocket, with no navigation: a reload would also
+  // show the new value (after refetching it), so count main-frame navigations from here on.
+  let navigations = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) navigations += 1;
+  });
   server.setReadings({ memory_used: 61.5 });
   await expect(tile).toContainText(formatValue(61.5, memory.unit).text);
+  expect(navigations).toBe(0);
 });
