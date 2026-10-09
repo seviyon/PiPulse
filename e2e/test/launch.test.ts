@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { insertSample } from '@pipulse/storage';
 import { afterEach, describe, expect, it } from 'vitest';
-import { E2E_PASSWORD, startServer, type RunningServer } from '../src/harness/launch.js';
+import {
+  E2E_PASSWORD,
+  liveServerCount,
+  startServer,
+  type RunningServer
+} from '../src/harness/launch.js';
 import { TLS_FIXTURES } from '../src/harness/paths.js';
 
 const running: RunningServer[] = [];
@@ -61,6 +66,16 @@ describe('startServer', () => {
     await expect(startServer({ hook: false })).rejects.toThrow(/fake collector not loaded/);
     // Nothing is left behind: no folder (and the process was killed before the folder went).
     expect(folders()).toEqual(before);
+  });
+
+  it('the drift guard also works with read protection and with HTTPS, and leaves no process', async () => {
+    await expect(startServer({ hook: false, password: true, protectReads: true })).rejects.toThrow(
+      /fake collector not loaded/
+    );
+    await expect(startServer({ hook: false, tls: true })).rejects.toThrow(
+      /fake collector not loaded/
+    );
+    expect(liveServerCount()).toBe(0);
   });
 
   it('writes an admin password when asked, and the password signs in', async () => {
@@ -124,6 +139,7 @@ describe('startServer', () => {
   it('keeps the server’s output for the report', async () => {
     const server = await start();
     expect(server.logs()).toContain('listening on');
+    expect(server.logs()).toContain('[e2e] fake alert engine:');
   });
 
   it('serves HTTPS with the verified test certificate when asked', async () => {
@@ -155,6 +171,12 @@ describe('startServer', () => {
 
     it('an environment variable that is not PIPULSE_*', async () => {
       await expect(startServer({ env: { PATH: 'x' } })).rejects.toThrow(/only PIPULSE_/);
+    });
+
+    it('an environment variable the harness manages itself', async () => {
+      await expect(
+        startServer({ env: { PIPULSE_DB_PATH: '/tmp/elsewhere.sqlite' } })
+      ).rejects.toThrow(/managed by the harness/);
     });
 
     it('read protection without a password', async () => {

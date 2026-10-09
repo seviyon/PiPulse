@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
 import {
+  ALERTS_MARKER,
   DEFAULT_READINGS,
   FAKE_INTERVAL_MS,
   READINGS_ENV,
@@ -46,6 +47,34 @@ const REGISTER = join(E2E_ROOT, 'dist', 'harness', 'register.js');
 const START_TIMEOUT_MS = 20_000;
 const KILL_AFTER_MS = 5_000;
 
+/** What the harness sets itself: a test may add PIPULSE_* settings, never repoint these. */
+const MANAGED_ENV = new Set([
+  'PIPULSE_DB_PATH',
+  'PIPULSE_HOST',
+  'PIPULSE_PORT',
+  'PIPULSE_WEB_DIR',
+  'PIPULSE_RUNTIME_DIR',
+  'PIPULSE_TLS',
+  'PIPULSE_TLS_CERT',
+  'PIPULSE_TLS_KEY',
+  'PIPULSE_TLS_TIMESYNC_DIR',
+  'PIPULSE_ADMIN_PASSWORD_HASH_FILE',
+  'PIPULSE_PROTECT_READS',
+  'PIPULSE_ALERTS_FILE',
+  READINGS_ENV
+]);
+
+// Every server this process started and has not seen exit; killed if the process itself exits.
+const live = new Set<ChildProcess>();
+process.on('exit', () => {
+  for (const child of live) child.kill('SIGKILL');
+});
+
+/** How many servers started by this process are still running (for tests of the cleanup). */
+export function liveServerCount(): number {
+  return live.size;
+}
+
 function checkOptions(options: ServerOptions, webDist: string): void {
   if (!existsSync(join(webDist, 'index.html'))) {
     throw new Error(`${join(webDist, 'index.html')} is missing: run npm run build first`);
@@ -54,6 +83,9 @@ function checkOptions(options: ServerOptions, webDist: string): void {
   for (const key of Object.keys(options.env ?? {})) {
     if (!key.startsWith('PIPULSE_')) {
       throw new Error(`env ${key}: only PIPULSE_* variables may be passed to the server`);
+    }
+    if (MANAGED_ENV.has(key)) {
+      throw new Error(`env ${key}: managed by the harness (use the matching option)`);
     }
   }
   if (options.protectReads && !options.password) {
@@ -211,6 +243,8 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       stdio: ['ignore', 'pipe', 'pipe']
     });
     child = spawned;
+    live.add(spawned);
+    spawned.once('exit', () => live.delete(spawned));
     let out = '';
     spawned.stderr.on('data', (chunk: Buffer) => (log += chunk.toString()));
     const url = await new Promise<string>((resolve, reject) => {
@@ -227,6 +261,10 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
           resolve(match[1]);
         }
       });
+      spawned.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
       spawned.once('exit', (code) => {
         clearTimeout(timer);
         reject(new Error(`the server exited early with code ${String(code)}:\n${log}`));
@@ -240,6 +278,11 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     if (plugins.length === 0 || plugins.some((plugin) => plugin.intervalMs !== FAKE_INTERVAL_MS)) {
       throw new Error(
         `fake collector not loaded: /api/config reports real plugin intervals\n${log}`
+      );
+    }
+    if (!log.includes(ALERTS_MARKER)) {
+      throw new Error(
+        `fake alerts not loaded: the server never started the fake alert engine\n${log}`
       );
     }
   };
@@ -274,7 +317,12 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     },
     async restart() {
       if (child) await terminate(child);
-      await launch();
+      try {
+        await launch();
+      } catch (error) {
+        if (child) await terminate(child); // a failed restart leaves no process behind
+        throw error;
+      }
     },
     logs() {
       return log;

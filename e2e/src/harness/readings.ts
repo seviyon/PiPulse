@@ -23,6 +23,9 @@ export const DEFAULT_READINGS: Readonly<Record<string, number>> = {
   network_tx: 500
 };
 
+/** Printed by the fake alert engine when it starts: the launcher refuses a server without it. */
+export const ALERTS_MARKER = '[e2e] fake alert engine:';
+
 export type Readings = Record<string, number | null>;
 
 /** Writes the whole file through a temp file and a rename, so a poll never reads half of it. */

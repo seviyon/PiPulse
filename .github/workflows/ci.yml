@@ -77,6 +77,7 @@ jobs:
         run: sh packaging/test/compose-operator.sh pipulse:test
 
   e2e:
+    timeout-minutes: 15
     # The dashboard in Chromium against the real built server (Node 22 only: the Pi ships 22,
     # and a second Node adds no browser coverage).
     runs-on: ubuntu-24.04

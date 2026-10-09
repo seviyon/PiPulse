@@ -5,6 +5,7 @@ import { builtinPlugins as realPlugins, validatePlugin } from '@pipulse/collecto
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { builtinPlugins as fakePlugins } from '../src/harness/fake-collector.js';
 import {
+  ALERTS_MARKER,
   DEFAULT_READINGS,
   FAKE_INTERVAL_MS,
   READINGS_ENV,
@@ -100,6 +101,27 @@ describe('fake startAlerts', () => {
     const options = { rules: [], metrics: [], onError: () => {} };
     startAlerts({} as never, options);
     expect(realStartAlerts).toHaveBeenCalledWith({}, { ...options, intervalMs: 1000 });
+  });
+
+  it('says it started (the launcher looks for this line)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { startAlerts } = await import('../src/harness/fake-alerts.js');
+      startAlerts({} as never, { rules: [], metrics: [] });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(ALERTS_MARKER));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('refuses an interval that is not a number or is tiny', async () => {
+    const { startAlerts } = await import('../src/harness/fake-alerts.js');
+    for (const bad of ['abc', '0', '-5', '10']) {
+      process.env['PIPULSE_E2E_ALERT_INTERVAL_MS'] = bad;
+      expect(() => startAlerts({} as never, { rules: [], metrics: [] }), bad).toThrow(
+        /at least 50 ms/
+      );
+    }
   });
 
   it('takes the interval from PIPULSE_E2E_ALERT_INTERVAL_MS', async () => {
