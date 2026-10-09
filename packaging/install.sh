@@ -428,6 +428,11 @@ EOF
   esac
 }
 
+# Releases before 0.7.0 make no CA at install and ignore PIPULSE_TLS_INIT_SUBNET, so asking would mislead.
+version_makes_ca() { # version_makes_ca X.Y.Z[-rcN]
+  echo "${1#v}" | awk -F. '{ exit !(($1 + 0 > 0) || ($1 + 0 == 0 && $2 + 0 >= 7)) }'
+}
+
 main() {
   mode=apt version='' from='' no_start=no
   while [ "$#" -gt 0 ]; do
@@ -444,7 +449,9 @@ main() {
     shift
   done
   [ "$(id -u)" -eq 0 ] || die 'run as root (sudo)'
-  case $mode in apt | tarball) [ "$no_start" = yes ] || ask_subnet ;; esac
+  if [ "$mode" = apt ] || [ "$mode" = tarball ]; then
+    if [ "$no_start" != yes ] && { [ -z "$version" ] || version_makes_ca "$version"; }; then ask_subnet; fi
+  fi
   case $mode in
     apt) install_apt ;;
     uninstall) refuse_over_apt; uninstall no ;;

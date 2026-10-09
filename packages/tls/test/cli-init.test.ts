@@ -75,7 +75,10 @@ describe('init', () => {
     expect(await main(['init', '--subnet', '192.168.1.0/24'], tty)).toBe(1);
     expect(tty.lines.join('\n')).toContain('Accepting 192.168.1.0/24 allows this CA');
     expect(asked).toEqual(['Create this CA?']);
-    expect(await main(['init', '--subnet', '192.168.1.0/24', '--yes'], testContext(dir))).toBe(0);
+    const consented = testContext(dir);
+    expect(await main(['init', '--subnet', '192.168.1.0/24', '--yes'], consented)).toBe(0);
+    // The consequence text is shown once, after the CA exists, not again before the question.
+    expect(consented.lines.join('\n').split('Accepting 192.168.1.0/24').length - 1).toBe(1);
     expect(readMeta(ctx.layout)!.constraints.subnets).toEqual(['192.168.1.0/24']);
     expect(leafCert().subjectAltName).toContain('192.168.1.35');
   });

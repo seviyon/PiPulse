@@ -135,7 +135,7 @@ rm -f /var/lib/pipulse/tls-installed
 sh "$repo/packaging/install.sh" --purge >/dev/null
 
 # The installer's subnet helpers (Task 23).
-sed -n '/^network_of()/,/^}/p;/^candidate_subnet()/,/^}/p' "$repo/packaging/install.sh" > /tmp/net.sh
+sed -n '/^network_of()/,/^}/p;/^candidate_subnet()/,/^}/p;/^version_makes_ca()/,/^}/p' "$repo/packaging/install.sh" > /tmp/net.sh
 # shellcheck source=/dev/null
 . /tmp/net.sh
 [ "$(network_of 192.168.1.35/24)" = 192.168.1.0/24 ] && [ "$(network_of 10.20.30.40/16)" = 10.20.0.0/16 ] && [ "$(network_of 192.168.1.131/25)" = 192.168.1.128/25 ] && ok 'network_of' || bad 'network_of'
@@ -154,4 +154,7 @@ cand() { PATH="$fakeip:$PATH" DEV=$1 CIDR=$2 candidate_subnet; }
 ! cand eth0 192.168.1.35/32 >/dev/null && ! cand eth0 10.0.0.1/0 >/dev/null && ok 'candidate_subnet skips prefixes it would not offer' || bad 'candidate_subnet skips prefixes it would not offer'
 # The CLI refuses anything broader than a /16, so a /8 or /12 LAN must not be offered.
 ! cand eth0 10.1.2.3/8 >/dev/null && ! cand eth0 172.20.1.1/12 >/dev/null && [ "$(cand eth0 10.20.30.40/16)" = 10.20.0.0/16 ] && ok 'candidate_subnet offers nothing broader than a /16' || bad 'candidate_subnet offers nothing broader than a /16'
+# Releases before 0.7.0 ignore the subnet, so --version for one must not ask about it.
+version_makes_ca 0.7.0 && version_makes_ca 0.7.1 && version_makes_ca 0.10.0 && version_makes_ca 1.0.0 && version_makes_ca v0.7.0-rc1 && ok 'version_makes_ca: 0.7.0 and later' || bad 'version_makes_ca: 0.7.0 and later'
+! version_makes_ca 0.6.5 && ! version_makes_ca 0.6.2 && ! version_makes_ca 0.0.9 && ok 'version_makes_ca: earlier releases' || bad 'version_makes_ca: earlier releases'
 exit $fail
