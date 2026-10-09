@@ -6,6 +6,14 @@
 set -eu
 image=$1
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+# Names unique to this run, and never an existing volume: the cleanup removes what is named
+# here, so it must not be able to reach anything a developer already has.
+project=pipulse-optest-$$
+cfg=$project-cfg
+if docker volume inspect "$cfg" >/dev/null 2>&1; then
+  echo "refusing to run: the volume $cfg already exists" >&2
+  exit 1
+fi
 work=$(mktemp -d "$repo/.compose-test.XXXXXX") # inside the repo: Colima shares only the home folder
 fail=0
 ok() { echo "ok - $1"; }
@@ -37,7 +45,6 @@ want=$("$openssl" x509 -in "$work/gen/leaf.pem" -noout -fingerprint -sha256 | se
 } > "$work/pipulse.env"
 # The operator's files live in a volume owned by the image's pipulse user (uid 999), the key 0600,
 # as an operator on a Linux host would make them with chown and chmod.
-cfg=pipulse-optest-cfg
 put() { # put KEYFILE → /etc/pipulse/leaf.key in the volume
   docker run --rm -u 0 -v "$cfg:/c" -v "$work/gen:/gen:ro" --entrypoint sh "$image" -c \
     "cp /gen/ca.pem /gen/leaf.pem /c/ && cp /gen/$1 /c/leaf.key && chown 999:999 /c/* && chmod 600 /c/leaf.key && chmod 644 /c/*.pem"
@@ -47,7 +54,7 @@ put leaf.key
 sed -e "s#ghcr.io/seviyon/pipulse:[^ ]*#$image#" -e "s#- ./config:/etc/pipulse:ro#- $cfg:/etc/pipulse:ro#" -e "s#/run/systemd/timesync#$work/timesync#" -e "s#- /etc/hostname:#- $work/hostname:#" \
   -e '/\/boot\/firmware/d' -e '/os-release/d' -e '/device-tree/d' "$repo/compose.yaml" > "$work/compose.yaml"
 printf '  %s:\n    external: true\n' "$cfg" >> "$work/compose.yaml"
-dc() { docker compose -p pipulse-optest -f "$work/compose.yaml" "$@"; }
+dc() { docker compose -p "$project" -f "$work/compose.yaml" "$@"; }
 trap 'dc down -v >/dev/null 2>&1 || true; docker volume rm "$cfg" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q "$1")" 2>/dev/null)" = healthy ]; }
 api() { dc exec -T -e NODE_EXTRA_CA_CERTS=/etc/pipulse/ca.pem pipulse node -e "fetch('https://localhost:18892$1').then(r=>r.text()).then(t=>process.stdout.write(t))"; }
