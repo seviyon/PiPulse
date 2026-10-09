@@ -193,7 +193,9 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
         if (warning) ctx.err(`warning: ${warning}`);
       }
       if (constraints.subnets.length > 0) {
-        for (const line of consequenceText(constraints)) ctx.out(line);
+        // printCa shows the same text once the CA exists, so a consented, non-quiet run needs it once.
+        if (!(values.yes && !values.quiet))
+          for (const line of consequenceText(constraints)) ctx.out(line);
         if (!(await confirm(ctx, values.yes, 'Create this CA?'))) {
           ctx.err('nothing changed');
           return 1;
