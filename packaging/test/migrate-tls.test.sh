@@ -135,7 +135,7 @@ rm -f /var/lib/pipulse/tls-installed
 sh "$repo/packaging/install.sh" --purge >/dev/null
 
 # The installer's subnet helpers (Task 23).
-sed -n '/^network_of()/,/^}/p;/^candidate_subnet()/,/^}/p;/^version_makes_ca()/,/^}/p' "$repo/packaging/install.sh" > /tmp/net.sh
+sed -n '/^network_of()/,/^}/p;/^candidate_subnet()/,/^}/p;/^version_makes_ca()/,/^}/p;/^tarball_version()/,/^}/p' "$repo/packaging/install.sh" > /tmp/net.sh
 # shellcheck source=/dev/null
 . /tmp/net.sh
 [ "$(network_of 192.168.1.35/24)" = 192.168.1.0/24 ] && [ "$(network_of 10.20.30.40/16)" = 10.20.0.0/16 ] && [ "$(network_of 192.168.1.131/25)" = 192.168.1.128/25 ] && ok 'network_of' || bad 'network_of'
@@ -157,4 +157,8 @@ cand() { PATH="$fakeip:$PATH" DEV=$1 CIDR=$2 candidate_subnet; }
 # Releases before 0.7.0 ignore the subnet, so --version for one must not ask about it.
 version_makes_ca 0.7.0 && version_makes_ca 0.7.1 && version_makes_ca 0.10.0 && version_makes_ca 1.0.0 && version_makes_ca v0.7.0-rc1 && ok 'version_makes_ca: 0.7.0 and later' || bad 'version_makes_ca: 0.7.0 and later'
 ! version_makes_ca 0.6.5 && ! version_makes_ca 0.6.2 && ! version_makes_ca 0.0.9 && ok 'version_makes_ca: earlier releases' || bad 'version_makes_ca: earlier releases'
+# --from FILE: the release comes from the tarball itself, and a file that isn't one says nothing.
+[ "$(tarball_version "$out/pipulse-0.0.1.tar.gz")" = 0.0.1 ] && ! version_makes_ca "$(tarball_version "$out/pipulse-0.0.1.tar.gz")" && ok 'tarball_version reads the release from the tarball' || bad 'tarball_version reads the release from the tarball'
+echo 'not a tarball' > /tmp/not-a-tarball.tar.gz
+[ -z "$(tarball_version /tmp/not-a-tarball.tar.gz)" ] && [ -z "$(tarball_version /tmp/does-not-exist.tar.gz)" ] && ok 'tarball_version is empty for anything that is not a release tarball' || bad 'tarball_version is empty for anything that is not a release tarball'
 exit $fail

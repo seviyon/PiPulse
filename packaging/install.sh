@@ -433,6 +433,13 @@ version_makes_ca() { # version_makes_ca X.Y.Z[-rcN]
   echo "${1#v}" | awk -F. '{ exit !(($1 + 0 > 0) || ($1 + 0 == 0 && $2 + 0 >= 7)) }'
 }
 
+# The release a tarball holds, from the version.json inside it; nothing if it can't be read.
+tarball_version() { # tarball_version FILE
+  member=$(tar -tzf "$1" 2>/dev/null | sed -n 's#^\(\./\)\{0,1\}pipulse-[^/]*/version\.json$#&#p' | head -n 1)
+  [ -n "$member" ] || return 0
+  tar -xzOf "$1" "$member" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -n 1
+}
+
 main() {
   mode=apt version='' from='' no_start=no
   while [ "$#" -gt 0 ]; do
@@ -450,7 +457,13 @@ main() {
   done
   [ "$(id -u)" -eq 0 ] || die 'run as root (sudo)'
   if [ "$mode" = apt ] || [ "$mode" = tarball ]; then
-    if [ "$no_start" != yes ] && { [ -z "$version" ] || version_makes_ca "$version"; }; then ask_subnet; fi
+    # A local tarball says which release it is; if it doesn't, don't ask about an option it may ignore.
+    ask=yes
+    if [ -n "$from" ] && [ -z "$version" ]; then
+      version=$(tarball_version "$from")
+      [ -n "$version" ] || ask=no
+    fi
+    if [ "$no_start" != yes ] && [ "$ask" = yes ] && { [ -z "$version" ] || version_makes_ca "$version"; }; then ask_subnet; fi
   fi
   case $mode in
     apt) install_apt ;;
