@@ -186,7 +186,11 @@ export function inspectMaterial(input: {
   // A client checks the dates of every certificate it is sent except a trusted
   // root, so the chain is valid only where all of them are. Reported as the
   // window rather than refused: validity is startup's and the reloader's call.
-  const dated = certs.filter((cert) => cert.fingerprint256 !== anchor?.fingerprint256);
+  // The leaf is always dated: a self-signed leaf trusted directly is its own anchor, and
+  // clients still check its dates (an empty set would give an infinite window).
+  const dated = certs.filter(
+    (cert) => cert === leaf || cert.fingerprint256 !== anchor?.fingerprint256
+  );
   const notBefore = Math.max(...dated.map((cert) => cert.validFromDate.getTime()));
   const notAfter = Math.min(...dated.map((cert) => cert.validToDate.getTime()));
 

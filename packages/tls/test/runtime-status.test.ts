@@ -61,6 +61,14 @@ describe('readRuntimeStatus', () => {
     writeRuntimeStatus(dir, status);
     expect(readRuntimeStatus(dir, running)).toEqual({ state: 'running', status });
   });
+  it('refuses a file far larger than a status file instead of reading it whole', () => {
+    writeRuntimeStatus(dir, status);
+    writeFileSync(join(dir, 'tls-status.json'), ' '.repeat(64 * 1024));
+    expect(readRuntimeStatus(dir, running)).toMatchObject({
+      state: 'status-file-corrupt',
+      problem: expect.stringContaining('too large')
+    });
+  });
   it('is missing when the server is stopped (systemd removes the folder)', () => {
     expect(readRuntimeStatus(dir, running)).toEqual({ state: 'not-running', reason: 'missing' });
   });

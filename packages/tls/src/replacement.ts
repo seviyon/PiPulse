@@ -3,8 +3,8 @@ import { CertificateRefused, validityOf, type LoadedCertificate } from './inspec
 
 /**
  * The validity half of "a reload activates only what startup would accept",
- * plus the downgrade rule: a replacement that is already expired never
- * replaces a certificate that is still good. Throws CertificateRefused.
+ * plus the downgrade rule: a replacement that is already expired, or not valid
+ * yet on a synced clock, never replaces a certificate that is still good. Throws CertificateRefused.
  */
 export function checkReplacement(
   candidate: LoadedCertificate,
@@ -26,7 +26,19 @@ export function checkReplacement(
       true
     );
   }
-  if (!options.requireValid) return;
+  if (!options.requireValid) {
+    if (
+      candidateValidity === 'not-yet-valid' &&
+      validityOf(active, now, 0) === 'valid' &&
+      readClock({ timesyncDir: options.timesyncDir, now, trust: options.clockTrust }).synced
+    ) {
+      throw new CertificateRefused(
+        `${setting}: the replacement certificate is not valid yet and the active one is; kept the active one`,
+        true
+      );
+    }
+    return;
+  }
   if (candidateValidity === 'expired') {
     throw new CertificateRefused(
       'PIPULSE_TLS_REQUIRE_VALID_CERT: the replacement certificate is expired',

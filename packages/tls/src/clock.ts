@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { pathExists } from './files.js';
 import { join } from 'node:path';
 
 export type ClockState = 'synced' | 'unsynced' | 'unknown';
@@ -30,12 +30,18 @@ export function readClock(options: {
   notBefore?: number;
   exists?: (path: string) => boolean;
 }): ClockReading {
-  const exists = options.exists ?? existsSync;
-  let state: ClockState = exists(options.timesyncDir)
-    ? exists(join(options.timesyncDir, 'synchronized'))
-      ? 'synced'
-      : 'unsynced'
-    : 'unknown';
+  const exists = options.exists ?? pathExists;
+  let state: ClockState;
+  try {
+    state = exists(options.timesyncDir)
+      ? exists(join(options.timesyncDir, 'synchronized'))
+        ? 'synced'
+        : 'unsynced'
+      : 'unknown';
+  } catch {
+    // An unreadable directory is not "no timesyncd": it may be there and not synced.
+    state = 'unsynced';
+  }
   if (
     options.now < CLOCK_FLOOR_MS ||
     (options.notBefore !== undefined && options.now < options.notBefore)
