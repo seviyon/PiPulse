@@ -23,6 +23,16 @@ describe('readClock', () => {
     });
   });
 
+  it('treats a directory it cannot inspect as unsynced, never as absent', () => {
+    const denied = () => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    };
+    expect(readClock({ timesyncDir: DIR, now: NOW, trust: true, exists: denied })).toEqual({
+      state: 'unsynced',
+      synced: false
+    });
+  });
+
   it('is unsynced while timesyncd runs without having synced', () => {
     expect(readClock({ timesyncDir: DIR, now: NOW, trust: true, exists: files(DIR) })).toEqual({
       state: 'unsynced',

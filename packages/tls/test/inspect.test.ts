@@ -1,4 +1,5 @@
 import { X509Certificate } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
@@ -166,6 +167,59 @@ describe('inspectMaterial, refused material', () => {
   ])('refuses %s', (_name, certs, key, message) => {
     expect(() => inspect(certs, key)).toThrow(CertificateRefused);
     expect(() => inspect(certs, key)).toThrow(message);
+  });
+});
+
+describe('a self-signed leaf trusted directly', () => {
+  it('keeps its own dates, never an infinite window', () => {
+    const tmp = tempDir();
+    onTestFinished(() => rmSync(tmp, { recursive: true, force: true }));
+    const key = join(tmp, 'k.pem');
+    const crt = join(tmp, 'c.pem');
+    execFileSync(TEST_OPENSSL, [
+      'ecparam',
+      '-name',
+      'prime256v1',
+      '-genkey',
+      '-noout',
+      '-out',
+      key
+    ]);
+    execFileSync(
+      TEST_OPENSSL,
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-key',
+        key,
+        '-sha256',
+        '-days',
+        '30',
+        '-subj',
+        '/CN=solo',
+        '-out',
+        crt,
+        '-addext',
+        'basicConstraints=critical,CA:FALSE',
+        '-addext',
+        'subjectAltName=DNS:solo'
+      ],
+      { stdio: 'ignore' }
+    );
+    const pem = execFileSync('cat', [crt]).toString();
+    const keyPem = execFileSync('cat', [key]).toString();
+    const loaded = inspectMaterial({
+      source: 'operator',
+      keyPem,
+      certPems: [pem],
+      trust: { anchors: [pem], system: false },
+      names: []
+    });
+    const parsed = new X509Certificate(pem);
+    expect(loaded.notBefore).toBe(parsed.validFromDate.getTime());
+    expect(loaded.notAfter).toBe(parsed.validToDate.getTime());
+    expect(Number.isFinite(loaded.notAfter)).toBe(true);
   });
 });
 

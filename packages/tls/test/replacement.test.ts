@@ -74,8 +74,24 @@ describe('checkReplacement', () => {
       expect(() => checkReplacement(future, VALID, o)).not.toThrow();
     });
 
-    it('without requireValid is accepted', () => {
+    it('without requireValid is accepted while the clock is not known to be synced', () => {
       expect(() => checkReplacement(future, VALID, options())).not.toThrow();
+    });
+
+    it('never replaces a currently valid certificate while the clock is synced', () => {
+      const o = options();
+      mkdirSync(o.timesyncDir);
+      writeFileSync(join(o.timesyncDir, 'synchronized'), '');
+      expect(() => checkReplacement(future, VALID, o)).toThrow(
+        /^PIPULSE_TLS_CERT\/PIPULSE_TLS_KEY: the replacement certificate is not valid yet and the active one is/
+      );
+    });
+
+    it('may replace an active certificate that is itself not usable', () => {
+      const o = options();
+      mkdirSync(o.timesyncDir);
+      writeFileSync(join(o.timesyncDir, 'synchronized'), '');
+      expect(() => checkReplacement(future, EXPIRED, o)).not.toThrow();
     });
   });
 

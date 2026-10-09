@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeAtomic } from './files.js';
 import { FINGERPRINT } from './layout.js';
@@ -37,7 +37,31 @@ export type RuntimeView =
   | { state: 'status-file-corrupt'; problem: string }
   | { state: 'unknown'; problem: string };
 
-const readText = (path: string) => readFileSync(path, 'utf8');
+/** A status file is a few hundred bytes; anything near this is not one. */
+const MAX_STATUS_BYTES = 16 * 1024;
+
+class StatusFileProblem extends Error {}
+
+/**
+ * Reads the file the service wrote, as root. The service owns the directory, so the path
+ * can be swapped after the lstat above (a FIFO or /dev/zero would hang or exhaust a root
+ * command): open without following links or blocking, then judge the descriptor itself.
+ */
+function readText(path: string, expectUid?: number): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new StatusFileProblem(`${path} is not a regular file`);
+    if ((stat.mode & 0o002) !== 0) throw new StatusFileProblem(`${path} is writable by everyone`);
+    if (expectUid !== undefined && stat.uid !== expectUid) {
+      throw new StatusFileProblem(`${path} is owned by uid ${stat.uid}, not the service`);
+    }
+    if (stat.size > MAX_STATUS_BYTES) throw new StatusFileProblem(`${path} is too large`);
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
 
 // proc.ts has it (the lock uses it too); re-exported here for the server and the tests.
 export { processIdentity } from './proc.js';
@@ -143,8 +167,10 @@ export function readRuntimeStatus(
         problem: `${path} is owned by uid ${stat.uid}, not the service`
       };
     }
-    content = (options.read ?? readText)(path);
+    content = options.read ? options.read(path) : readText(path, options.expectUid);
   } catch (error) {
+    if (error instanceof StatusFileProblem)
+      return { state: 'status-file-corrupt', problem: error.message };
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return { state: 'not-running', reason: 'missing' };
     return { state: 'unknown', problem: `${path}: ${code ?? (error as Error).message}` };
