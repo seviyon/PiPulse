@@ -1,0 +1,17 @@
+{
+  "name": "pipulse-e2e",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.specs.json",
+    "test:harness": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "test:browsers": "NODE_OPTIONS=--disable-warning=ExperimentalWarning playwright test",
+    "test": "npm run build && npm run test:harness && npm run test:browsers"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
