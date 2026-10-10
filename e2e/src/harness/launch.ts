@@ -28,6 +28,7 @@ export interface ServerOptions {
   readings?: Readings; // merged over DEFAULT_READINGS
   seed?: (db: PiPulseDb, now: number) => void; // runs before the server starts
   tls?: boolean; // HTTPS with the committed test certificate
+  tlsLeafOnly?: boolean; // internal: serve the leaf without its intermediate (the negative test)
   hook?: boolean; // default true; false only for the drift test
   webDist?: string; // internal: the dashboard folder (to test the missing-build error)
 }
@@ -39,6 +40,7 @@ export interface RunningServer {
   pid: number;
   setReadings(values: Readings): void; // merged over current
   stop(): Promise<void>; // SIGTERM, wait, SIGKILL after 5 s; then removes the folder
+  halt(): Promise<void>; // SIGTERM and wait, but keep the folder, so restart() can bring it back
   restart(): Promise<void>; // same folder, same port
   logs(): string; // stdout + stderr so far
 }
@@ -143,7 +145,10 @@ async function writeFiles(dir: string, options: ServerOptions): Promise<void> {
   }
   if (options.tls) {
     const read = (name: string) => readFileSync(join(TLS_FIXTURES, name), 'utf8');
-    writeFileSync(join(dir, 'cert.pem'), read('leaf.crt') + read('intermediate.crt'));
+    const chain = options.tlsLeafOnly
+      ? read('leaf.crt')
+      : read('leaf.crt') + read('intermediate.crt');
+    writeFileSync(join(dir, 'cert.pem'), chain);
     writeFileSync(join(dir, 'key.pem'), read('leaf.key'), { mode: 0o600 });
     mkdirSync(join(dir, 'timesync'));
     writeFileSync(join(dir, 'timesync', 'synchronized'), '');
@@ -314,6 +319,9 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     async stop() {
       if (child) await terminate(child);
       rmSync(dir, { recursive: true, force: true });
+    },
+    async halt() {
+      if (child) await terminate(child);
     },
     async restart() {
       if (child) await terminate(child);

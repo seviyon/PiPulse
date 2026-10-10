@@ -120,6 +120,17 @@ describe('startServer', () => {
     expect(rows.some((r) => r.metric === 'cpu_load')).toBe(true);
   });
 
+  it('halt() stops the process but keeps the folder, and restart() brings it back', async () => {
+    const server = await start({});
+    const { dir, port } = server;
+    await server.halt();
+    await expect(fetch(`${server.baseUrl}/health`)).rejects.toThrow();
+    expect(existsSync(dir)).toBe(true);
+    await server.restart();
+    expect(server.port).toBe(port);
+    expect((await fetch(`${server.baseUrl}/api/config`)).status).toBe(200);
+  });
+
   it('runs seed(db, now) before the server starts, so the history is there from the first request', async () => {
     let seenNow = 0;
     const server = await start({
@@ -157,6 +168,14 @@ describe('startServer', () => {
       ).on('error', reject);
     });
     expect(JSON.parse(body)).toMatchObject({ editable: false });
+  });
+
+  it('refuses a served chain that does not verify against the test root, and leaves no process', async () => {
+    // The launcher's own requests verify the chain, so a leaf without its intermediate fails the start.
+    await expect(startServer({ tls: true, tlsLeafOnly: true })).rejects.toThrow(
+      /unable to verify the first certificate|UNABLE_TO_VERIFY_LEAF_SIGNATURE/i
+    );
+    expect(liveServerCount()).toBe(0);
   });
 
   describe('refuses bad options', () => {
