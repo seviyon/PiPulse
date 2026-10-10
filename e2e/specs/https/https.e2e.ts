@@ -34,6 +34,8 @@ test('the session cookie is Secure', async ({ page, context }) => {
 });
 
 test('plain HTTP to the HTTPS port gets the hint page', async ({ page, server }) => {
+  // Reliable for a browser's small request; a request of hundreds of KB can lose the page to a
+  // connection reset (see packages/api/src/plain-http.ts).
   const response = await page.goto(`http://127.0.0.1:${server.port}/`);
   expect(response?.status()).toBe(400);
   await expect(page.getByText('This PiPulse address uses HTTPS')).toBeVisible();
