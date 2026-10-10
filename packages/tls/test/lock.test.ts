@@ -237,7 +237,7 @@ describe('withLock', () => {
       async () => {
         writeHolder({ token: 'taken-over' }); // broken and retaken meanwhile
       },
-      { create: true }
+      { create: true, onLost: () => undefined }
     );
     expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('taken-over');
   });

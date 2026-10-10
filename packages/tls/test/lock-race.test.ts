@@ -162,7 +162,30 @@ describe('breakLock when the lock is no longer the one judged stale', () => {
     expect(tokenOnDisk()).not.toBe('taken-by-c');
   });
 
-  it.todo('reports a displaced holder instead of leaving it to find out at release');
+  it('tells the displaced holder when its command ends', async () => {
+    const lost = vi.fn();
+    await withLock(layout, async () => takeAs('taken-by-d')(), { create: true, onLost: lost });
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(tokenOnDisk()).toBe('taken-by-d');
+  });
+
+  it('tells a holder whose lock file vanished, and stays quiet when nothing went wrong', async () => {
+    const lost = vi.fn();
+    await withLock(layout, async () => rmSync(lockPath()), { create: true, onLost: lost });
+    expect(lost).toHaveBeenCalledTimes(1);
+    await withLock(layout, async () => undefined, { create: true, onLost: lost });
+    expect(lost).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns on stderr by default', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await withLock(layout, async () => takeAs('taken-by-d')(), { create: true });
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('lock was taken over'));
+    } finally {
+      write.mockRestore();
+    }
+  });
 });
 
 describe('the heartbeat', () => {
@@ -179,7 +202,7 @@ describe('the heartbeat', () => {
         await pause(150);
         return statSync(lockPath()).mtimeMs - before;
       },
-      { create: true, heartbeatMs: 30 }
+      { create: true, heartbeatMs: 30, onLost: () => undefined }
     );
     expect(result).toBe(0);
   });

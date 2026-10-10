@@ -115,6 +115,12 @@ const localHolderAlive = (holder: LockHolder) => {
 };
 
 export interface LockOptions {
+  /**
+   * Called when the command ends and the lock file is no longer ours: it was broken as stale
+   * and taken by someone else while the command ran, so two commands may have overlapped.
+   * The default warns on stderr.
+   */
+  onLost?: () => void;
   /** Make caRoot when it is missing (commands that create a CA). Otherwise, no folder means nothing to guard yet. */
   create: boolean;
   waitMs?: number;
@@ -216,6 +222,13 @@ function breakLockByRename(path: string, judged: LockHolder | undefined): void {
   }
 }
 
+function warnLockLost(): void {
+  process.stderr.write(
+    'warning: the pipulse tls lock was taken over while this command ran, so another ' +
+      'command may have run at the same time; check `pipulse tls status`\n'
+  );
+}
+
 /**
  * Runs `fn` holding the one pipulse tls lock, so CA transactions, renewals and
  * mode switches from different processes (a manual new-ca, the hourly timer,
@@ -224,7 +237,7 @@ function breakLockByRename(path: string, judged: LockHolder | undefined): void {
  * container on a shared volume) or on another boot by its heartbeat, the lock
  * file's mtime. A lock whose holder is gone, or older than staleMs, is cleared;
  * a live holder is waited for up to waitMs, then refused with a LockError.
- * Released in `finally` only if the file still carries our token.
+ * Released in `finally` only if the file still carries our token; if it doesn't, `onLost` says so.
  */
 export async function withLock<T>(
   layout: Layout,
@@ -367,5 +380,6 @@ export async function withLock<T>(
   } finally {
     clearInterval(heartbeat);
     if (readHolder(path)?.token === token) rmSync(path, { force: true });
+    else (options.onLost ?? warnLockLost)();
   }
 }
