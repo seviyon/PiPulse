@@ -1,8 +1,15 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fileUsage, insertSample, maybeVacuum, openDb, type PiPulseDb } from '../src/index.js';
+import {
+  diskFreeBytes,
+  fileUsage,
+  insertSample,
+  maybeVacuum,
+  openDb,
+  type PiPulseDb
+} from '../src/index.js';
 
 const DAY = 86_400_000;
 let db: PiPulseDb;
@@ -74,5 +81,35 @@ describe('maybeVacuum', () => {
       maybeVacuum(memory, DAY, undefined, { minFileBytes: 0, diskFree: plenty })
     ).toBeUndefined();
     memory.close();
+  });
+});
+
+describe('diskFreeBytes', () => {
+  it('reports the space left where the database file lives', () => {
+    expect(diskFreeBytes(db)).toBeGreaterThan(0);
+  });
+
+  it('has no answer for an in-memory database', () => {
+    const memory = openDb(':memory:');
+    try {
+      expect(diskFreeBytes(memory)).toBeUndefined();
+    } finally {
+      memory.close();
+    }
+  });
+
+  it('has no answer when the file system cannot be read', () => {
+    const file = openDb(join(mkdtempSync(join(tmpdir(), 'pipulse-')), 'db.sqlite'));
+    try {
+      const closed = file.prepare('PRAGMA database_list').all();
+      expect(closed.length).toBeGreaterThan(0);
+      rmSync(dirname(String((closed[0] as { file: string }).file)), {
+        recursive: true,
+        force: true
+      });
+      expect(diskFreeBytes(file)).toBeUndefined();
+    } finally {
+      file.close();
+    }
   });
 });

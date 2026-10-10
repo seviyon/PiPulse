@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { paths, readMeta, readState, writeRenewStatus } from '../src/layout.js';
-import { sidecar, sidecarHealth, sidecarStart } from '../src/sidecar.js';
+import { sidecar, sidecarHealth, sidecarInit, sidecarStart } from '../src/sidecar.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -233,5 +233,15 @@ describe('sidecar loop', () => {
     stop.abort();
     expect(await running).toBe(0);
     expect(existsSync(paths(ctx.layout).renewStatus)).toBe(true);
+  });
+});
+
+describe('sidecarInit', () => {
+  it('makes both volumes with their modes and says so', () => {
+    const ctx = docker();
+    expect(sidecarInit(ctx)).toBe(0);
+    expect(existsSync(join(dir, 'tls'))).toBe(true);
+    expect(existsSync(join(dir, 'tls-ca'))).toBe(true);
+    expect(ctx.lines.join('\n')).toMatch(/is root:pipulse 2750 and .* root 0700/);
   });
 });
