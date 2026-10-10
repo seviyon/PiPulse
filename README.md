@@ -8,6 +8,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-end%20to%20end-3178C6?logo=typescript&logoColor=white)](docs/architecture.md)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-2%20and%20newer-C51A4A?logo=raspberrypi&logoColor=white)](docs/install.md)
 [![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen?logo=renovate)](renovate.json)
+[![Last commit](https://img.shields.io/github/last-commit/seviyon/PiPulse)](https://github.com/seviyon/PiPulse/commits/main)
+[![Open issues](https://img.shields.io/github/issues/seviyon/PiPulse)](https://github.com/seviyon/PiPulse/issues)
+[![CodeRabbit reviews](https://img.shields.io/coderabbit/prs/github/seviyon/PiPulse)](https://coderabbit.ai)
+[![Docker image](https://img.shields.io/badge/ghcr.io-seviyon%2Fpipulse-2496ED?logo=docker&logoColor=white)](https://github.com/seviyon/PiPulse/pkgs/container/pipulse)
 
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
