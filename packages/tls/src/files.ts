@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import {
-  chmodSync,
-  chownSync,
   closeSync,
   constants,
+  chmodSync,
   fchmodSync,
   fchownSync,
   fstatSync,
@@ -238,16 +237,67 @@ export function ensureDir(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
-  const stat = lstatSync(path);
-  if (!stat.isDirectory()) throw new TlsFileError(`${path} is not a directory`);
-  // Mode first, then owner, and no chmod when the mode already matches: a process without
-  // CAP_FSETID that isn't in the directory's group (the Docker init and sidecar hold only
-  // CHOWN or nothing) has the kernel drop setgid from every chmod. Applied while the group is
-  // still root's it keeps it, and chown never clears setgid on a directory.
-  if ((stat.mode & 0o7777) !== options.mode) chmodSync(path, options.mode);
-  if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
-    chownSync(path, options.owner.uid, options.owner.gid);
+  // Everything below goes through one descriptor opened without following a symlink, so a
+  // directory swapped for a symlink after the check can't have its target chmod'ed or chown'ed.
+  const fd = openDirectory(path, options.mode);
+  try {
+    const stat = fstatSync(fd);
+    // Mode first, then owner, and no chmod when the mode already matches: a process without
+    // CAP_FSETID that isn't in the directory's group (the Docker init and sidecar hold only
+    // CHOWN or nothing) has the kernel drop setgid from every chmod. Applied while the group is
+    // still root's it keeps it, and chown never clears setgid on a directory.
+    if ((stat.mode & 0o7777) !== options.mode) fchmodSync(fd, options.mode);
+    if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
+      fchownSync(fd, options.owner.uid, options.owner.gid);
+    }
+  } finally {
+    closeSync(fd);
   }
+}
+
+const OPEN_DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
+/**
+ * Opens a directory without following a symlink. A directory this user owns but can't read
+ * (its mode lacks r) can't be opened, yet ensureDir exists to fix such modes: for that case
+ * only, and only inside a parent that nobody else can write to, the mode is set through the
+ * path and the directory reopened. A swap by this same user can't be ruled out, but it can be noticed: the reopened directory must be the one lstat saw.
+ */
+function openDirectory(path: string, mode: number): number {
+  const notDirectory = () => new TlsFileError(`${path} is not a directory`);
+  try {
+    return openSync(path, OPEN_DIR);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw notDirectory();
+    if (code !== 'EACCES') throw error;
+  }
+  const before = lstatSync(path);
+  if (!before.isDirectory()) throw notDirectory();
+  // Only when nobody else could swap the entry meanwhile: this user owns the directory and
+  // its parent, and the parent isn't writable by group or others. Otherwise fail closed.
+  const me = process.getuid?.();
+  const parent = lstatSync(dirname(path));
+  if (before.uid !== me || parent.uid !== me || (parent.mode & 0o022) !== 0) {
+    throw new TlsFileError(
+      `${path} can't be read and can't be fixed safely from here: fix its mode by hand`
+    );
+  }
+  chmodSync(path, mode);
+  let fd: number;
+  try {
+    fd = openSync(path, OPEN_DIR);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw notDirectory();
+    throw error;
+  }
+  const after = fstatSync(fd);
+  if (after.dev !== before.dev || after.ino !== before.ino) {
+    closeSync(fd);
+    throw new TlsFileError(`${path} changed while its mode was being set`);
+  }
+  return fd;
 }
 
 /**

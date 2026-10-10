@@ -119,7 +119,10 @@ function complete(layout: Layout, start: Txn, hook?: FsHook): void {
   const p = paths(layout);
   const dirs = stageDirs(layout, txn.id);
   const stagedCa = join(dirs.ca, 'ca');
+  // Never backwards: a rerun after a crash at 'leaf-installed' repeats the early steps, and
+  // writing their names over the journal would show (and journal) progress that was undone.
   const advance = (step: TxnStep) => {
+    if (TXN_STEPS.indexOf(step) <= TXN_STEPS.indexOf(txn.step)) return;
     txn = { ...txn, step };
     writeTxn(layout, txn, hook);
   };
@@ -193,7 +196,14 @@ export async function runTransaction(
     await options.stage(dirs, backup);
     options.validate(dirs);
   } catch (error) {
-    if (!(error instanceof SimulatedCrash)) discard(layout, txn, hook);
+    if (!(error instanceof SimulatedCrash)) {
+      try {
+        discard(layout, txn, hook);
+      } catch {
+        // Keep the error that stopped the change, not one from tidying up after it: a journal
+        // still on disk says 'staged', and recover() discards that on the next command.
+      }
+    }
     throw error;
   }
   const validated: Txn = { ...txn, step: 'validated' };

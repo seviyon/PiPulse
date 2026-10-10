@@ -283,6 +283,57 @@ describe('recover after a crash at every hook point', () => {
     );
   }, 180_000);
 
+  it('reports the error that stopped a change, not one from discarding it', async () => {
+    const stage = async () => {
+      throw new Error('stage failed');
+    };
+    await expect(
+      runTransaction(ctx.layout, {
+        kind: 'init',
+        now: NOW,
+        hook: (point) => {
+          if (point === 'remove') throw new Error('discard failed');
+        },
+        stage,
+        validate: () => undefined
+      })
+    ).rejects.toThrow('stage failed');
+    // The journal survived the failed discard; the next command's recover() finishes the job.
+    expect(readTxn(ctx.layout)?.step).toBe('staged');
+    expect(recover(ctx.layout)).toBe('discarded');
+    expect(consistent(ctx)).toBe('nothing');
+  });
+
+  it('never moves the journal backwards when a recovery repeats early steps', async () => {
+    await expect(
+      init(ctx, (point) => {
+        if (point === 'remove' && readTxn(ctx.layout)?.step === 'leaf-installed')
+          throw new SimulatedCrash('after leaf-installed');
+      })
+    ).rejects.toThrow(SimulatedCrash);
+    expect(readTxn(ctx.layout)?.step).toBe('leaf-installed');
+
+    const order = [
+      'staged',
+      'validated',
+      'active-ca-moved',
+      'new-ca-installed',
+      'leaf-installed',
+      'committed'
+    ];
+    let highest = order.indexOf('leaf-installed');
+    expect(
+      recover(ctx.layout, () => {
+        const step = readTxn(ctx.layout)?.step;
+        if (step) {
+          expect(order.indexOf(step)).toBeGreaterThanOrEqual(highest);
+          highest = order.indexOf(step);
+        }
+      })
+    ).toBe('completed');
+    expect(consistent(ctx)).not.toBe('nothing');
+  });
+
   it('sweeps an issue-* folder a killed issuance left in the work folder', async () => {
     const stale = join(paths(ctx.layout).work, 'issue-abc123');
     mkdirSync(stale, { recursive: true });
