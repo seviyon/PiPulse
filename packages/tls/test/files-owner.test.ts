@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureDir, writeAtomic } from '../src/files.js';
+import { ensureDir, renameDurable, writeAtomic } from '../src/files.js';
 import { tempDir } from './helpers.js';
 
 // Records every ownership and mode change and applies only the ones that need no privilege,
@@ -21,6 +21,10 @@ vi.mock('node:fs', async (importOriginal) => {
     ...actual,
     chmodSync: record('chmod'),
     chownSync: record('chown'),
+    fsyncSync: (fd: number) => {
+      calls.list.push('fsync:fd');
+      return actual.fsyncSync(fd);
+    },
     fchownSync: (fd: number, newUid: number, newGid: number) => {
       calls.list.push('fchown:fd');
       if (newUid === uid && newGid === gid) actual.fchownSync(fd, newUid, newGid);
@@ -76,5 +80,47 @@ describe('ensureDir ownership and mode', () => {
   it('refuses a plain file', () => {
     writeFileSync(join(dir, 'file'), '');
     expect(() => ensureDir(join(dir, 'file'), { mode: 0o700 })).toThrow(/not a directory/);
+  });
+});
+
+// Found by mutation testing: a different uid alone, or a different gid alone, must be enough.
+describe('ownership is changed when either half differs', () => {
+  const uid = () => process.getuid!();
+  const gid = () => process.getgid!();
+  const fchowns = () => calls.list.filter((call) => call === 'fchown:fd').length;
+
+  it.each([
+    ['only the uid', () => ({ uid: uid() + 1, gid: gid() })],
+    ['only the gid', () => ({ uid: uid(), gid: gid() + 1 })]
+  ])('writeAtomic when %s differs', (_name, owner) => {
+    writeAtomic(join(dir, 'f'), 'x', { mode: 0o600, owner: owner() });
+    expect(fchowns()).toBe(1);
+  });
+
+  it.each([
+    ['only the uid', () => ({ uid: uid() + 1, gid: gid() })],
+    ['only the gid', () => ({ uid: uid(), gid: gid() + 1 })]
+  ])('ensureDir when %s differs', (_name, owner) => {
+    ensureDir(join(dir, 'd'), { mode: 0o700, owner: owner() });
+    expect(fchowns()).toBe(1);
+  });
+});
+
+describe('durability: files and directories are flushed', () => {
+  const syncs = () => calls.list.filter((call) => call === 'fsync:fd').length;
+
+  it('writeAtomic flushes the file and then its directory', () => {
+    writeAtomic(join(dir, 'f'), 'x', { mode: 0o600 });
+    expect(syncs()).toBe(2);
+  });
+
+  it('renameDurable flushes the directory, with or without a hook', () => {
+    writeFileSync(join(dir, 'a'), '1');
+    writeFileSync(join(dir, 'b'), '2');
+    renameDurable(join(dir, 'a'), join(dir, 'a2'));
+    expect(syncs()).toBe(1);
+    renameDurable(join(dir, 'b'), join(dir, 'b2'), () => undefined);
+    expect(syncs()).toBe(2);
+    expect(readFileSync(join(dir, 'b2'), 'utf8')).toBe('2');
   });
 });
