@@ -62,7 +62,7 @@ PiPulse/
 | Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode — no native module, no install step | Node built-in |
 | API | [Fastify](https://fastify.io/) (HTTP + WebSocket) | 5.12.5 |
 | Frontend | Preact + Vite (React-compatible, ~3 KB runtime) | Preact 10.29.8, Vite 8.3.0 |
-| Testing | Vitest (unit/integration today), Playwright (end-to-end, planned) | Vitest 5.0.1 |
+| Testing | Vitest (unit/integration today), Playwright (end-to-end, Chromium only; smoke test in CI, more journeys planned) | Vitest 5.0.1 |
 | Lint/format | ESLint (flat config) + Prettier | ESLint 10.11.0, Prettier 3.9.8 |
 | Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`) | — |
 

@@ -306,7 +306,7 @@ e2e:
 
 Node 22 only: the Pi ships 22, and running the suite twice adds no browser coverage. The job is 14 steps; on a Playwright bump the cache key changes, so that run downloads the browsers again (Renovate's PR pays it once).
 
-- [ ] **Step 2:** `npx prettier --check .github/workflows/ci.yml`; push the branch; the three `e2e (…)` checks run green next to the existing five.
+- [ ] **Step 2:** `npx prettier --check .github/workflows/ci.yml`; push the branch; the single `e2e` check runs green next to the existing five.
 - [ ] **Step 3: Commit** `Run the e2e suite in CI on Chromium`.
 - [ ] **Step 4: Open PR 1** (no release label). PR body says: after merge, the operator adds the required checks (below).
 
@@ -370,6 +370,7 @@ Server options for this file: `password: true`, `alertsFile: { rules: [{ id: 'e2
 
 - [ ] **Step 1: Specs** (`seed`: raw readings every 10 minutes over the last **100 days** for `cpu_load`, `memory_used`, `network_rx`, `network_tx` (in one transaction), values from a fixed sine so a chart has shape, then `runHousekeeping(db, now)` from `@pipulse/storage` so the 1-minute, hourly and daily rollups exist and the older raw/1-minute rows are pruned as in a long-running install; the server's own once-a-minute housekeeping then finds nothing left to do):
   - Why 100 days, not a day or so: `resolution=auto` picks the finest level that is whole in the window and holds ≤ 1500 rows (`chooseResolution`, `packages/storage/src/rollup.ts`), and a young database falls back to hourly for every long range, so the daily level, the one the 1-year page depends on, is never reached. Checked by running the real storage code: with 26 h of raw readings every 60 s, before housekeeping the 7 d/30 d/1 y ranges pick `1m` with 0 points (the page shows `No readings in this range` and no error), and after it they all pick `1h` with 26 points; with 100 days every 10 minutes plus `runHousekeeping`, `24h` → raw (145 points), `7d` → `1m` (1007), `30d` → `1h` (719), `1y` → `1d` (100).
+  - The `1 year` range must also prove the chart spans the seeded history, not just that some chart rendered: read the `/api/metrics/cpu_load/series` response the page requested (`page.waitForResponse`) and assert its first point is at least ~90 days before its last and the point count is about 100 (daily rows), so a query that returned only the newest hours would fail.
   - Each range loads a chart and shows the resolution it should, read from the page: the chart `img` is named with the resolution (`getByRole('img', { name: /every reading/i })` for `24 hours`, `/1-minute averages/i` for `7 days`, `/hourly averages/i` for `30 days`, `/daily averages/i` for `1 year`; the names come from `resolutionLabel` in `packages/web/src/history.ts`), and none shows `No readings in this range` or the `Couldn't load the history` alert. `24 hours` also has `aria-current="true"` on its link in the `Time range` nav.
   - Zoom: set up `page.waitForRequest(/\/api\/metrics\/cpu_load\/series\?/)`, drag across the middle half of the CPU chart's `img` bounding box (`page.mouse.move/down/move/up` with `steps: 10`) → the request's `to - from` is under 24 h, and a `Reset zoom` button appears; press it → it disappears and the `24 hours` link is current again.
 - [ ] **Step 2:** `npm --prefix e2e test`; lint; format.
@@ -407,7 +408,7 @@ Server options for this file: `password: true`, `alertsFile: { rules: [{ id: 'e2
 
 Checklist content:
 
-1. CI: on PR 3, all five existing checks and the three `e2e (…)` checks are green; open one `e2e` job and note its step count and that the browser cache hit on the second run.
+1. CI: on PR 3, all five existing checks and the `e2e` check are green; open one `e2e` job and note its step count and that the browser cache hit on the second run.
 2. Mac: from a clean clone, `npm ci`, `npm ci --prefix /Users/seviyon/Repositories/PiPulse/e2e`, `npx --prefix /Users/seviyon/Repositories/PiPulse/e2e playwright install chromium`, `npm run test:e2e` → all pass in Chromium.
 3. Break one thing at a time on a scratch branch and watch the right test fail with a useful trace, then revert:
    - `packages/web/src/live.ts`: set `FIRST_RETRY_MS` to 60 000 → only `reconnect.e2e.ts` fails.
