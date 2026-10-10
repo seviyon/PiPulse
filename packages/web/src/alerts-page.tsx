@@ -8,6 +8,9 @@ import type { Alert, Config, PluginInfo, Rule } from './types.js';
 import { apiFetch, HttpError, sendJson, type Session } from './api.js';
 
 const DAY = 86_400_000;
+/** How far past its own clock estimate the page asks for cleared alerts. */
+const CLOCK_SLACK = 10 * 60_000;
+
 /** Most cleared alerts the Recent list shows; a full page says it's cut short. */
 const RECENT_LIMIT = 200;
 
@@ -113,8 +116,13 @@ export function AlertsPage({
 
   useEffect(() => {
     let cancelled = false;
-    const to = now();
-    apiFetch(`/api/alerts?state=cleared&from=${to - 30 * DAY}&to=${to}&limit=${RECENT_LIMIT}`)
+    // now() is the browser's estimate of the Pi's clock, and the estimate runs behind by the
+    // latency of the config fetch it was taken from. An alert that just cleared is stamped by
+    // the Pi, so an upper bound at the estimate can exclude it: leave room.
+    const at = now();
+    apiFetch(
+      `/api/alerts?state=cleared&from=${at - 30 * DAY}&to=${at + CLOCK_SLACK}&limit=${RECENT_LIMIT}`
+    )
       .then(async (response) => {
         if (!response.ok) throw new Error(`alerts answered ${response.status}`);
         return (await response.json()) as Alert[];

@@ -153,6 +153,14 @@ describe('<AlertsPage>', () => {
     expect(recent).not.toContain('newest');
   });
 
+  it('asks for cleared alerts beyond its own clock estimate, which runs behind the Pi', async () => {
+    render(page(), root);
+    await settle();
+    const url = new URL(String(historyCalls()[0]![0]), 'http://io.lan');
+    // An alert the Pi stamped a minute after the page's estimate of "now" must still be inside.
+    expect(Number(url.searchParams.get('to'))).toBeGreaterThan(NOW + MIN);
+  });
+
   it('says the Recent list is cut short when the server returns a full page', async () => {
     const url = () => new URL(String(historyCalls()[0]![0]), 'http://io.lan');
     render(page(), root);
