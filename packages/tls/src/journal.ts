@@ -85,7 +85,7 @@ export function readTxn(layout: Layout): Txn | undefined {
     return parseTxn(content);
   } catch (error) {
     throw new JournalError(
-      `${paths(layout).txn}: ${(error as Error).message}; see README "Recovering the CA"`
+      `${paths(layout).txn}: ${(error as Error).message}; see https://github.com/seviyon/PiPulse/blob/main/docs/https.md#recovering-the-ca`
     );
   }
 }

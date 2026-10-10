@@ -4,7 +4,7 @@ PiPulse is a from-scratch TypeScript rewrite of [RPi-Monitor](https://github.com
 
 ## Where the plan lives
 
-- **`README.md`** — current status, tech stack with pinned versions, getting-started commands, and the roadmap table (which phase is done, which is next).
+- **`README.md`** — current status, tech stack with pinned versions, the quick install and the roadmap table (which phase is done, which is next). The long how-to pages live in `docs/` (`install.md`, `https.md`, `docker.md`, `configuration.md`, `alerts.md`, `api.md`, `architecture.md`, `development.md`); keep the README short and put new user documentation there.
 - **`docs/PLAN.md`** — the full modernization plan: legacy architecture review, every architecture decision and why, data/storage schema, API/frontend design, deployment plan, feature-parity matrix, the phase-by-phase build plan with exit criteria, testing strategy, security considerations, and future-proofing notes. Read this before starting a new phase.
 
 Read both before proposing what to build next — `README.md`'s roadmap table is the quick status check, `docs/PLAN.md` has the reasoning and exit criteria behind each phase.
