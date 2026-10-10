@@ -65,17 +65,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Probe Docker Hub (temporary, removed once the cause is known)
-        continue-on-error: true
-        env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          url='https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull'
-          for i in 1 2 3; do
-            curl -sS -m 25 -o /dev/null -w "anonymous     %{http_code} %{time_total}s\n" "$url" || echo "anonymous     failed"
-            curl -sS -m 25 -o /dev/null -w "authenticated %{http_code} %{time_total}s\n" -u "$DH_USER:$DH_TOKEN" "$url" || echo "authenticated failed"
-          done
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           # Docker Hub: anonymous pulls share a per-address limit that the runners often exhaust.
