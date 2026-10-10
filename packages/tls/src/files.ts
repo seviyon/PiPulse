@@ -1,7 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import {
-  chmodSync,
-  chownSync,
   closeSync,
   constants,
   fchmodSync,
@@ -238,15 +236,29 @@ export function ensureDir(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
-  const stat = lstatSync(path);
-  if (!stat.isDirectory()) throw new TlsFileError(`${path} is not a directory`);
-  // Mode first, then owner, and no chmod when the mode already matches: a process without
-  // CAP_FSETID that isn't in the directory's group (the Docker init and sidecar hold only
-  // CHOWN or nothing) has the kernel drop setgid from every chmod. Applied while the group is
-  // still root's it keeps it, and chown never clears setgid on a directory.
-  if ((stat.mode & 0o7777) !== options.mode) chmodSync(path, options.mode);
-  if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
-    chownSync(path, options.owner.uid, options.owner.gid);
+  // Everything below goes through one descriptor opened without following a symlink, so a
+  // directory swapped for a symlink after the check can't have its target chmod'ed or chown'ed.
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP' || code === 'ENOTDIR')
+      throw new TlsFileError(`${path} is not a directory`);
+    throw error;
+  }
+  try {
+    const stat = fstatSync(fd);
+    // Mode first, then owner, and no chmod when the mode already matches: a process without
+    // CAP_FSETID that isn't in the directory's group (the Docker init and sidecar hold only
+    // CHOWN or nothing) has the kernel drop setgid from every chmod. Applied while the group is
+    // still root's it keeps it, and chown never clears setgid on a directory.
+    if ((stat.mode & 0o7777) !== options.mode) fchmodSync(fd, options.mode);
+    if (options.owner && (stat.uid !== options.owner.uid || stat.gid !== options.owner.gid)) {
+      fchownSync(fd, options.owner.uid, options.owner.gid);
+    }
+  } finally {
+    closeSync(fd);
   }
 }
 

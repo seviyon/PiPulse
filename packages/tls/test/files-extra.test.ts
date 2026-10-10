@@ -154,6 +154,51 @@ describe('removeTree', () => {
   });
 });
 
+describe('a failing directory sync after the rename', () => {
+  // The rename happened and the new file is visible; only its durability is in doubt. The
+  // error must still reach the caller, who then does not treat the step as done.
+  it('writeAtomic: the new content is in place, no temp file is left, and the error propagates', () => {
+    writeFileSync(join(dir, 'target'), 'old');
+    expect(() =>
+      writeAtomic(join(dir, 'target'), 'new', {
+        mode: 0o600,
+        hook: (point) => {
+          if (point === 'fsync-dir') throw new Error('disk gone');
+        }
+      })
+    ).toThrow('disk gone');
+    expect(readFileSync(join(dir, 'target'), 'utf8')).toBe('new');
+    expect(readdirSync(dir)).toEqual(['target']);
+  });
+
+  it('renameDurable: the file is already at its new path and the error propagates', () => {
+    writeFileSync(join(dir, 'a'), 'one');
+    expect(() =>
+      renameDurable(join(dir, 'a'), join(dir, 'b'), (point) => {
+        if (point === 'fsync-dir') throw new Error('disk gone');
+      })
+    ).toThrow('disk gone');
+    expect(existsSync(join(dir, 'a'))).toBe(false);
+    expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('one');
+  });
+});
+
+// Needs root: chown to another user is refused otherwise. files-owner.test.ts covers when the
+// calls are made; these check that the owner really lands (they run in the packaging container).
+describe.skipIf(!isRoot)('real ownership changes (root only)', () => {
+  const other = { uid: 54321, gid: 12345 };
+  it('writeAtomic gives the file the requested owner and mode', () => {
+    writeAtomic(join(dir, 'leaf.pem'), 'x', { mode: 0o640, owner: other });
+    const stat = statSync(join(dir, 'leaf.pem'));
+    expect([stat.uid, stat.gid, stat.mode & 0o7777]).toEqual([other.uid, other.gid, 0o640]);
+  });
+  it('ensureDir gives the directory the requested owner and keeps setgid', () => {
+    ensureDir(join(dir, 'tls'), { mode: 0o2750, owner: other });
+    const stat = statSync(join(dir, 'tls'));
+    expect([stat.uid, stat.gid, stat.mode & 0o7777]).toEqual([other.uid, other.gid, 0o2750]);
+  });
+});
+
 describe('syncDir', () => {
   it('works on a folder and throws on a missing one', () => {
     expect(() => syncDir(dir)).not.toThrow();
