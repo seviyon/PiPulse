@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       matrix:
         node-version: [22.x, 24.x]
@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
   shellcheck:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Shellcheck the packaging scripts
@@ -45,7 +45,7 @@ jobs:
 
   packaging:
     # Installs, upgrades, rolls back and removes PiPulse in a clean Debian container.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
       image: node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
       # The image is pulled before any step runs, so it logs in here (see the docker job).
@@ -62,7 +62,7 @@ jobs:
         run: sh packaging/test/run.sh
 
   docker:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Probe Docker Hub (temporary, removed once the cause is known)
@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 15
     # The dashboard in Chromium against the real built server (Node 22 only: the Pi ships 22,
     # and a second Node adds no browser coverage).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

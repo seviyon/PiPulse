@@ -28,7 +28,7 @@ jobs:
        (contains(github.event.pull_request.labels.*.name, 'release:patch') ||
         contains(github.event.pull_request.labels.*.name, 'release:minor') ||
         contains(github.event.pull_request.labels.*.name, 'release:major')))
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
@@ -57,7 +57,7 @@ jobs:
   build:
     # No secrets, read-only token not kept in the checkout: npm and the build run here.
     needs: version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -92,7 +92,7 @@ jobs:
   image:
     # Builds inside BuildKit containers; can push to GHCR but holds no signing key.
     needs: [version, build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -126,7 +126,7 @@ jobs:
     # The only job with the signing key. It runs no npm and no project code:
     # it signs and publishes the files the build job made.
     needs: [version, build, image]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       packages: write
@@ -187,7 +187,7 @@ jobs:
   verify:
     # What users get: install the new version from the apt repository, as the README says.
     needs: [version, publish]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
