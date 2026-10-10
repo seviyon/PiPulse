@@ -36,3 +36,18 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages
 ```
 
 > For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8889`).
+
+## Mutation testing
+
+Coverage says which lines the tests ran; mutation testing says whether they would notice a change. [StrykerJS](https://stryker-mutator.io/) makes small edits to a source file (a `<` turned into `<=`, a condition forced to `true`, a string emptied), runs the tests for each edit, and reports the ones no test failed on ("survived").
+
+```bash
+# npm run mutate -- <package> <src-file[:from-to]> <test-file>...
+npm run mutate -- tls src/runtime-status.ts:100-126 test/runtime-status.test.ts
+```
+
+Give it one file (or a line range) and the tests that cover it: every mutant runs those tests once, so a whole package takes a long time. The report prints in the terminal and as HTML in `packages/<package>/reports/mutation/index.html`. Neither `reports/` nor `.stryker-tmp/` is committed.
+
+A surviving mutant is either a missing test or an _equivalent_ mutant that cannot change behaviour (the text of an error message a caller never reads, a type check that the next check makes redundant). Only the first kind is worth a test.
+
+Stryker's own Vitest runner does not work with Vitest 5 yet (mutants never switch on and everything "survives"), so `scripts/mutate.mjs` uses its command runner, which runs `vitest run <test-files>` for each mutant. It is not part of CI.

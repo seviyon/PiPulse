@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "command",
+  "commandRunner": { "command": "npx vitest run" },
+  "coverageAnalysis": "off",
+  "reporters": ["clear-text", "html"],
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "incremental": false,
+  "timeoutMS": 60000,
+  "concurrency": 4
+}
