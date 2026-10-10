@@ -131,13 +131,77 @@ export interface LockOptions {
   monotonic?: () => number;
 }
 
+/** Whether the lock file's content, read through `aside`, is what the waiter judged stale. */
+function matchesJudgement(aside: string, judged: LockHolder | undefined): boolean {
+  const taken = readHolder(aside);
+  // A lock whose content can't be read matches an unreadable judgement (null === null), so the
+  // token alone can't tell the stale file from a new one that its owner has created but not yet
+  // written. The mtime is shared with the lock, and a fresh one means it is somebody's new lock.
+  if (taken === undefined) {
+    try {
+      if (Date.now() - statSync(aside).mtimeMs <= FRESH_MS) return false;
+    } catch {
+      // can't tell: treat as not fresh
+    }
+  }
+  return (taken?.token ?? null) === (judged?.token ?? null);
+}
+
 /**
- * Clears a lock judged stale without trusting that judgement blindly: it is
- * renamed to a unique name first and re-read there. If it turns out to be a
- * different holder's (somebody broke it and took a fresh one meanwhile), it is
- * put back with link(), which fails rather than overwrite a newer lock.
+ * Clears a lock judged stale without trusting that judgement blindly. The lock is first
+ * linked to a second name and read there, while it stays in place: if it turns out to be a
+ * different holder's (somebody broke the stale one and took a fresh lock meanwhile) nothing
+ * has moved, so no third process can take the path and two holders never run at once. Only
+ * when it is the judged lock is it renamed away, and the inode is compared with the linked
+ * copy: if the lock was released and retaken in between, the newer lock is put back.
+ *
+ * What remains is a triple race (the judged holder releases, a new holder takes the path,
+ * and yet another process takes it during the put-back); the displaced holder then finds out
+ * only at release. Filesystems without hard links use breakLockByRename().
  */
 export function breakLock(path: string, judged: LockHolder | undefined): void {
+  const copy = `${path}.stale-${randomBytes(6).toString('hex')}`;
+  try {
+    linkSync(path, copy);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return;
+    if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EOPNOTSUPP' || code === 'EMLINK') {
+      return breakLockByRename(path, judged);
+    }
+    throw error;
+  }
+  const aside = `${path}.stale-${randomBytes(6).toString('hex')}`;
+  try {
+    if (!matchesJudgement(copy, judged)) return;
+    try {
+      renameSync(path, aside);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    try {
+      if (statSync(aside).ino !== statSync(copy).ino) putBack(aside, path);
+    } finally {
+      rmSync(aside, { force: true });
+    }
+  } finally {
+    rmSync(copy, { force: true });
+  }
+}
+
+/** link() refuses to overwrite, so a lock somebody took meanwhile is never replaced. */
+function putBack(aside: string, path: string): void {
+  try {
+    linkSync(aside, path);
+  } catch {
+    // Somebody already took a newer lock; the one we moved is gone. Its holder will see
+    // at release that the file isn't theirs.
+  }
+}
+
+/** breakLock for a filesystem that can't hard-link: rename first, judge, put back if wrong. */
+function breakLockByRename(path: string, judged: LockHolder | undefined): void {
   const aside = `${path}.stale-${randomBytes(6).toString('hex')}`;
   try {
     renameSync(path, aside);
@@ -146,26 +210,7 @@ export function breakLock(path: string, judged: LockHolder | undefined): void {
     throw error;
   }
   try {
-    const taken = readHolder(aside);
-    // A lock whose content can't be read matches an unreadable judgement (null === null), so the
-    // token alone can't tell the stale file from a new one that its owner has created but not yet
-    // written. rename() keeps the mtime: a fresh one means it is somebody's new lock.
-    let freshUnreadable = false;
-    if (taken === undefined) {
-      try {
-        freshUnreadable = Date.now() - statSync(aside).mtimeMs <= FRESH_MS;
-      } catch {
-        // can't tell: treat as not fresh
-      }
-    }
-    if (freshUnreadable || (taken?.token ?? null) !== (judged?.token ?? null)) {
-      try {
-        linkSync(aside, path);
-      } catch {
-        // Somebody already took a newer lock; the one we moved is gone. Its holder will see
-        // at release that the file isn't theirs.
-      }
-    }
+    if (!matchesJudgement(aside, judged)) putBack(aside, path);
   } finally {
     rmSync(aside, { force: true });
   }
