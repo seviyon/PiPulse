@@ -39,6 +39,7 @@ export interface RunningServer {
   pid: number;
   setReadings(values: Readings): void; // merged over current
   stop(): Promise<void>; // SIGTERM, wait, SIGKILL after 5 s; then removes the folder
+  halt(): Promise<void>; // SIGTERM and wait, but keep the folder, so restart() can bring it back
   restart(): Promise<void>; // same folder, same port
   logs(): string; // stdout + stderr so far
 }
@@ -314,6 +315,9 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     async stop() {
       if (child) await terminate(child);
       rmSync(dir, { recursive: true, force: true });
+    },
+    async halt() {
+      if (child) await terminate(child);
     },
     async restart() {
       if (child) await terminate(child);
