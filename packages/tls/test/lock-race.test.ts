@@ -83,8 +83,7 @@ describe('breakLock when a third process takes the path while a newer lock is mo
 describe('the heartbeat', () => {
   // Desired: a holder whose lock was broken and retaken must not keep refreshing the new
   // holder's file, or a dead new holder in another container looks alive past its 90 s bound.
-  // Fails today (utimesSync does not check the token); `fails` flips when that is fixed.
-  it.fails('does not touch a lock that now carries another holder’s token', async () => {
+  it('does not touch a lock that now carries another holder’s token', async () => {
     const result = await withLock(
       layout,
       async () => {

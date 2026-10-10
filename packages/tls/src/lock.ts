@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   fsyncSync,
+  futimesSync,
   linkSync,
   mkdirSync,
   openSync,
@@ -10,7 +11,6 @@ import {
   renameSync,
   rmSync,
   statSync,
-  utimesSync,
   writeSync
 } from 'node:fs';
 import { hostname } from 'node:os';
@@ -86,6 +86,24 @@ function readHolder(path: string): LockHolder | undefined {
     };
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Refreshes the lock's mtime only while it still carries our token. A lock that was broken and
+ * retaken belongs to someone else; touching it would keep a dead new holder looking alive. The
+ * check and the touch go through one descriptor, so a break renaming the file aside in between
+ * cannot redirect the touch onto a newer lock.
+ */
+function touchIfMine(path: string, token: string): void {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const value = JSON.parse(readFileSync(fd, 'utf8')) as Partial<LockHolder>;
+    if (value.token !== token) return;
+    const at = new Date();
+    futimesSync(fd, at, at);
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -293,8 +311,7 @@ export async function withLock<T>(
   // A holder this process can't be seen by (another container) relies on this.
   const heartbeat = setInterval(() => {
     try {
-      const at = new Date();
-      utimesSync(path, at, at);
+      touchIfMine(path, token);
     } catch {
       // The lock was removed or broken; the release below notices.
     }
