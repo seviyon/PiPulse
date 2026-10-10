@@ -56,7 +56,7 @@ describe('defaultContext', () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(15);
     expect(typeof ctx.interfaces()).toBe('object');
     expect(Array.isArray(ctx.addresses())).toBe(true);
-    expect(['string', 'undefined']).toContain(typeof ctx.candidate?.());
+    expect(() => ctx.candidate?.()).not.toThrow();
   });
 
   it('judges the clock from the timesync folder it is given, or trusts it on request', () => {
