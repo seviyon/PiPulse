@@ -16,10 +16,12 @@
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
     "dev": "npm run dev --workspace packages/api",
-    "test:e2e": "npm run build && npm --prefix e2e test"
+    "test:e2e": "npm run build && npm --prefix e2e test",
+    "mutate": "node scripts/mutate.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "^10.0.0",
     "@types/node": "^22.20.4",
     "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.11.0",

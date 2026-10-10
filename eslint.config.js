@@ -11,11 +11,18 @@ export default tseslint.config(
       'out/**',
       '.superpowers/**',
       'e2e/test-results/**',
-      'e2e/playwright-report/**'
+      'e2e/playwright-report/**',
+      '**/.stryker-tmp/**',
+      '**/reports/**'
     ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Plain Node scripts (no TypeScript, no bundler): Node's globals.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { process: 'readonly', console: 'readonly' } }
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': [
