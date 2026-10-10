@@ -9,7 +9,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 - **Renovate releases only what ships.** Its PRs for runtime `dependencies`, the bundled Node (`packaging/node-versions.json`), the Docker base image, and every security alert carry `release:patch`, so they reach the Pis in a release of their own. Development tools, test libraries and action pins still update, but release nothing: they ride along with the next release. Patch and minor updates merge themselves once CI passes; majors wait for review.
 - **Or by hand:** Actions → _Release_ → _Run workflow_, with a version (e.g. to redo a release whose run failed; the version must not be tagged yet).
 - **Only plain `X.Y.Z` versions** are released: a pre-release like `0.7.0-rc.1` would sort above `0.7.0` in apt and strand the Pis that installed it.
-- **The signing key never meets npm.** Building and testing run in jobs with no secrets and a read-only token; only the `publish` job has `APT_SIGNING_KEY`, and it runs no npm or project code.
+- **The signing key never meets npm.** The release's `build` job (npm and project code) runs with no secrets and a read-only token; only the `publish` job has `APT_SIGNING_KEY`, and it runs no npm or project code. The jobs that only pull base images (`image`, `verify`, the dry run and CI's `docker` and `packaging`) log in to Docker Hub with a read-only, public-repositories token, because anonymous pulls from the shared runners often hit Docker's rate limit. The Dockerfile installs with `--ignore-scripts`, and BuildKit's build steps run in their own container that cannot read the runner's login.
 - **Versions exist only in releases.** The `package.json` files stay at `0.0.0`; the release build writes `version.json` into what it ships, and nothing commits to `main`.
 
 `.github/workflows/release.yml` then, in one run:
@@ -47,6 +47,15 @@ Do these once, before merging the Phase 6 PR.
    ```
 
 5. **GitHub Pages.** The first release creates the `gh-pages` branch. Straight after it, Settings → Pages → _Deploy from a branch_ → `gh-pages` / `/ (root)`. The first release's last step waits up to 10 minutes for Pages to serve the repository; if it times out because Pages wasn't on yet, turn it on and re-run that job.
+
+6. **Docker Hub login (CI only, read-only).** Create an access token at Docker Hub → Account settings → Personal access tokens with permission _Repo Public Read-only_ (nothing is ever pushed to Docker Hub: release images go to GHCR), then store it:
+
+   ```bash
+   gh secret set DOCKERHUB_USERNAME              # your Docker Hub username
+   gh secret set DOCKERHUB_TOKEN                 # paste the token
+   ```
+
+   Without these, the jobs above fail at their login step. If the token has an expiry, replace the secret before it passes.
 
 ## Rotating the apt key
 
