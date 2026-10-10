@@ -100,4 +100,50 @@ test('a rule added in the editor raises without a restart and leaves Open when d
     'rule removed',
     ENGINE
   );
+
+  // The disabled rule's row is dimmed, but its kind label ("… · Disabled") and buttons are not.
+  const row = rules.getByRole('listitem').filter({ hasText: 'E2E CPU high' });
+  const opacity = (selector: string) =>
+    row
+      .locator(selector)
+      .first()
+      .evaluate((el) => getComputedStyle(el).opacity);
+  await expect(row.locator('.rule-source')).toContainText('Disabled');
+  // The row itself must not fade (that would dim the label and buttons with it).
+  expect(await row.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+  expect(await opacity('.rule-source')).toBe('1');
+  expect(await opacity('.rule-actions')).toBe('1');
+  expect(await opacity('.alert-message')).toBe('0.6');
+});
+
+test('an acknowledged alert stays open, and acknowledged, across a server restart', async ({
+  page,
+  server
+}) => {
+  await signIn(page);
+  server.setReadings({ memory_used: 95 });
+  const openAlerts = async () =>
+    (await (await page.request.get('/api/alerts')).json()) as {
+      id: number;
+      acknowledgedAt: number | null;
+    }[];
+  await expect.poll(async () => (await openAlerts()).length, ENGINE).toBe(1);
+  const [alert] = await openAlerts();
+  const response = await page.request.post(`/api/alerts/${alert!.id}/acknowledge`);
+  expect(response.ok()).toBe(true);
+
+  // Down for a few polls, then back with the readings still high: the same alert resumes.
+  await server.halt();
+  await server.restart();
+  await page.goto('/#/alerts');
+  const open = page.getByRole('region', { name: 'Open', exact: true });
+  await expect(open).toContainText('E2E memory high');
+  await expect(open).toContainText('Acknowledged');
+
+  // Give the engine several checks after the restart; it must not close the alert by itself.
+  await expect
+    .poll(async () => (await openAlerts()).map((a) => a.id), { timeout: 8_000, intervals: [1_000] })
+    .toEqual([alert!.id]);
+  const all = (await (await page.request.get('/api/alerts?state=all')).json()) as unknown[];
+  expect(all).toHaveLength(1);
 });
