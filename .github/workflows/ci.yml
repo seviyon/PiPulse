@@ -96,3 +96,42 @@ jobs:
         run: sh packaging/test/compose.sh pipulse:test
       - name: Compose with an operator certificate
         run: sh packaging/test/compose-operator.sh pipulse:test
+
+  e2e:
+    timeout-minutes: 15
+    # The dashboard in Chromium against the real built server (Node 22 only: the Pi ships 22,
+    # and a second Node adds no browser coverage).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix e2e
+      - run: npm run build
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(npm --prefix e2e exec -- playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        run: npm --prefix e2e exec -- playwright install --with-deps chromium
+      - if: steps.browsers.outputs.cache-hit == 'true'
+        run: npm --prefix e2e exec -- playwright install-deps chromium
+      - run: npm --prefix e2e test
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: e2e
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          retention-days: 7

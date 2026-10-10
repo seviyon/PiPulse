@@ -9,7 +9,9 @@ export default tseslint.config(
       '**/node_modules/**',
       'packages/web/dist/**',
       'out/**',
-      '.superpowers/**'
+      '.superpowers/**',
+      'e2e/test-results/**',
+      'e2e/playwright-report/**'
     ]
   },
   js.configs.recommended,

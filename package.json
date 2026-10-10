@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
-    "dev": "npm run dev --workspace packages/api"
+    "dev": "npm run dev --workspace packages/api",
+    "test:e2e": "npm run build && npm --prefix e2e test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

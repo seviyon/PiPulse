@@ -14,3 +14,5 @@ coverage/
 .playwright-mcp/
 /out/
 .compose-test.*
+e2e/test-results/
+e2e/playwright-report/
