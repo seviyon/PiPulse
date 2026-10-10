@@ -10,6 +10,7 @@ cd PiPulse
 npm install
 npm run build     # storage -> collector -> alerts -> api -> web, in dependency order
 npm test          # builds, then runs the Vitest suites across all packages
+npm run test:coverage   # the same with coverage; writes coverage/lcov.info (CI sends it to Codecov)
 npm run dev       # runs the server (collector + API) in watch mode
 ```
 

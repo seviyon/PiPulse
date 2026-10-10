@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/seviyon/PiPulse)](https://github.com/seviyon/PiPulse/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/seviyon/PiPulse)](LICENSE)
 [![CodeFactor](https://www.codefactor.io/repository/github/seviyon/pipulse/badge)](https://www.codefactor.io/repository/github/seviyon/pipulse)
+[![Coverage](https://codecov.io/gh/seviyon/PiPulse/graph/badge.svg)](https://codecov.io/gh/seviyon/PiPulse)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=nodedotjs&logoColor=white)](docs/install.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-end%20to%20end-3178C6?logo=typescript&logoColor=white)](docs/architecture.md)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-2%20and%20newer-C51A4A?logo=raspberrypi&logoColor=white)](docs/install.md)
