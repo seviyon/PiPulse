@@ -62,7 +62,7 @@ PiPulse/
 | Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode — no native module, no install step | Node built-in |
 | API | [Fastify](https://fastify.io/) (HTTP + WebSocket) | 5.12.5 |
 | Frontend | Preact + Vite (React-compatible, ~3 KB runtime) | Preact 10.29.8, Vite 8.3.0 |
-| Testing | Vitest (unit/integration today), Playwright (end-to-end, Chromium only; smoke test in CI, more journeys planned) | Vitest 5.0.1 |
+| Testing | Vitest (unit/integration today), Playwright Test (end-to-end, Chromium only, in CI) | Vitest 5.0.1, Playwright 1.64.0 |
 | Lint/format | ESLint (flat config) + Prettier | ESLint 10.11.0, Prettier 3.9.8 |
 | Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`) | — |
 
@@ -208,6 +208,14 @@ npm install
 npm run build     # storage -> collector -> alerts -> api -> web, in dependency order
 npm test          # builds, then runs the Vitest suites across all packages
 npm run dev       # runs the server (collector + API) in watch mode
+```
+
+The end-to-end tests (Playwright, Chromium only) live in the standalone `e2e/` folder and drive the real built server with fake plugins. Install their dependencies and the browser once, then run them (this builds first):
+
+```bash
+npm ci --prefix e2e
+npx --prefix e2e playwright install chromium   # add --with-deps on Linux
+npm run test:e2e
 ```
 
 To run the server (collector + dashboard + REST API + WebSocket feed) from a build, then open `http://<host>:8889/` (an installed PiPulse reads the same variables from `/etc/pipulse/pipulse.env`):
