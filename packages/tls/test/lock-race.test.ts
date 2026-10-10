@@ -20,6 +20,7 @@ const gap = vi.hoisted(() => ({
   links: [] as (() => void)[],
   rename: undefined as (() => void) | undefined,
   linkError: undefined as string | undefined,
+  renameError: undefined as string | undefined,
   linkCalls: 0,
   renameCalls: 0
 }));
@@ -37,6 +38,9 @@ vi.mock('node:fs', async (importOriginal) => {
     },
     renameSync: (from: string, to: string) => {
       gap.renameCalls += 1;
+      if (gap.renameError) {
+        throw Object.assign(new Error(gap.renameError), { code: gap.renameError });
+      }
       const run = gap.rename;
       gap.rename = undefined;
       run?.();
@@ -61,6 +65,7 @@ afterEach(() => {
   gap.links = [];
   gap.rename = undefined;
   gap.linkError = undefined;
+  gap.renameError = undefined;
   gap.linkCalls = 0;
   gap.renameCalls = 0;
   rmSync(dir, { recursive: true, force: true });
@@ -205,5 +210,63 @@ describe('the heartbeat', () => {
       { create: true, heartbeatMs: 30, onLost: () => undefined }
     );
     expect(result).toBe(0);
+  });
+});
+
+// Found by mutation testing: none of the error branches of breakLock were tested.
+describe('breakLock, when the file system misbehaves', () => {
+  const stale = () => writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+
+  it('does nothing when there is no lock any more', () => {
+    expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
+    expect(staleCopies()).toEqual([]);
+    gap.linkError = 'EPERM'; // the fallback finds nothing either
+    expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
+  });
+
+  it.each(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK'])(
+    'falls back to rename-first when hard links fail with %s',
+    (code) => {
+      stale();
+      gap.linkError = code;
+      breakLock(lockPath(), judgedA());
+      expect(existsSync(lockPath())).toBe(false);
+      expect(staleCopies()).toEqual([]);
+    }
+  );
+
+  it('does not hide any other error from link()', () => {
+    stale();
+    gap.linkError = 'EACCES';
+    expect(() => breakLock(lockPath(), judgedA())).toThrow('EACCES');
+    expect(readFileSync(lockPath(), 'utf8')).toContain('stale-a');
+  });
+
+  it('gives up quietly when the lock goes away between the check and the rename', () => {
+    stale();
+    gap.rename = () => rmSync(lockPath());
+    expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
+    expect(staleCopies()).toEqual([]);
+  });
+
+  it('does not hide a rename error, and leaves no copy behind', () => {
+    stale();
+    gap.renameError = 'EACCES';
+    expect(() => breakLock(lockPath(), judgedA())).toThrow('EACCES');
+    expect(staleCopies()).toEqual([]);
+  });
+
+  it('does not hide a rename error in the fallback either', () => {
+    stale();
+    gap.linkError = 'EPERM';
+    gap.renameError = 'EIO';
+    expect(() => breakLock(lockPath(), judgedA())).toThrow('EIO');
+  });
+
+  it('the fallback gives up quietly when the lock vanished before its rename', () => {
+    stale();
+    gap.linkError = 'EPERM';
+    gap.renameError = 'ENOENT';
+    expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
   });
 });
