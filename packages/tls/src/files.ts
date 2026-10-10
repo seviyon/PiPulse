@@ -260,8 +260,8 @@ const OPEN_DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLL
 /**
  * Opens a directory without following a symlink. A directory this user owns but can't read
  * (its mode lacks r) can't be opened, yet ensureDir exists to fix such modes: for that case
- * only, the mode is set through the path and the directory reopened. A swap in that one step
- * can't be ruled out, but it can be noticed: the reopened directory must be the one lstat saw.
+ * only, and only inside a parent that nobody else can write to, the mode is set through the
+ * path and the directory reopened. A swap by this same user can't be ruled out, but it can be noticed: the reopened directory must be the one lstat saw.
  */
 function openDirectory(path: string, mode: number): number {
   const notDirectory = () => new TlsFileError(`${path} is not a directory`);
@@ -274,6 +274,15 @@ function openDirectory(path: string, mode: number): number {
   }
   const before = lstatSync(path);
   if (!before.isDirectory()) throw notDirectory();
+  // Only when nobody else could swap the entry meanwhile: this user owns the directory and
+  // its parent, and the parent isn't writable by group or others. Otherwise fail closed.
+  const me = process.getuid?.();
+  const parent = lstatSync(dirname(path));
+  if (before.uid !== me || parent.uid !== me || (parent.mode & 0o022) !== 0) {
+    throw new TlsFileError(
+      `${path} can't be read and can't be fixed safely from here: fix its mode by hand`
+    );
+  }
   chmodSync(path, mode);
   let fd: number;
   try {

@@ -229,6 +229,20 @@ describe('ensureDir', () => {
     expect(statSync(path).mode & 0o7777).toBe(0o750);
   });
 
+  it.skipIf(isRoot)('does not fix an unreadable directory inside a folder others can write', () => {
+    mkdirSync(join(dir, 'shared'), { mode: 0o777 });
+    chmodSync(join(dir, 'shared'), 0o777);
+    const path = join(dir, 'shared', 'locked');
+    mkdirSync(path, { mode: 0o700 });
+    chmodSync(path, 0o000);
+    try {
+      expect(() => ensureDir(path, { mode: 0o750 })).toThrow(/can't be fixed safely/);
+      expect(statSync(path).mode & 0o7777).toBe(0o000);
+    } finally {
+      chmodSync(path, 0o700);
+    }
+  });
+
   it.skipIf(isRoot)('still refuses a symlink when the target cannot be read', () => {
     mkdirSync(join(dir, 'real'));
     chmodSync(join(dir, 'real'), 0o000);
