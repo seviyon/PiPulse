@@ -60,6 +60,9 @@ jobs:
       - run: npm run build
       - name: Packaging tests
         run: sh packaging/test/run.sh
+      - name: TLS unit tests as root
+        # The ownership tests (chown to another user) skip everywhere else; this container runs as root.
+        run: npx vitest run packages/tls
 
   docker:
     runs-on: ubuntu-24.04

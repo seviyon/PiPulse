@@ -16,3 +16,6 @@ coverage/
 .compose-test.*
 e2e/test-results/
 e2e/playwright-report/
+
+# Local graphify knowledge graph: part of the maintainer's setup, not the repository
+graphify-out/
