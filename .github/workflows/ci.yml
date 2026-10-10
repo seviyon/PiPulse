@@ -34,7 +34,22 @@ jobs:
         run: npm run build
 
       - name: Test
+        if: matrix.node-version != '22.x'
         run: npm test
+
+      # One leg collects coverage (the Pi runs Node 22) so the suite is not run twice.
+      - name: Test with coverage
+        if: matrix.node-version == '22.x'
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == '22.x'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          # A missing token or a Codecov outage must not fail the build.
+          fail_ci_if_error: false
 
   shellcheck:
     runs-on: ubuntu-24.04
