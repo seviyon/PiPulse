@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   closeSync,
   constants,
+  chmodSync,
   fchmodSync,
   fchownSync,
   fstatSync,
@@ -238,15 +239,7 @@ export function ensureDir(
   }
   // Everything below goes through one descriptor opened without following a symlink, so a
   // directory swapped for a symlink after the check can't have its target chmod'ed or chown'ed.
-  let fd: number;
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ELOOP' || code === 'ENOTDIR')
-      throw new TlsFileError(`${path} is not a directory`);
-    throw error;
-  }
+  const fd = openDirectory(path, options.mode);
   try {
     const stat = fstatSync(fd);
     // Mode first, then owner, and no chmod when the mode already matches: a process without
@@ -260,6 +253,42 @@ export function ensureDir(
   } finally {
     closeSync(fd);
   }
+}
+
+const OPEN_DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
+/**
+ * Opens a directory without following a symlink. A directory this user owns but can't read
+ * (its mode lacks r) can't be opened, yet ensureDir exists to fix such modes: for that case
+ * only, the mode is set through the path and the directory reopened. A swap in that one step
+ * can't be ruled out, but it can be noticed: the reopened directory must be the one lstat saw.
+ */
+function openDirectory(path: string, mode: number): number {
+  const notDirectory = () => new TlsFileError(`${path} is not a directory`);
+  try {
+    return openSync(path, OPEN_DIR);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw notDirectory();
+    if (code !== 'EACCES') throw error;
+  }
+  const before = lstatSync(path);
+  if (!before.isDirectory()) throw notDirectory();
+  chmodSync(path, mode);
+  let fd: number;
+  try {
+    fd = openSync(path, OPEN_DIR);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP' || code === 'ENOTDIR') throw notDirectory();
+    throw error;
+  }
+  const after = fstatSync(fd);
+  if (after.dev !== before.dev || after.ino !== before.ino) {
+    closeSync(fd);
+    throw new TlsFileError(`${path} changed while its mode was being set`);
+  }
+  return fd;
 }
 
 /**

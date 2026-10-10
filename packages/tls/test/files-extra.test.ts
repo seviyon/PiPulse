@@ -220,6 +220,27 @@ describe('ensureDir', () => {
     expect(statSync(path).mode & 0o7777).toBe(0o2750);
   });
 
+  // Cannot be opened to be fixed through a descriptor, so the fallback sets the mode by path.
+  it.skipIf(isRoot)('fixes the mode of a directory its owner cannot read', () => {
+    const path = join(dir, 'locked');
+    mkdirSync(path, { mode: 0o700 });
+    chmodSync(path, 0o000);
+    ensureDir(path, { mode: 0o750 });
+    expect(statSync(path).mode & 0o7777).toBe(0o750);
+  });
+
+  it.skipIf(isRoot)('still refuses a symlink when the target cannot be read', () => {
+    mkdirSync(join(dir, 'real'));
+    chmodSync(join(dir, 'real'), 0o000);
+    symlinkSync(join(dir, 'real'), join(dir, 'link'));
+    try {
+      expect(() => ensureDir(join(dir, 'link'), { mode: 0o750 })).toThrow(/not a directory/);
+      expect(statSync(join(dir, 'real')).mode & 0o7777).toBe(0o000);
+    } finally {
+      chmodSync(join(dir, 'real'), 0o700);
+    }
+  });
+
   it('keeps setgid when it only has to change the group to the one it has', () => {
     const path = join(dir, 'tls');
     ensureDir(path, { mode: 0o2750, owner: { uid: process.getuid!(), gid: process.getgid!() } });
