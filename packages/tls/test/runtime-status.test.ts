@@ -224,3 +224,43 @@ describe('readRuntimeStatus, a file that is not what the service writes', () => 
     });
   });
 });
+
+describe('readRuntimeStatus, documents that are valid', () => {
+  const put = (doc: unknown) => writeFileSync(join(dir, 'tls-status.json'), JSON.stringify(doc));
+  const read = () => readRuntimeStatus(dir, running);
+
+  // Found by mutation testing: nothing checked that the accepted values are accepted.
+  it('accepts plain HTTP with no certificate', () => {
+    put({ ...status, transport: 'http', certificate: null });
+    expect(read()).toMatchObject({
+      state: 'running',
+      status: { transport: 'http', certificate: null }
+    });
+  });
+
+  it('accepts an operator certificate', () => {
+    put({ ...status, certificate: { ...status.certificate, source: 'operator' } });
+    expect(read()).toMatchObject({ status: { certificate: { source: 'operator' } } });
+  });
+
+  it('accepts pid 1 and rejects pid 0', () => {
+    put({ ...status, pid: 1 });
+    expect(read()).toMatchObject({ state: 'running', status: { pid: 1 } });
+    put({ ...status, pid: 0 });
+    expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+  });
+
+  it('rejects a certificate that is not an object', () => {
+    put({ ...status, certificate: 'x' });
+    expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+    put({ ...status, certificate: 7 });
+    expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+  });
+
+  it('rejects a missing certificate source and fingerprint', () => {
+    put({ ...status, certificate: { ...status.certificate, source: undefined } });
+    expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+    put({ ...status, certificate: { ...status.certificate, fingerprint: undefined } });
+    expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+  });
+});
