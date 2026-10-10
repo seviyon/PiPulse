@@ -9,15 +9,19 @@ test.describe('without an admin password', () => {
     await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
 
     // Sent from the page, so the browser adds the Origin header like a real write would.
-    const status = await page.evaluate(async () => {
+    const answer = await page.evaluate(async () => {
       const response = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: '{}'
       });
-      return response.status;
+      return { status: response.status, body: (await response.json()) as { error: string } };
     });
-    expect(status).toBe(403);
+    // The message tells the no-password refusal from the origin check's `origin not allowed`.
+    expect(answer).toEqual({
+      status: 403,
+      body: { error: 'editing is disabled: no admin password configured' }
+    });
   });
 });
 
@@ -53,6 +57,7 @@ test.describe('with an admin password', () => {
 
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Sign in to change settings' })).toBeVisible();
     await expect.poll(sessionCookie).toBeUndefined();
   });
 });
@@ -84,6 +89,6 @@ test.describe('with read protection', () => {
     await page.getByLabel('Password').fill(E2E_PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.getByRole('navigation', { name: 'Pages' })).toBeVisible();
-    await expect(page.getByRole('status')).toContainText('Live');
+    await expect(page.locator('header.device').getByRole('status')).toContainText('Live');
   });
 });
