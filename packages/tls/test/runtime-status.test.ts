@@ -1,4 +1,4 @@
-import { chmodSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -150,5 +150,77 @@ describe('readRuntimeStatus', () => {
   it('writes atomically: no temp file is left and the mode is 0640', () => {
     writeRuntimeStatus(dir, status);
     expect(readdirSync(dir)).toEqual(['tls-status.json']);
+  });
+});
+
+describe('readRuntimeStatus, a file that is not what the service writes', () => {
+  const put = (doc: unknown) => writeFileSync(join(dir, 'tls-status.json'), JSON.stringify(doc));
+  const notValid = {
+    state: 'status-file-corrupt',
+    problem: expect.stringContaining('not a valid')
+  };
+  const edit = (change: (doc: Doc) => void) => {
+    const doc = structuredClone(status) as unknown as Doc;
+    change(doc);
+    put(doc);
+  };
+
+  it.each([
+    ['an unknown version', (d: Doc) => (d['version'] = 2)],
+    ['a transport that is neither https nor http', (d: Doc) => (d['transport'] = 'ftp')],
+    ['a pid that is not a positive integer', (d: Doc) => (d['pid'] = 1.5)],
+    ['a start time with control characters', (d: Doc) => (d['startTime'] = 'a\nb')],
+    ['a boot id that is not text', (d: Doc) => (d['bootId'] = 7)],
+    ['a write time that is not a number', (d: Doc) => (d['writtenAt'] = 'now')],
+    ['a certificate class it does not know', (d: Doc) => (d.certificate['class'] = 'great')],
+    ['an expiry that is not a number', (d: Doc) => (d.certificate['notAfter'] = 'soon')],
+    ['a reload state it does not know', (d: Doc) => (d.certificate.reload['state'] = 'maybe')],
+    [
+      'a last attempt that is not a number',
+      (d: Doc) => (d.certificate.reload['lastAttempt'] = 'x')
+    ],
+    ['a last error that is not text', (d: Doc) => (d.certificate.reload['lastError'] = 5)]
+  ])('rejects %s', (_name, change) => {
+    edit(change);
+    expect(readRuntimeStatus(dir, running)).toMatchObject(notValid);
+  });
+
+  it('rejects a document that is not an object, or not JSON', () => {
+    put([1, 2]);
+    expect(readRuntimeStatus(dir, running)).toMatchObject(notValid);
+    writeFileSync(join(dir, 'tls-status.json'), '{nope');
+    expect(readRuntimeStatus(dir, running)).toMatchObject(notValid);
+  });
+
+  it("refuses a file anyone can write, a stranger's file, and a folder in its place", () => {
+    writeRuntimeStatus(dir, status);
+    chmodSync(join(dir, 'tls-status.json'), 0o666);
+    expect(readRuntimeStatus(dir, running)).toMatchObject({
+      state: 'status-file-corrupt',
+      problem: expect.stringContaining('writable by everyone')
+    });
+    chmodSync(join(dir, 'tls-status.json'), 0o640);
+    expect(readRuntimeStatus(dir, { ...running, expectUid: process.getuid!() + 1 })).toMatchObject({
+      state: 'status-file-corrupt',
+      problem: expect.stringContaining('owned by uid')
+    });
+    rmSync(join(dir, 'tls-status.json'));
+    mkdirSync(join(dir, 'tls-status.json'));
+    expect(readRuntimeStatus(dir, running)).toMatchObject({
+      state: 'status-file-corrupt',
+      problem: expect.stringContaining('not a regular file')
+    });
+  });
+
+  it('says "unknown" for a read that fails for another reason, and "missing" when absent', () => {
+    expect(readRuntimeStatus(dir, running)).toEqual({ state: 'not-running', reason: 'missing' });
+    writeRuntimeStatus(dir, status);
+    const denied = () => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    };
+    expect(readRuntimeStatus(dir, { ...running, read: denied })).toMatchObject({
+      state: 'unknown',
+      problem: expect.stringContaining('EACCES')
+    });
   });
 });
