@@ -601,7 +601,9 @@ button:hover {
   margin-left: auto;
 }
 
-.rule-list li[data-disabled='true'] {
+/* A disabled rule is dimmed, but its kind label ("Built-in · Disabled") and its buttons stay
+   at full contrast: fading the whole row dropped that text well below 4.5:1. */
+.rule-list li[data-disabled='true'] > :not(.rule-source, .rule-actions, .rule-form) {
   opacity: 0.6;
 }
 
