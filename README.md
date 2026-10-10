@@ -1,5 +1,14 @@
 # PiPulse
 
+[![CI](https://github.com/seviyon/PiPulse/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seviyon/PiPulse/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/seviyon/PiPulse)](https://github.com/seviyon/PiPulse/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/seviyon/PiPulse)](LICENSE)
+[![CodeFactor](https://www.codefactor.io/repository/github/seviyon/pipulse/badge)](https://www.codefactor.io/repository/github/seviyon/pipulse)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=nodedotjs&logoColor=white)](docs/install.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-end%20to%20end-3178C6?logo=typescript&logoColor=white)](docs/architecture.md)
+[![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-2%20and%20newer-C51A4A?logo=raspberrypi&logoColor=white)](docs/install.md)
+[![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen?logo=renovate)](renovate.json)
+
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
 
