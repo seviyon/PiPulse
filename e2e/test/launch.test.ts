@@ -170,6 +170,14 @@ describe('startServer', () => {
     expect(JSON.parse(body)).toMatchObject({ editable: false });
   });
 
+  it('refuses a served chain that does not verify against the test root, and leaves no process', async () => {
+    // The launcher's own requests verify the chain, so a leaf without its intermediate fails the start.
+    await expect(startServer({ tls: true, tlsLeafOnly: true })).rejects.toThrow(
+      /unable to verify the first certificate|UNABLE_TO_VERIFY_LEAF_SIGNATURE/i
+    );
+    expect(liveServerCount()).toBe(0);
+  });
+
   describe('refuses bad options', () => {
     it('a missing dashboard build', async () => {
       const empty = mkdtempSync(join(tmpdir(), 'e2e-empty-'));
