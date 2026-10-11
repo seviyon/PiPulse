@@ -316,6 +316,28 @@ describe('WebSocket /api/live dead-client handling', () => {
     await app.close();
   });
 
+  it('closes a client that sends a frame larger than any message it could need (1009)', async () => {
+    // Dashboard clients never send anything; ws would otherwise buffer up to 100 MiB of an
+    // unfinished frame per connection, for anyone who can reach the port.
+    const app = buildServer(db, { live: createLiveFeed() });
+    const { socket } = await connect(app);
+    const closed = once(socket, 'close');
+    socket.send(Buffer.alloc(4096));
+    const [code] = (await closed) as [number];
+    expect(code).toBe(1009);
+    await app.close();
+  });
+
+  it('still lets a small message and the ping/pong heartbeat through', async () => {
+    const app = buildServer(db, { live: createLiveFeed(), heartbeatMs: 20 });
+    const { socket } = await connect(app);
+    socket.send('hi');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    socket.close();
+    await app.close();
+  });
+
   it('closes promptly even when a client never answers the close handshake', async () => {
     const app = buildServer(db, { live: createLiveFeed() });
     const raw = await stalledClient(await listen(app));

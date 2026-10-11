@@ -33,6 +33,27 @@ export class TlsConfigError extends Error {
   override name = 'TlsConfigError';
 }
 
+/**
+ * The port the server listens on and the health check connects to: PIPULSE_PORT, else 8889. One
+ * reading for both, so an empty value (`PIPULSE_PORT=` in pipulse.env) can't mean a random port
+ * to one and 8889 to the other.
+ */
+export function listenPort(env: NodeJS.ProcessEnv): number {
+  const text = env['PIPULSE_PORT']?.trim();
+  if (!text) return 8889;
+  const port = /^\d{1,5}$/.test(text) ? Number(text) : NaN;
+  if (!(port >= 0 && port <= 65535))
+    throw new TlsConfigError(
+      `PIPULSE_PORT must be a port number from 0 to 65535, not "${text.slice(0, 40)}"`
+    );
+  return port;
+}
+
+/** The address the server binds: PIPULSE_HOST, else every IPv4 address. */
+export function listenHost(env: NodeJS.ProcessEnv): string {
+  return env['PIPULSE_HOST']?.trim() || '0.0.0.0';
+}
+
 export const DEFAULT_TLS_DIR = '/etc/pipulse/tls';
 export const DEFAULT_TIMESYNC_DIR = '/run/systemd/timesync';
 

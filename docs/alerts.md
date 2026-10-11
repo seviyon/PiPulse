@@ -62,7 +62,7 @@ To be told when an alert opens or clears, point `PIPULSE_NOTIFY_FILE` at a JSON 
 
 Each webhook needs an `id` and an `http(s)` `url`; `method` (`POST` or `PUT`), `headers`, `body`, `events` (`raised`, `cleared`; default both), `minSeverity` (`warning` or `critical`) and `timeout` (`1s`–`60s`, default `10s`) are optional. Without a `body`, PiPulse sends what Apprise's `/notify` endpoint expects (a title, a body line, and a `type` of `warning`, `failure`, `success` or `info`), so an Apprise URL needs nothing else. A `body` is any JSON with `{{placeholders}}` in its strings — `event`, `ruleId`, `metric`, `metricLabel`, `severity`, `message`, `value`, `rawValue`, `raisedAt`, `clearedAt`, `duration`, `clearedBy`, `hostname` — and always stays valid JSON, whatever the alert message holds. An invalid file stops PiPulse at startup with a message naming the webhook and field.
 
-A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail.
+A URL on a port `fetch` refuses to use (e.g. `:9`, `:25`) is also refused at startup, since every delivery to it would fail. So is a URL with a username or password (`https://user:pass@host/…`), which `fetch` refuses to send to: put the credential in an `Authorization` header instead.
 
 The file usually holds secrets: keep other users out of it (`sudo chown root:pipulse /etc/pipulse/notify.json && sudo chmod 640 /etc/pipulse/notify.json` on an installed PiPulse, `chmod 600` when you run it as yourself; PiPulse warns at startup if other users can read it). Full URLs and headers are never logged, served or shown; the Settings page lists each webhook by host, with its last delivery, last failure and anything still waiting.
 

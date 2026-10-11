@@ -39,6 +39,8 @@ import {
   startReloader,
   statSignature,
   hostName,
+  listenHost,
+  listenPort,
   validityOf,
   writeRuntimeStatus,
   type CertSource,
@@ -81,8 +83,15 @@ const RUN_METRICS = RUN_PLUGINS.map(({ id, intervalMs }) => ({ id, intervalMs })
  * SIGINT/SIGTERM (systemd and `docker stop` both send SIGTERM).
  */
 const DB_PATH = process.env['PIPULSE_DB_PATH'] ?? 'pipulse.sqlite';
-const HOST = process.env['PIPULSE_HOST'] ?? '0.0.0.0';
-const PORT = Number(process.env['PIPULSE_PORT'] ?? 8889);
+// The same reading of both settings as the health check's (an empty PIPULSE_PORT is 8889).
+const HOST = listenHost(process.env);
+const PORT = (() => {
+  try {
+    return listenPort(process.env);
+  } catch (error) {
+    return fail(error);
+  }
+})();
 /** Comma-separated extra browser origins allowed on /api/live, e.g. behind a reverse proxy. */
 const ALLOWED_ORIGINS = (process.env['PIPULSE_ALLOWED_ORIGINS'] ?? '')
   .split(',')

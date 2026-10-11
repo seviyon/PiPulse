@@ -1,5 +1,6 @@
 import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { parseAddress } from '@pipulse/tls';
 
 /** A problem with the auth configuration; its message is one line for the operator. */
 export class AuthConfigError extends Error {}
@@ -57,6 +58,13 @@ export function parsePasswordHash(text: string): PasswordHash {
     hashBytes.length < 16
   ) {
     throw new AuthConfigError('is not a PiPulse password hash (make one with hash-password)');
+  }
+  // What scrypt allocates (OpenSSL: 128·r·p for the blocks and 128·r·(N+2) for the table). A file
+  // that needs more than MAXMEM would start the service and then fail every sign-in.
+  if (128 * R * (P + N + 2) > MAXMEM) {
+    throw new AuthConfigError(
+      'asks scrypt for too much memory (make a new one with hash-password)'
+    );
   }
   return { N, r: R, p: P, salt: saltBytes, hash: hashBytes };
 }
@@ -131,37 +139,50 @@ export interface Sessions {
   create(): string;
   /** Whether `id` is a live session; a valid check counts as use. */
   valid(id: string | undefined): boolean;
+  /**
+   * Whether the browser's cookie for `id` should be sent again (a day after the last time):
+   * the session slides with use, so its cookie must too, or a daily user is signed out when
+   * the first one expires. True at most once a day.
+   */
+  cookieDue(id: string | undefined): boolean;
   end(id: string | undefined): void;
 }
 
 export const SESSION_TTL_MS = 7 * DAY;
+const COOKIE_REFRESH_MS = DAY;
 
 /** In-memory sessions: a restart signs everyone out, and no signing key exists anywhere. */
 export function createSessions(options: { now?: () => number; ttlMs?: number } = {}): Sessions {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? SESSION_TTL_MS;
-  const lastUse = new Map<string, number>();
+  const sessions = new Map<string, { used: number; cookie: number }>();
   const expired = (at: number) => now() - at > ttlMs;
   return {
     create() {
-      for (const [id, at] of lastUse) if (expired(at)) lastUse.delete(id);
+      for (const [id, entry] of sessions) if (expired(entry.used)) sessions.delete(id);
       const id = randomBytes(32).toString('base64url');
-      lastUse.set(id, now());
+      sessions.set(id, { used: now(), cookie: now() });
       return id;
     },
     valid(id) {
       if (id === undefined) return false;
-      const at = lastUse.get(id);
-      if (at === undefined) return false;
-      if (expired(at)) {
-        lastUse.delete(id);
+      const entry = sessions.get(id);
+      if (entry === undefined) return false;
+      if (expired(entry.used)) {
+        sessions.delete(id);
         return false;
       }
-      lastUse.set(id, now());
+      entry.used = now();
+      return true;
+    },
+    cookieDue(id) {
+      const entry = id === undefined ? undefined : sessions.get(id);
+      if (entry === undefined || now() - entry.cookie < COOKIE_REFRESH_MS) return false;
+      entry.cookie = now();
       return true;
     },
     end(id) {
-      if (id !== undefined) lastUse.delete(id);
+      if (id !== undefined) sessions.delete(id);
     }
   };
 }
@@ -170,6 +191,28 @@ export interface LoginLimiter {
   blocked(ip: string): boolean;
   fail(ip: string): void;
   succeed(ip: string): void;
+  /** How many addresses have failures on record. */
+  tracked(): number;
+}
+
+/**
+ * What the sign-in limit counts by: the address for IPv4, and the /64 for IPv6, where a single
+ * host owns billions of addresses and could otherwise rotate through them for a fresh budget.
+ */
+export function clientKey(ip: string): string {
+  const bare = ip.split('%')[0]!.toLowerCase();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(bare);
+  if (mapped) return mapped[1]!;
+  if (!bare.includes(':')) return ip;
+  try {
+    const address = parseAddress(bare);
+    const groups = Array.from({ length: 4 }, (_, i) =>
+      ((address.bytes[2 * i]! << 8) | address.bytes[2 * i + 1]!).toString(16)
+    );
+    return `${groups.join(':')}::/64`;
+  } catch {
+    return ip;
+  }
 }
 
 export function createLoginLimiter(
@@ -183,11 +226,14 @@ export function createLoginLimiter(
   return {
     blocked: (ip) => recent(ip).length >= max,
     fail(ip) {
+      // Addresses that only ever failed would otherwise stay on record forever.
+      for (const key of failures.keys()) if (recent(key).length === 0) failures.delete(key);
       failures.set(ip, [...recent(ip), now()]);
     },
     succeed(ip) {
       failures.delete(ip);
-    }
+    },
+    tracked: () => failures.size
   };
 }
 

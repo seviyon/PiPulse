@@ -441,6 +441,27 @@ describe('api server process', () => {
   });
 });
 
+describe('api server process, a port it cannot use', () => {
+  it('stops with one line naming PIPULSE_PORT instead of listening on a random port', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '80x',
+        PIPULSE_TLS: 'off'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const [code] = (await once(child, 'exit')) as [number | null];
+    expect(code).toBe(1);
+    expect(stderr).toContain('[pipulse] PIPULSE_PORT must be a port number from 0 to 65535');
+  });
+});
+
 describe('api server process, PIPULSE_ALLOWED_HOSTS', () => {
   const start = async (hosts: string) => {
     dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
