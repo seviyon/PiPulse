@@ -125,8 +125,8 @@ describe('startScheduler', () => {
     const hung = fakePlugin('hung', 1000, () => new Promise<number | null>(() => {}));
 
     const scheduler = startScheduler(db, [hung]);
-    const stopped = scheduler.stop(5000);
-    await vi.advanceTimersByTimeAsync(5000);
+    const stopped = scheduler.stop(2000); // sooner than the collect deadline (3 x the interval)
+    await vi.advanceTimersByTimeAsync(2000);
 
     await expect(stopped).resolves.toBe(false);
   });
@@ -179,5 +179,74 @@ describe('startScheduler onSample', () => {
       plugin,
       expect.objectContaining({ message: 'listener broke' })
     );
+  });
+});
+
+/** Stops the scheduler, letting the fake timers run the stop timeout. */
+async function drain(scheduler: { stop(timeoutMs?: number): Promise<boolean> }) {
+  const stopped = scheduler.stop(1);
+  await vi.advanceTimersByTimeAsync(1);
+  await stopped;
+}
+
+describe('a collect() that never finishes', () => {
+  it('is given up on after three intervals, reported, and polled again instead of silencing the metric', async () => {
+    let calls = 0;
+    const errors: string[] = [];
+    const hung = fakePlugin('hung', 1000, () => {
+      calls++;
+      return new Promise<number | null>(() => {});
+    });
+    const scheduler = startScheduler(db, [hung], {
+      onError: (_plugin, error) => errors.push((error as Error).message)
+    });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(calls).toBe(1); // still waiting: ticks are skipped while it is in flight
+    await vi.advanceTimersByTimeAsync(2); // 3 s: the deadline passes
+    expect(errors).toEqual(['hung: collect() did not finish within 3000 ms']);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(calls).toBeGreaterThanOrEqual(2); // the next tick polls again
+    await drain(scheduler);
+  });
+
+  it('never stores a late reading from a collect() that was given up on', async () => {
+    const finishes: ((value: number) => void)[] = [];
+    const late = fakePlugin(
+      'late',
+      1000,
+      () => new Promise<number | null>((resolve) => finishes.push(resolve))
+    );
+    const scheduler = startScheduler(db, [late], { onError: () => {} });
+    await vi.advanceTimersByTimeAsync(3001);
+    finishes[0]!(42); // the first, stuck read finally answers, after the deadline
+    await vi.advanceTimersByTimeAsync(10);
+    expect(timestamps(db, 'late')).toEqual([]);
+    await drain(scheduler);
+  });
+
+  it('does not touch a collect() that finishes in time, however slow', async () => {
+    const slow = fakePlugin('slow', 1000, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2900));
+      return 7;
+    });
+    const errors: unknown[] = [];
+    const scheduler = startScheduler(db, [slow], { onError: (_p, e) => errors.push(e) });
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(errors).toEqual([]);
+    expect(timestamps(db, 'slow')).toEqual([2900]);
+    await drain(scheduler);
+  });
+
+  it('allows at most 30 s for a slow plugin, whatever its interval', async () => {
+    const errors: string[] = [];
+    const hung = fakePlugin('hung', 600_000, () => new Promise<number | null>(() => {}));
+    const scheduler = startScheduler(db, [hung], {
+      onError: (_p, e) => errors.push((e as Error).message)
+    });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(errors).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(errors).toEqual(['hung: collect() did not finish within 30000 ms']);
+    await drain(scheduler);
   });
 });

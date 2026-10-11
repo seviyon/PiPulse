@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { cpuVoltagePlugin, throttledPlugin } from './vcgencmd.js';
@@ -244,9 +244,16 @@ export interface DeviceInfo {
   cpus: number;
 }
 
+/** The first 4 KB of a small text file, or undefined: the files read here are a line or two. */
 function readText(path: string): string | undefined {
   try {
-    return readFileSync(path, 'utf8');
+    const fd = openSync(path, 'r');
+    try {
+      const buffer = Buffer.alloc(4096);
+      return buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0));
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return undefined;
   }
@@ -303,6 +310,26 @@ export type PluginErrorHandler = (plugin: CollectorPlugin, error: unknown) => vo
 
 export type SampleListener = (sample: Sample) => void;
 
+/** `promise`, or a rejection if it has not settled within `ms` (its late answer is then ignored). */
+function withDeadline<T>(promise: Promise<T>, ms: number, id: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${id}: collect() did not finish within ${ms} ms`)),
+      ms
+    );
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * How long a plugin's collect() may take before the scheduler gives up on it: three intervals,
+ * at most 30 s. Without a limit one read that never settles (a firmware call stuck in the
+ * kernel) holds the plugin's slot for good, every later tick is skipped, and the metric just
+ * stops until the service restarts.
+ */
+const collectDeadline = (plugin: CollectorPlugin) => Math.min(plugin.intervalMs * 3, 30_000);
+
 /**
  * Polls one plugin and writes a successful reading to storage, stamped
  * with the time the reading completed. A null or non-finite value is
@@ -312,11 +339,15 @@ async function collectAndStore(
   db: PiPulseDb,
   plugin: CollectorPlugin,
   onError?: PluginErrorHandler,
-  onSample?: SampleListener
+  onSample?: SampleListener,
+  deadlineMs?: number
 ): Promise<void> {
   let sample: Sample;
   try {
-    const value = await plugin.collect();
+    const value =
+      deadlineMs === undefined
+        ? await plugin.collect()
+        : await withDeadline(plugin.collect(), deadlineMs, plugin.id);
     if (value === null || !Number.isFinite(value)) return;
     sample = { ts: Date.now(), metric: plugin.id, value };
     insertSample(db, sample);
@@ -394,7 +425,13 @@ export function startScheduler(
 
   const poll = (plugin: CollectorPlugin) => {
     if (inFlight.has(plugin)) return;
-    const run = collectAndStore(db, plugin, options.onError, options.onSample).finally(() => {
+    const run = collectAndStore(
+      db,
+      plugin,
+      options.onError,
+      options.onSample,
+      collectDeadline(plugin)
+    ).finally(() => {
       inFlight.delete(plugin);
     });
     inFlight.set(plugin, run);

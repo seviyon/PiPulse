@@ -5,6 +5,26 @@ export { migrate, SCHEMA_VERSION } from './migrations.js';
 
 export type PiPulseDb = DatabaseSync;
 
+/** How long a statement waits for another connection's write lock. */
+const BUSY_TIMEOUT_MS = 5000;
+
+/**
+ * Switching to WAL while another connection is opening the same file answers "database is locked"
+ * at once, without waiting for the busy timeout: try again for a few seconds.
+ */
+function retryWhileLocked(fn: () => void): void {
+  const sleep = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fn();
+      return;
+    } catch (error) {
+      if (attempt >= 100 || !/locked|busy/i.test((error as Error).message)) throw error;
+      Atomics.wait(sleep, 0, 0, 25);
+    }
+  }
+}
+
 /**
  * Opens (and creates, if needed) the PiPulse SQLite database at `path`,
  * enables WAL mode for concurrent collector-writes / API-reads, and
@@ -12,7 +32,10 @@ export type PiPulseDb = DatabaseSync;
  */
 export function openDb(path: string): PiPulseDb {
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL');
+  // First, before any statement that needs a lock: a second process opening the file at the same
+  // time (the server and the collector) waits its turn instead of failing with "database is locked".
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  retryWhileLocked(() => db.exec('PRAGMA journal_mode = WAL'));
   createSchema(db);
   return db;
 }
@@ -42,17 +65,25 @@ export function insertSample(db: PiPulseDb, sample: Sample): void {
   stmt.run({ ts: sample.ts, metric: sample.metric, value: sample.value });
 }
 
-/** Returns the most recent value recorded for every distinct metric. */
-export function getLatest(db: PiPulseDb): Sample[] {
+/** A reading may be stamped this far ahead of the reader's clock (two processes, two reads of it). */
+const LATEST_SLACK_MS = 5 * 60_000;
+
+/**
+ * Returns the most recent value recorded for every distinct metric. With `now`, a reading stamped
+ * after it (plus a few minutes) is not "most recent": it was written by a clock that read ahead
+ * and came back, and would otherwise be served for as long as the clock was off.
+ */
+export function getLatest(db: PiPulseDb, now?: number): Sample[] {
+  const limit = now === undefined ? Number.MAX_SAFE_INTEGER : now + LATEST_SLACK_MS;
   return db
     .prepare(
       `SELECT m.ts as ts, m.metric as metric, m.value as value
        FROM metrics m
        JOIN (
-         SELECT metric, MAX(ts) as ts FROM metrics GROUP BY metric
+         SELECT metric, MAX(ts) as ts FROM metrics WHERE ts <= ? GROUP BY metric
        ) latest ON latest.metric = m.metric AND latest.ts = m.ts`
     )
-    .all() as unknown as Sample[];
+    .all(limit) as unknown as Sample[];
 }
 
 /** Returns raw samples for one metric within an inclusive [from, to] window (unix ms). */

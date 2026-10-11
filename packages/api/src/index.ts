@@ -246,7 +246,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     tls: readTls()
   }));
 
-  app.get('/api/metrics/latest', async () => getLatest(db));
+  app.get('/api/metrics/latest', async () => getLatest(db, Date.now()));
 
   app.get<{ Params: { id: string }; Querystring: HistoryQuery }>(
     '/api/metrics/:id/history',
@@ -357,7 +357,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
           socket.send(
             JSON.stringify({
               type: 'snapshot',
-              samples: getLatest(db),
+              samples: getLatest(db, Date.now()),
               alerts: openAlerts(db),
               ...(options.alertRules ? { rules: options.alertRules.source.read().rules } : {})
             })
