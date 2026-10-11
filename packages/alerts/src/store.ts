@@ -49,10 +49,17 @@ export function summarizeWindow(
   return db.prepare(WINDOW_SQL).get(mask, metric, from, to) as unknown as WindowSummary;
 }
 
-export function latestReading(db: PiPulseDb, metric: string): Reading | null {
+/**
+ * Readings stamped later than this after `now` are not believed: a clock that ran ahead (a bad
+ * NTP answer on a Pi with no RTC) leaves them behind, and a newest reading "from the future"
+ * would hide real silence and decide `for: 0` rules long after they were taken.
+ */
+export const FUTURE_TOLERANCE_MS = 5 * 60_000;
+
+export function latestReading(db: PiPulseDb, metric: string, now: number): Reading | null {
   const row = db
-    .prepare('SELECT ts, value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1')
-    .get(metric) as Reading | undefined;
+    .prepare('SELECT ts, value FROM metrics WHERE metric = ? AND ts <= ? ORDER BY ts DESC LIMIT 1')
+    .get(metric, now + FUTURE_TOLERANCE_MS) as Reading | undefined;
   return row ?? null;
 }
 
@@ -62,9 +69,9 @@ export function latestReading(db: PiPulseDb, metric: string): Reading | null {
  * so the first level that has a row wins. Being a bucket start, it can be up
  * to one bucket earlier than the reading itself.
  */
-export function latestRollup(db: PiPulseDb, metric: string): Reading | null {
+export function latestRollup(db: PiPulseDb, metric: string, now: number): Reading | null {
   const newest = (resolution: string) =>
-    `SELECT ts, avg AS value FROM metrics_rollup WHERE metric = ?1 AND resolution = '${resolution}' ORDER BY ts DESC LIMIT 1`;
+    `SELECT ts, avg AS value FROM metrics_rollup WHERE metric = ?1 AND resolution = '${resolution}' AND ts <= ?2 ORDER BY ts DESC LIMIT 1`;
   // The finest level wins, by an explicit rank: UNION ALL promises no row order.
   const row = db
     .prepare(
@@ -74,7 +81,7 @@ export function latestRollup(db: PiPulseDb, metric: string): Reading | null {
          UNION ALL SELECT ts, value, 3 FROM (${newest('1d')})
        ) ORDER BY level LIMIT 1`
     )
-    .get(metric) as Reading | undefined;
+    .get(metric, now + FUTURE_TOLERANCE_MS) as Reading | undefined;
   return row ?? null;
 }
 
@@ -132,7 +139,10 @@ export function clearAlert(
   clearedBy: ClearedBy
 ): Alert {
   return db
-    .prepare(`UPDATE alerts SET cleared_at = ?, cleared_by = ? WHERE id = ? RETURNING ${COLUMNS}`)
+    // MAX: a clock that stepped back must not record a clear before the raise.
+    .prepare(
+      `UPDATE alerts SET cleared_at = MAX(?, raised_at), cleared_by = ? WHERE id = ? RETURNING ${COLUMNS}`
+    )
     .get(clearedAt, clearedBy, id) as unknown as Alert;
 }
 

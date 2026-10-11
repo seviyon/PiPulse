@@ -17,6 +17,7 @@ import {
 } from '../src/index.js';
 
 const DAY = 86_400_000;
+const MINUTE = 60_000;
 const T0 = 1_790_000_000_000;
 const [expiring, expired] = builtinRules(4, { certificate: true }).filter(
   (r) => r.metric === CERTIFICATE_METRIC
@@ -108,11 +109,13 @@ describe('the engine with a certificate', () => {
   let context: AlertContext;
   let engine: { check(): void; stop(): void } | undefined;
   let notices: string[];
+  let mono: number;
   const start = (rules = [expiring, expired]) => {
     engine = startAlerts(db, {
       rules,
       metrics: [],
       now: () => now,
+      monotonic: () => mono,
       context: () => context,
       onChange: (e) => events.push(e),
       onNotice: (message) => notices.push(message),
@@ -122,6 +125,7 @@ describe('the engine with a certificate', () => {
   beforeEach(() => {
     db = openDb(':memory:');
     now = T0;
+    mono = 0;
     events = [];
     notices = [];
   });
@@ -135,6 +139,7 @@ describe('the engine with a certificate', () => {
     start();
     expect(events.map((e) => `${e.type} ${e.alert.ruleId}`)).toEqual(['raised cert_expiring']);
     now = T0 + 10 * DAY;
+    mono = 10 * DAY; // ten real days passed
     engine!.check();
     expect(events.map((e) => `${e.type} ${e.alert.ruleId}`)).toEqual([
       'raised cert_expiring',
@@ -143,6 +148,32 @@ describe('the engine with a certificate', () => {
     ]);
     expect(openAlerts(db).map((a) => a.ruleId)).toEqual(['cert_expired']);
     expect(openAlerts(db)[0]!.metric).toBe(CERTIFICATE_METRIC);
+  });
+
+  it('does not believe a clock that suddenly runs far ahead until it has stayed there', () => {
+    context = { certificate: { notAfter: T0 + 10 * DAY, clockSynced: true } };
+    start();
+    expect(events.map((e) => e.alert.ruleId)).toEqual(['cert_expiring']);
+    now = T0 + 11 * DAY; // a bad NTP answer: a day past expiry, though a minute went by
+    mono = MINUTE;
+    engine!.check();
+    expect(events.map((e) => e.alert.ruleId)).toEqual(['cert_expiring']);
+    now += 5 * MINUTE; // still wrong five minutes later
+    mono += 5 * MINUTE;
+    engine!.check();
+    expect(openAlerts(db).map((a) => a.ruleId)).toEqual(['cert_expiring']);
+    now = T0 + 6 * MINUTE; // NTP corrects itself: nothing was ever raised or retracted
+    mono += MINUTE;
+    engine!.check();
+    expect(events.map((e) => e.alert.ruleId)).toEqual(['cert_expiring']);
+    // a jump that stays is believed after 15 minutes
+    now = T0 + 11 * DAY;
+    mono += MINUTE;
+    engine!.check();
+    now += 16 * MINUTE;
+    mono += 16 * MINUTE;
+    engine!.check();
+    expect(openAlerts(db).map((a) => a.ruleId)).toEqual(['cert_expired']);
   });
 
   it('freezes while the clock is unsynced, across a restart, then decides once synced', () => {

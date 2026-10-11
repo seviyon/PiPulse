@@ -154,7 +154,7 @@ export function createRuleSource(
       return entry;
     }
     if (entry.disabled) return entry;
-    const problem = ruleProblem(entry.rule, known, Infinity);
+    const problem = ruleProblem(entry.rule, known, Infinity, options.metrics);
     if (problem) throw new AlertRulesError(problem.message, problem.field, problem.message);
     checkLookBack(entry.rule, retention());
     return entry;

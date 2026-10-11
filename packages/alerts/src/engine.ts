@@ -24,6 +24,8 @@ export interface AlertEvent {
 }
 
 export const CHECK_INTERVAL_MS = 15_000;
+const CLOCK_JUMP_MS = 3_600_000;
+const CLOCK_ACCEPT_MS = 15 * 60_000;
 
 const key = (ruleId: string, metric: string) => `${ruleId}\u0000${metric}`;
 
@@ -76,6 +78,8 @@ export function startAlerts(
     onError?: (error: unknown, rule?: Rule) => void;
     /** After every check that read its rules and open alerts (the health check's freshness). */
     onCheck?: () => void;
+    /** Monotonic milliseconds (tests replace it); anchors the certificate rules' clock. */
+    monotonic?: () => number;
     /** What the engine needs beyond stored readings (the served certificate), read on every check. */
     context?: () => AlertContext;
     /** One line when certificate alerts can't decide (no certificate yet, unsynced clock). */
@@ -83,6 +87,7 @@ export function startAlerts(
   }
 ): { check(): void; stop(): void } {
   const now = options.now ?? Date.now;
+  const monotonic = options.monotonic ?? (() => performance.now());
   const intervalMs = options.intervalMs ?? CHECK_INTERVAL_MS;
   const byId = new Map(options.metrics.map((metric) => [metric.id, metric]));
   const targets = (rule: Rule): MetricInfo[] =>
@@ -103,9 +108,29 @@ export function startAlerts(
   let lastCheck: number | undefined;
   let certificateState: 'decided' | 'unavailable' | 'undecided' | undefined;
 
+  // Expiry is judged on a clock that is not believed when it suddenly runs far ahead of elapsed
+  // time (a bad NTP answer): "expired" would raise a critical alert and send it, then retract it.
+  // Same rule as housekeeping's: believed once it has stayed there for CLOCK_ACCEPT_MS.
+  let anchor: { wall: number; mono: number } | undefined;
+  let aheadSince: number | undefined;
+  const trustedNow = (wall: number): number => {
+    const mono = monotonic();
+    if (anchor) {
+      const expected = anchor.wall + (mono - anchor.mono);
+      if (wall - expected > CLOCK_JUMP_MS) {
+        aheadSince ??= mono;
+        if (mono - aheadSince < CLOCK_ACCEPT_MS) return expected;
+      }
+    }
+    aheadSince = undefined;
+    anchor = { wall, mono };
+    return wall;
+  };
+
   const check = () => {
     try {
       const t = now();
+      const trusted = trustedNow(t);
       // The Pi has no RTC: NTP can move the clock hours at once after boot,
       // and a long pause looks the same. Count silence afresh from here.
       if (lastCheck !== undefined && (t < lastCheck || t - lastCheck > 3 * intervalMs)) since = t;
@@ -129,7 +154,7 @@ export function startAlerts(
           try {
             const current = open.get(key(rule.id, metric.id));
             if (isCertificateRule(rule)) {
-              const decision = evaluateCertificate(rule, certificate, t, current !== undefined);
+              const decision = evaluateCertificate(rule, certificate, trusted, current !== undefined);
               const state =
                 decision.action === 'unavailable' || decision.action === 'undecided'
                   ? decision.action
@@ -171,8 +196,8 @@ export function startAlerts(
               // Silence counts from the newest reading even once housekeeping
               // has pruned it (a restart can push the due time past that).
               latest:
-                latestReading(db, metric.id) ??
-                (rule.noReadingFor !== undefined ? latestRollup(db, metric.id) : null),
+                latestReading(db, metric.id, t) ??
+                (rule.noReadingFor !== undefined ? latestRollup(db, metric.id, t) : null),
               window:
                 span > 0 && rule.noReadingFor === undefined
                   ? summarizeWindow(db, metric.id, t - span, t, rule.bitsSet ?? 0)

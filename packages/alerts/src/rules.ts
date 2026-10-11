@@ -344,8 +344,9 @@ export function parseRuleEntry(raw: unknown, where: string, source: 'file' | 'sa
   } else {
     const value = r[condition];
     if (condition === 'bitsSet') {
-      if (!Number.isInteger(value) || (value as number) <= 0)
-        fail('bitsSet must be a positive integer mask', 'bitsSet');
+      // 32 bits: JavaScript's & and SQLite's & only agree below that.
+      if (!Number.isInteger(value) || (value as number) <= 0 || (value as number) > 0xffffffff)
+        fail('bitsSet must be an integer mask from 1 to 4294967295 (32 bits)', 'bitsSet');
     } else if (typeof value !== 'number' || !Number.isFinite(value)) {
       fail(`${condition} must be a number`, condition);
     }
@@ -383,7 +384,8 @@ function parseFile({ name, text }: RulesFile): Entry[] {
 export function ruleProblem(
   rule: Rule,
   known: string[],
-  rawRetentionMs: number
+  rawRetentionMs: number,
+  metrics: MetricInfo[] = []
 ): { field: string; message: string } | undefined {
   // Certificate rules read the served certificate, not readings: no metric, no look-back.
   if (isCertificateRule(rule)) return undefined;
@@ -393,10 +395,19 @@ export function ruleProblem(
       message: `unknown metric "${rule.metric}" (known: ${known.join(', ')})`
     };
   }
+  // A window shorter than one poll can fall between two readings and never decide.
+  const polls = metrics.filter((m) => rule.metric === '*' || m.id === rule.metric);
+  const slowest = Math.max(0, ...polls.map((m) => m.intervalMs));
   for (const [field, ms] of [
     ['for', rule.forMs],
     ['clearAfter', rule.clearAfterMs]
   ] as const) {
+    if (rule.noReadingFor === undefined && ms > 0 && ms < slowest) {
+      return {
+        field,
+        message: `${field} is shorter than the ${slowest / 1000} s between readings of ${rule.metric === '*' ? 'the slowest metric' : rule.metric}; use ${slowest / 1000} s or more, or 0 to act on the latest reading`
+      };
+    }
     if (ms > rawRetentionMs) {
       return {
         field,
@@ -441,7 +452,7 @@ export function resolveRules(options: {
   }
   const known = options.metrics.map((metric) => metric.id);
   for (const rule of rules.values()) {
-    const problem = ruleProblem(rule, known, options.rawRetentionMs);
+    const problem = ruleProblem(rule, known, options.rawRetentionMs, options.metrics);
     if (problem) {
       throw new AlertRulesError(
         `alert rule "${rule.id}": ${problem.message}`,

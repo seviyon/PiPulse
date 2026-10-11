@@ -138,6 +138,42 @@ describe('startAlerts', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('ignores a reading stamped in the future, so silence is still counted from the real last one', () => {
+    readings('disk_used', T0 - 5 * MIN, T0 - 4 * MIN, 40, 60_000);
+    // A bad NTP answer stamped one poll a day ahead; collection then stopped.
+    insertSample(db, { ts: T0 + 24 * 60 * MIN, metric: 'disk_used', value: 40 });
+    const engine = start([silent]);
+    now = T0 + 3 * 60 * MIN;
+    engine.check();
+    expect(openAlerts(db).map((a) => a.metric)).toEqual(['disk_used']);
+  });
+
+  it('does not clear a silence alert when the clock steps back past the newest reading', () => {
+    readings('disk_used', T0 - 5 * MIN, T0, 40, 60_000);
+    const engine = start([silent]);
+    now = T0 + 10 * MIN;
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(1);
+    now = T0 - 50 * MIN; // the clock steps back an hour: the newest reading is now "ahead"
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(1);
+    expect(events).toHaveLength(1);
+  });
+
+  it('never records an alert as cleared before it was raised', () => {
+    raiseAlert(db, {
+      ruleId: 'cpu_hot',
+      metric: 'cpu_temperature',
+      severity: 'critical',
+      message: 'm',
+      value: 90,
+      raisedAt: T0 + 60 * MIN
+    });
+    start([{ ...hot, metric: 'disk_used' }]); // rule moved: closes as rule_removed at `now` (an hour earlier)
+    const cleared = events.find((e) => e.type === 'cleared')!.alert;
+    expect(cleared.clearedAt).toBeGreaterThanOrEqual(cleared.raisedAt);
+  });
+
   it('closes open alerts whose rule is gone, including a built-in id reused for another metric', () => {
     const removed = raiseAlert(db, {
       ruleId: 'gone',
