@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   readdirSync,
   readFileSync,
@@ -371,6 +372,50 @@ describe('withLock', () => {
       writeFileSync(gen(1), '', { mode: 0o600 });
       age(1, 3_600_000);
       expect(breakLock(lockPath(), dead)).toBe('done');
+    });
+
+    describe('who owns the newest turn', () => {
+      const me = { startTime: null, bootId: 'boot-b', pidNs: 'pid:[1]', host: 'here' };
+
+      it('takes the turn of a breaker from before a reboot, whatever its pid', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: 'boot-a', pidNs: 'pid:[1]', host: 'here' });
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('done');
+      });
+
+      it('judges a breaker in another PID namespace by the age of its file, not by a pid it cannot see', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: 'boot-b', pidNs: 'pid:[2]', host: 'there' });
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('busy'); // fresh: still at work
+        age(1, -60_000);
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('done'); // silent for a minute: gone
+      });
+
+      it('judges a breaker in our own namespace by the liveness check it is given', () => {
+        const dead = stale();
+        owner(1, { bootId: 'boot-b', pidNs: 'pid:[1]', host: 'here' });
+        expect(breakLock(lockPath(), dead, { identity: me, alive: () => true })).toBe('busy');
+        expect(breakLock(lockPath(), dead, { identity: me, alive: () => false })).toBe('done');
+      });
+
+      it('falls back on the host name when a namespace is not known', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: null, pidNs: null, host: 'elsewhere' });
+        const noNs = { ...me, bootId: null, pidNs: null };
+        expect(breakLock(lockPath(), dead, { identity: noNs })).toBe('busy'); // another host: by age
+        age(1, -60_000);
+        expect(breakLock(lockPath(), dead, { identity: noNs })).toBe('done');
+      });
+    });
+
+    it.skipIf(process.getuid?.() === 0)('does not hide a failure to make its turn file', () => {
+      const dead = stale();
+      chmodSync(dir, 0o500);
+      try {
+        expect(() => breakLock(lockPath(), dead)).toThrow(/EACCES/);
+      } finally {
+        chmodSync(dir, 0o700);
+      }
     });
 
     it('answers busy while the newest turn belongs to a live breaker, whatever older ones it finds', () => {
