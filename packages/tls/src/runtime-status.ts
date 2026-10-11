@@ -74,7 +74,8 @@ const CLASSES: readonly ChainClass[] = [
   'valid',
   'degraded-incomplete-chain',
   'degraded-san',
-  'degraded-untrusted'
+  'degraded-untrusted',
+  'degraded-purpose'
 ];
 const MAX_TEXT = 200;
 const SHORT_TEXT = /^[\w.:-]{1,128}$/;

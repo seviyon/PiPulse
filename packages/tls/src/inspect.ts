@@ -8,17 +8,25 @@ import { parseBundle, parseCertificateFile, parseKeyFile } from './pem.js';
 
 export type Validity = 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
 export type ChainClass =
-  'valid' | 'degraded-incomplete-chain' | 'degraded-san' | 'degraded-untrusted';
+  | 'valid'
+  | 'degraded-incomplete-chain'
+  | 'degraded-san'
+  | 'degraded-untrusted'
+  | 'degraded-purpose';
 
 /** Higher is better, in the order clients cope with each class. */
 export const CLASS_RANK: Record<ChainClass, number> = {
   valid: 3,
   'degraded-incomplete-chain': 2,
   'degraded-san': 1,
-  'degraded-untrusted': 0
+  'degraded-untrusted': 0,
+  // Clients refuse it outright, like an untrusted one.
+  'degraded-purpose': 0
 };
 
 const DAY_MS = 86_400_000;
+const SERVER_AUTH = '1.3.6.1.5.5.7.3.1';
+const ANY_PURPOSE = '2.5.29.37.0';
 export const EXPIRING_SOON_MS = { operator: 14 * DAY_MS, generated: 30 * DAY_MS } as const;
 
 /** Material that must never be served: startup stops, a reload keeps the old context. */
@@ -55,7 +63,7 @@ export interface LoadedCertificate {
   notAfter: number;
   sans: { dns: string[]; ip: string[] };
   class: ChainClass;
-  /** Machine-readable: 'incomplete-chain', 'untrusted', 'san-missing'. */
+  /** Machine-readable: 'incomplete-chain', 'untrusted', 'san-missing', 'no-server-auth'. */
   reasons: string[];
   /** PIPULSE_TLS_NAMES entries the leaf doesn't cover. */
   missingNames: string[];
@@ -183,23 +191,48 @@ export function inspectMaterial(input: {
     else degrade('degraded-incomplete-chain', 'incomplete-chain');
   }
 
+  // An anchor that is itself issued by another certificate (an intermediate listed in
+  // PIPULSE_TLS_CA, say from a fullchain file) is not a root: climb to the self-signed root
+  // above it. A client still checks the dates of every certificate below that root, and
+  // one that was not sent leaves the chain incomplete.
+  const served = new Set(certs.map((cert) => cert.fingerprint256));
+  const climbed: X509Certificate[] = [];
+  let root = anchor;
+  while (root && !issuedBy(root, root)) {
+    climbed.push(root);
+    if (!served.has(root.fingerprint256)) degrade('degraded-incomplete-chain', 'incomplete-chain');
+    const below = root;
+    // Each anchor is climbed at most once, so this ends even when the anchors loop.
+    root = anchors.find(
+      (a) => !climbed.some((c) => c.fingerprint256 === a.fingerprint256) && issuedBy(below, a)
+    );
+    if (!root) degrade('degraded-incomplete-chain', 'incomplete-chain');
+  }
+
   // A client checks the dates of every certificate it is sent except a trusted
   // root, so the chain is valid only where all of them are. Reported as the
   // window rather than refused: validity is startup's and the reloader's call.
   // The leaf is always dated: a self-signed leaf trusted directly is its own anchor, and
   // clients still check its dates (an empty set would give an infinite window).
-  const dated = certs.filter(
-    (cert) => cert === leaf || cert.fingerprint256 !== anchor?.fingerprint256
-  );
+  const dated = [
+    ...certs.filter((cert) => cert === leaf || cert.fingerprint256 !== root?.fingerprint256),
+    ...climbed.filter((cert) => !served.has(cert.fingerprint256))
+  ];
   const notBefore = Math.max(...dated.map((cert) => cert.validFromDate.getTime()));
   const notAfter = Math.min(...dated.map((cert) => cert.validToDate.getTime()));
 
+  // Whole-label wildcards only: browsers refuse a partial one ("p*.test").
   const missingNames = input.names.filter((name) =>
     isIP(name)
       ? leaf.checkIP(name) === undefined
-      : leaf.checkHost(name, { subject: 'never' }) === undefined
+      : leaf.checkHost(name, { subject: 'never', partialWildcards: false }) === undefined
   );
   if (missingNames.length > 0) degrade('degraded-san', 'san-missing');
+  // A certificate limited to other purposes (client authentication, say) is refused by
+  // clients with INVALID_PURPOSE. No extended key usage at all means any purpose.
+  const purposes = leaf.keyUsage;
+  if (purposes && !purposes.includes(SERVER_AUTH) && !purposes.includes(ANY_PURPOSE))
+    degrade('degraded-purpose', 'no-server-auth');
 
   return {
     source: input.source,
@@ -218,7 +251,9 @@ export function inspectMaterial(input: {
     reasons,
     missingNames,
     // The anchor the chain actually verified against (a refused signature never gets here).
-    ...(input.source === 'generated' && anchor ? { caFingerprint: anchor.fingerprint256 } : {})
+    ...(input.source === 'generated' && (root ?? anchor)
+      ? { caFingerprint: (root ?? anchor)!.fingerprint256 }
+      : {})
   };
 }
 

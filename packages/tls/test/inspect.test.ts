@@ -453,3 +453,152 @@ describe('6b-2 hardening', () => {
     expect(validityOf(cert, 1499, 500)).toBe('valid');
   });
 });
+
+describe('review fixes: intermediates and anchors', () => {
+  const underExpired = fixture('under-expired.crt');
+  const expiredIntermediate = fixture('expired-intermediate.crt');
+  const rootCa = fixture('root-ca.crt');
+  const trustOf = (...anchors: string[]): Trust => ({ anchors, system: false });
+
+  it('still dates an expired intermediate that is also listed as a trust anchor', () => {
+    // A "fullchain" file given as PIPULSE_TLS_CA: clients check the intermediate's dates.
+    const cert = inspect(
+      [underExpired, expiredIntermediate],
+      fixture('under-expired.key'),
+      trustOf(expiredIntermediate, rootCa)
+    );
+    expect(cert.class).toBe('valid');
+    expect(cert.notAfter).toBe(Date.UTC(2021, 0, 1));
+    expect(validityOf(cert, Date.UTC(2026, 8, 30), 0)).toBe('expired');
+  });
+
+  it('reads an intermediate-only anchor as an incomplete chain, and dates it', () => {
+    const cert = inspect(
+      [underExpired, expiredIntermediate],
+      fixture('under-expired.key'),
+      trustOf(expiredIntermediate)
+    );
+    expect(cert).toMatchObject({
+      class: 'degraded-incomplete-chain',
+      reasons: ['incomplete-chain'],
+      notAfter: Date.UTC(2021, 0, 1)
+    });
+  });
+
+  it('is an incomplete chain when the intermediate is only in the trust file, not served', () => {
+    const cert = inspect([leaf], fixture('leaf.key'), trustOf(intermediate, rootCa));
+    expect(cert).toMatchObject({
+      class: 'degraded-incomplete-chain',
+      reasons: ['incomplete-chain']
+    });
+  });
+
+  it('dates an expired intermediate that is only in the trust file, too', () => {
+    const cert = inspect(
+      [underExpired],
+      fixture('under-expired.key'),
+      trustOf(expiredIntermediate, rootCa)
+    );
+    expect(cert.class).toBe('degraded-incomplete-chain');
+    expect(cert.notAfter).toBe(Date.UTC(2021, 0, 1));
+  });
+
+  it('stays valid when the served intermediate and the root are both trusted', () => {
+    const cert = inspect([leaf, intermediate], fixture('leaf.key'), trustOf(intermediate, rootCa));
+    expect(cert).toMatchObject({ class: 'valid', reasons: [], notAfter: Date.UTC(2125, 0, 1) });
+  });
+});
+
+describe('review fixes: a generated CA that is itself an intermediate', () => {
+  it('reports the anchor it stopped at, and an incomplete chain', () => {
+    const cert = inspectMaterial({
+      source: 'generated',
+      keyPem: fixture('leaf.key'),
+      certPems: [leaf, intermediate],
+      trust: { anchors: [intermediate], system: false },
+      names: []
+    });
+    expect(cert.class).toBe('degraded-incomplete-chain');
+    expect(cert.caFingerprint).toBe(new X509Certificate(intermediate).fingerprint256);
+  });
+});
+
+describe('review fixes: what a server certificate must allow', () => {
+  const selfSigned = (extra: string[]) => {
+    const tmp = tempDir();
+    onTestFinished(() => rmSync(tmp, { recursive: true, force: true }));
+    const key = join(tmp, 'k.pem');
+    const crt = join(tmp, 'c.pem');
+    execFileSync(TEST_OPENSSL, [
+      'ecparam',
+      '-name',
+      'prime256v1',
+      '-genkey',
+      '-noout',
+      '-out',
+      key
+    ]);
+    execFileSync(
+      TEST_OPENSSL,
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-key',
+        key,
+        '-sha256',
+        '-days',
+        '30',
+        '-subj',
+        '/CN=solo',
+        '-out',
+        crt,
+        '-addext',
+        'basicConstraints=critical,CA:FALSE',
+        ...extra.flatMap((e) => ['-addext', e])
+      ],
+      { stdio: 'ignore' }
+    );
+    const pem = execFileSync('cat', [crt]).toString();
+    return { pem, keyPem: execFileSync('cat', [key]).toString() };
+  };
+  const load = (extra: string[], names: string[] = []) => {
+    const { pem, keyPem } = selfSigned(extra);
+    return inspectMaterial({
+      source: 'operator',
+      keyPem,
+      certPems: [pem],
+      trust: { anchors: [pem], system: false },
+      names
+    });
+  };
+
+  it('degrades a certificate whose extended key usage leaves out serverAuth', () => {
+    expect(load(['subjectAltName=DNS:solo', 'extendedKeyUsage=clientAuth'])).toMatchObject({
+      class: 'degraded-purpose',
+      reasons: ['no-server-auth']
+    });
+  });
+
+  it('accepts serverAuth, anyExtendedKeyUsage and no extended key usage at all', () => {
+    for (const eku of ['serverAuth', 'clientAuth,serverAuth', 'anyExtendedKeyUsage']) {
+      expect(load(['subjectAltName=DNS:solo', `extendedKeyUsage=${eku}`]).class).toBe('valid');
+    }
+    expect(load(['subjectAltName=DNS:solo']).class).toBe('valid');
+  });
+
+  it('does not let a partial wildcard SAN cover a name (browsers refuse p*.test)', () => {
+    const cert = load(['subjectAltName=DNS:p*.example.test'], ['pipulse.example.test']);
+    expect(cert).toMatchObject({
+      class: 'degraded-san',
+      missingNames: ['pipulse.example.test']
+    });
+    expect(load(['subjectAltName=DNS:*.example.test'], ['pipulse.example.test']).class).toBe(
+      'valid'
+    );
+  });
+
+  it('ranks a wrong-purpose certificate with the untrusted ones', () => {
+    expect(CLASS_RANK['degraded-purpose']).toBe(CLASS_RANK['degraded-untrusted']);
+  });
+});

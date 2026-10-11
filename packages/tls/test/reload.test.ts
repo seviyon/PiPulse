@@ -308,3 +308,98 @@ describe('startReloader', () => {
     expect(provider.current()).toBe(B);
   });
 });
+
+describe('review fixes: an expired certificate and a clock that steps back', () => {
+  const EXPIRED = make('expired.crt', 'expired.key');
+
+  it('replaces an expired active certificate with a current one that lacks its intermediate', () => {
+    const t = setup(EXPIRED);
+    t.advance(Date.now()); // the fixtures' dates are real ones
+    t.change('s1', () => B_INCOMPLETE);
+    t.provider.poll();
+    t.provider.poll();
+    expect(t.applied).toEqual([B_INCOMPLETE]);
+    expect(t.provider.reload().state).toBe('ok');
+  });
+
+  it('still refuses a worse class while the active certificate is in date', () => {
+    const t = setup(A);
+    t.advance(Date.now());
+    t.change('s1', () => B_INCOMPLETE);
+    t.provider.poll();
+    t.provider.poll();
+    expect(t.applied).toEqual([]);
+    expect(t.provider.reload().state).toBe('failing');
+  });
+
+  it('does not replace an expired certificate with one that clients would refuse anyway', () => {
+    const t = setup(EXPIRED);
+    t.advance(Date.now());
+    // A chain that ends at a root nobody configured: every client refuses it.
+    const untrusted = inspectMaterial({
+      source: 'operator',
+      keyPem: fixture('leaf2.key'),
+      certPems: [fixture('leaf2.crt'), fixture('intermediate.crt'), fixture('root-ca.crt')],
+      trust: { anchors: [], system: false },
+      names: []
+    });
+    expect(untrusted.class).toBe('degraded-untrusted');
+    t.change('s1', () => untrusted);
+    t.provider.poll();
+    t.provider.poll();
+    expect(t.applied).toEqual([]);
+  });
+
+  it('retries a refusal on schedule even when the wall clock stepped back meanwhile', () => {
+    let wall = Date.now();
+    let mono = 0;
+    let loads = 0;
+    let sig = 's0';
+    const provider = startReloader({
+      initial: A,
+      load: () => {
+        loads++;
+        throw new Error('not yet');
+      },
+      signature: () => sig,
+      apply: () => {},
+      now: () => wall,
+      monotonic: () => mono,
+      timer: false
+    });
+    sig = 's1';
+    provider.poll();
+    provider.poll();
+    expect(loads).toBe(1);
+    wall -= 3 * 60 * 60_000; // NTP steps the clock back three hours
+    mono += 10 * 60_000;
+    provider.poll();
+    expect(loads).toBe(2);
+  });
+
+  it('logs a repeated refusal once an hour of real time has passed, whatever the wall clock did', () => {
+    let wall = Date.now();
+    let mono = 0;
+    const logs: string[] = [];
+    let sig = 's0';
+    const provider = startReloader({
+      initial: A,
+      load: () => {
+        throw new Error('still bad');
+      },
+      signature: () => sig,
+      apply: () => {},
+      now: () => wall,
+      monotonic: () => mono,
+      log: (m) => logs.push(m),
+      timer: false
+    });
+    sig = 's1';
+    provider.poll();
+    provider.poll();
+    wall -= 5 * 60 * 60_000;
+    mono += 61 * 60_000;
+    provider.poll();
+    expect(logs).toHaveLength(2);
+  });
+});
