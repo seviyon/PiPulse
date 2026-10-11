@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { get } from 'node:https';
+import { request as httpRequest } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -458,5 +459,63 @@ describe('api server process, a port it cannot use', () => {
     const [code] = (await once(child, 'exit')) as [number | null];
     expect(code).toBe(1);
     expect(stderr).toContain('[pipulse] PIPULSE_PORT must be a port number from 0 to 65535');
+  });
+});
+
+describe('api server process, PIPULSE_ALLOWED_HOSTS', () => {
+  const start = async (hosts: string) => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off',
+        PIPULSE_ALLOWED_HOSTS: hosts
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    return {
+      child,
+      out: () => stdout,
+      err: () => stderr,
+      collect: (chunk: Buffer) => (stdout += chunk.toString())
+    };
+  };
+
+  it('answers 421 to a name that is not listed and serves a listed name and the address', async () => {
+    const { child, collect, out } = await start('pi.example');
+    child.stdout.on('data', collect);
+    await expect.poll(() => /listening on http:\/\/\S+/.exec(out())?.[0]).toBeTruthy();
+    const base = /listening on (http:\/\/\S+)/.exec(out())![1]!;
+    const port = new URL(base).port;
+    const ask = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = httpRequest(
+          { host: '127.0.0.1', port, path: '/api/health', headers: { host } },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+    expect(await ask(`pi.example:${port}`)).toBe(200);
+    expect(await ask(`127.0.0.1:${port}`)).toBe(200);
+    expect(await ask(`evil.example:${port}`)).toBe(421);
+    child.kill('SIGTERM');
+    await once(child, 'exit');
+  });
+
+  it('stops with one line naming the setting for an entry that is not a host name', async () => {
+    const { child, err } = await start('*.lan');
+    const [code] = (await once(child, 'exit')) as [number | null];
+    expect(code).toBe(1);
+    expect(err()).toContain('[pipulse] PIPULSE_ALLOWED_HOSTS: "*.lan" is not a host name');
   });
 });
