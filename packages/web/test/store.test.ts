@@ -57,6 +57,16 @@ describe('live store', () => {
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 
+describe('a live sample and a newer latest value that the series does not hold', () => {
+  it('adds the sample to the series but leaves the newer latest value alone', () => {
+    // After a reconnect the snapshot sets latest; a sample then arrives for a metric whose series is empty.
+    let state = applySnapshot(emptyState(), [{ ts: 5000, metric: 'm', value: 50 }]);
+    state = applySample(state, { ts: 4000, metric: 'm', value: 40 }, WINDOW);
+    expect(state.series['m']?.map((s) => s.ts)).toEqual([4000]);
+    expect(state.latest['m']).toEqual({ ts: 5000, metric: 'm', value: 50 });
+  });
+});
+
 describe('a clock that steps back', () => {
   const at = (ts: number, value = 1) => ({ ts, metric: 'm', value });
 
