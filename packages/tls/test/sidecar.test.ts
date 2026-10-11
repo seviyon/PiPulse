@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { paths, readMeta, readState, writeRenewStatus } from '../src/layout.js';
 import { sidecar, sidecarHealth, sidecarInit, sidecarStart } from '../src/sidecar.js';
+import { withLock } from '../src/lock.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 
@@ -243,5 +244,117 @@ describe('sidecarInit', () => {
     expect(existsSync(join(dir, 'tls'))).toBe(true);
     expect(existsSync(join(dir, 'tls-ca'))).toBe(true);
     expect(ctx.lines.join('\n')).toMatch(/is root:pipulse 2750 and .* root 0700/);
+  });
+});
+
+describe('a start that cannot prepare the material', () => {
+  /** Another command (a `new-ca` run through compose) holds the TLS lock until released. */
+  const holdLock = async (ctx: TestContext) => {
+    let release!: () => void;
+    let acquired!: () => void;
+    const got = new Promise<void>((resolve) => (acquired = resolve));
+    const held = withLock(
+      ctx.layout,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          acquired();
+        }),
+      { create: true, waitMs: 0, now: ctx.now, sleep: ctx.sleep, alive: () => true }
+    );
+    await got;
+    return async () => {
+      release();
+      await held;
+    };
+  };
+
+  it('a held lock never keeps a servable install from starting, and says why', async () => {
+    await sidecarStart(docker(), ready);
+    const unlock = await holdLock(docker());
+    try {
+      const ctx = docker({ lockAlive: () => true });
+      expect(await sidecarStart(ctx, ready)).toBe(0);
+      expect(ctx.errors.join('\n')).toMatch(
+        /the HTTPS material was not prepared: .*another pipulse tls command is running/
+      );
+      expect(ctx.errors.join('\n')).toContain('starts with what is already in /tls');
+      expect(existsSync(ready)).toBe(true);
+      expect(sidecarHealth(ctx, ready)).toBe(0);
+    } finally {
+      await unlock();
+    }
+  });
+
+  it('still starts when the CA facts cannot be shown while degraded', async () => {
+    const first = docker();
+    await sidecarStart(first, ready);
+    rmSync(paths(first.layout).caConstraints); // init refuses an incomplete CA...
+    writeFileSync(paths(first.layout).meta, 'not json'); // ...and the facts can't be read
+    const ctx = docker();
+    expect(await sidecarStart(ctx, ready)).toBe(0);
+    expect(ctx.errors.join('\n')).toMatch(/the CA facts can't be shown: /);
+    expect(existsSync(ready)).toBe(true);
+  });
+
+  it('with an unreadable state.json and a held lock there is nothing it can vouch for', async () => {
+    await sidecarStart(docker(), ready);
+    writeFileSync(join(dir, 'tls', 'state.json'), 'not json');
+    const unlock = await holdLock(docker());
+    try {
+      const ctx = docker({ lockAlive: () => true });
+      expect(await sidecarStart(ctx, ready)).toBe(1);
+      expect(existsSync(ready)).toBe(false);
+    } finally {
+      await unlock();
+    }
+  });
+
+  it('the loop says the server will not start, and returns the code, when nothing is servable', async () => {
+    const unlock = await holdLock(docker());
+    try {
+      const ctx = docker({ lockAlive: () => true });
+      expect(await sidecar(ctx, [], { readyFile: ready, intervalMs: 50 })).toBe(1);
+      expect(ctx.errors.join('\n')).toContain(
+        'pipulse-tls is not ready; the server will not start until this is fixed'
+      );
+      expect(existsSync(ready)).toBe(false);
+    } finally {
+      await unlock();
+    }
+  });
+});
+
+describe('a renewal round that cannot take the lock', () => {
+  it('is logged and skipped, and the loop keeps running until told to stop', async () => {
+    const ctx = docker({ lockAlive: () => true });
+    let release: (() => void) | undefined;
+    let held: Promise<void> | undefined;
+    // Once the start has printed its last line (its own lock is released), another command
+    // takes the lock, as a `docker compose run ... new-ca` would.
+    const { out } = ctx;
+    ctx.out = (line) => {
+      out(line);
+      if (line.startsWith('clock:')) {
+        held = withLock(ctx.layout, () => new Promise<void>((resolve) => (release = resolve)), {
+          create: true,
+          waitMs: 0,
+          now: ctx.now,
+          sleep: ctx.sleep,
+          alive: () => true
+        });
+      }
+    };
+    const skipped = printed(ctx, /renewal skipped this round/);
+    const stop = new AbortController();
+    const running = sidecar(ctx, [], { readyFile: ready, intervalMs: 20, stop: stop.signal });
+    await skipped;
+    stop.abort();
+    expect(await running).toBe(0);
+    expect(ctx.errors.join('\n')).toMatch(
+      /renewal skipped this round: .*another pipulse tls command is running/
+    );
+    release?.();
+    await held;
   });
 });
