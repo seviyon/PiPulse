@@ -20,6 +20,7 @@ import {
   makeLeaf,
   prepareWork,
   repairPublic,
+  stageCopiedCa,
   stageNewCa,
   validateStage,
   writeLeaf,
@@ -227,5 +228,134 @@ describe('repairPublic and writeLeaf', () => {
     // A missing leaf.crt is restored too.
     unlinkSync(paths(ctx.layout).leafCrt);
     expect(repairPublic(ctx, ca)).toEqual(['leaf.crt']);
+  });
+});
+
+/** A second staged CA, for swapping one of its files into the first. */
+async function otherCa(name: string) {
+  const dirs = { ca: join(dir, `ca.next-${name}`), pub: join(dir, `.next-${name}`) };
+  ensureDir(dirs.ca, { mode: 0o700 });
+  ensureDir(dirs.pub, { mode: 0o750 });
+  return { dirs, ...(await stageNewCa(ctx, dirs, constraints, [])) };
+}
+const copyOver = (from: string, to: string, mode: number) => {
+  writeFileSync(to, readFileSync(from));
+  chmodSync(to, mode);
+};
+
+describe('checkCa, files that disagree', () => {
+  it('refuses a ca.crt that is not a CA certificate', async () => {
+    const { dirs } = await stagedCa();
+    const caDir = join(dirs.ca, 'ca');
+    copyOver(join(dirs.pub, 'leaf.crt'), join(caDir, 'ca.crt'), MODES.caFile);
+    const check = checkCa(caDir);
+    expect(check).toEqual({
+      kind: 'partial',
+      problem: `${caDir}: ca.crt is not a CA certificate`
+    });
+  });
+
+  it('refuses a constraints.json that belongs to another CA', async () => {
+    const one = await stagedCa();
+    const two = await otherCa('two');
+    const caDir = join(one.dirs.ca, 'ca');
+    copyOver(join(two.dirs.ca, 'ca', 'constraints.json'), join(caDir, 'constraints.json'), 0o600);
+    expect(checkCa(caDir)).toEqual({
+      kind: 'partial',
+      problem: `${caDir}: constraints.json belongs to another CA`
+    });
+  });
+
+  it('reports a constraints.json it cannot parse as partial, with the reason', async () => {
+    const { dirs } = await stagedCa();
+    const caDir = join(dirs.ca, 'ca');
+    writeFileSync(join(caDir, 'constraints.json'), 'not json', { mode: 0o600 });
+    const check = checkCa(caDir);
+    expect(check.kind).toBe('partial');
+    expect(check.kind === 'partial' && check.problem.startsWith(`${caDir}: `)).toBe(true);
+  });
+});
+
+describe('validateStage, what a stage must hold', () => {
+  it('names an incomplete staged CA', async () => {
+    const { dirs } = await stagedCa();
+    unlinkSync(join(dirs.ca, 'ca', 'ca.key'));
+    expect(() => validateStage(dirs, pub(ctx.layout))).toThrow(
+      /the staged CA is not complete: .*is missing ca\.key/
+    );
+  });
+
+  it('says "missing" when there is no staged CA folder at all', async () => {
+    const { dirs } = await stagedCa();
+    rmSync(join(dirs.ca, 'ca'), { recursive: true });
+    expect(() => validateStage(dirs, pub(ctx.layout))).toThrow(
+      'the staged CA is not complete: missing'
+    );
+  });
+
+  it('refuses a staged ca.crt that is not the staged CA', async () => {
+    const one = await stagedCa();
+    const two = await otherCa('two');
+    copyOver(join(two.dirs.pub, 'ca.crt'), join(one.dirs.pub, 'ca.crt'), MODES.publicCert);
+    expect(() => validateStage(one.dirs, pub(ctx.layout))).toThrow(
+      'the staged ca.crt is not the staged CA'
+    );
+  });
+
+  it('refuses a staged ca-meta.json that describes another CA', async () => {
+    const one = await stagedCa();
+    const two = await otherCa('two');
+    copyOver(join(two.dirs.pub, 'ca-meta.json'), join(one.dirs.pub, 'ca-meta.json'), 0o640);
+    expect(() => validateStage(one.dirs, pub(ctx.layout))).toThrow(
+      'the staged ca-meta.json describes another CA'
+    );
+  });
+
+  it('refuses a staged leaf that is missing, or one the policy refuses', async () => {
+    const { dirs } = await stagedCa();
+    const leaf = join(dirs.pub, 'leaf.pem');
+    chmodSync(leaf, 0o644);
+    expect(() => validateStage(dirs, pub(ctx.layout))).toThrow(
+      /the staged leaf is not usable: .*broader than 640/
+    );
+    unlinkSync(leaf);
+    expect(() => validateStage(dirs, pub(ctx.layout))).toThrow(
+      'the staged leaf is not usable: missing'
+    );
+  });
+});
+
+describe('stageCopiedCa', () => {
+  it('copies a backed-up CA and makes a leaf that validates', async () => {
+    const source = await stagedCa();
+    const dirs = { ca: join(dir, 'ca.next-copy'), pub: join(dir, '.next-copy') };
+    ensureDir(dirs.ca, { mode: 0o700 });
+    ensureDir(dirs.pub, { mode: 0o750 });
+    const copied = await stageCopiedCa(ctx, dirs, join(source.dirs.ca, 'ca'), []);
+    expect(copied.ca.fingerprint).toBe(source.ca.fingerprint);
+    expect(validateStage(dirs, pub(ctx.layout)).fingerprint).toBe(source.ca.fingerprint);
+  });
+
+  it('refuses to stage a backup whose key does not match its certificate', async () => {
+    const source = await stagedCa();
+    const other = await otherCa('two');
+    const backup = join(source.dirs.ca, 'ca');
+    copyOver(join(other.dirs.ca, 'ca', 'ca.key'), join(backup, 'ca.key'), MODES.caFile);
+    const dirs = { ca: join(dir, 'ca.next-copy'), pub: join(dir, '.next-copy') };
+    ensureDir(dirs.ca, { mode: 0o700 });
+    ensureDir(dirs.pub, { mode: 0o750 });
+    await expect(stageCopiedCa(ctx, dirs, backup, [])).rejects.toThrow(
+      /the staged CA did not check out: .*ca\.key does not match ca\.crt/
+    );
+  });
+});
+
+describe('repairPublic, an unreadable ca-meta.json', () => {
+  it('is rewritten from the CA instead of failing', async () => {
+    const { ca } = await stagedCa();
+    repairPublic(ctx, ca);
+    writeFileSync(paths(ctx.layout).meta, 'not json', { mode: 0o640 });
+    expect(repairPublic(ctx, ca)).toEqual(['ca-meta.json']);
+    expect(readMeta(ctx.layout)?.fingerprint).toBe(ca.fingerprint);
   });
 });
