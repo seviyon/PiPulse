@@ -157,6 +157,9 @@ export interface ServerOptions {
 
 /** The largest frame a /api/live client may send; the dashboard sends none. */
 const MAX_CLIENT_FRAME_BYTES = 1024;
+/** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
+const CONTENT_SECURITY_POLICY =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 
@@ -214,6 +217,23 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
       return payload;
     });
   }
+  // What a browser is told about the pages and data it receives, on every response (the answers of
+  // the host and auth hooks too): no script or style that is not this server's own, no framing (the
+  // dashboard has buttons that change settings and rules, and a same-site page could frame it),
+  // no sniffing, no referrer, and JSON that is never kept in a cache. The policy is as tight as the
+  // built dashboard allows: it loads and runs with this exact header in Chromium and WebKit.
+  app.addHook('onSend', async (request, reply, payload) => {
+    reply.header('content-security-policy', CONTENT_SECURITY_POLICY);
+    reply.header('x-frame-options', 'DENY');
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('referrer-policy', 'no-referrer');
+    // The matched route when there is one (a path written as /%61pi/... only matches decoded).
+    const route = request.routeOptions?.url ?? '';
+    if (route.startsWith('/api/') || request.url.startsWith('/api/')) {
+      reply.header('cache-control', 'no-store');
+    }
+    return payload;
+  });
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   if (allowedHosts.length > 0) {

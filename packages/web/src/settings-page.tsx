@@ -126,8 +126,12 @@ export function SettingsPage({
     setMessage(undefined);
   };
 
+  // Only the levels the operator edited: the draft's other values are as old as the page, and
+  // sending them would put back anything another tab or the environment changed since.
+  const proposal = Object.fromEntries(edited.map((level) => [level, draft[level]]));
+
   const reviewChanges = () => {
-    sendJson<Preview>('POST', '/api/settings/preview', { retention: draft }).then(
+    sendJson<Preview>('POST', '/api/settings/preview', { retention: proposal }).then(
       (preview) => setReview({ status: 'ready', preview }),
       handle
     );
@@ -135,7 +139,7 @@ export function SettingsPage({
 
   const save = () => {
     sendJson<SettingsBody>('PUT', '/api/settings', {
-      retention: draft,
+      retention: proposal,
       ...(deletes ? { confirmDeletion: true } : {})
     }).then((saved) => {
       setLoaded({ status: 'ready', body: saved });
