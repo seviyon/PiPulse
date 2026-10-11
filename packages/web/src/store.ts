@@ -34,7 +34,7 @@ export function applyHistory(state: LiveState, metric: string, samples: Sample[]
   // Live points a few seconds past the history arrived while it was in flight; ones minutes past it
   // were stamped by a clock that read ahead since.
   const newerLive = (state.series[metric] ?? []).filter(
-    (point) => point.ts > (last?.ts ?? -1) && point.ts <= (last?.ts ?? 0) + CLOCK_STEP_MS
+    (point) => last === undefined || (point.ts > last.ts && point.ts <= last.ts + CLOCK_STEP_MS)
   );
   return {
     series: { ...state.series, [metric]: [...samples, ...newerLive] },

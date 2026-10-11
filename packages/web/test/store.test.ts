@@ -94,6 +94,13 @@ describe('a clock that steps back', () => {
     expect(state.latest['m']?.ts).toBe(2000);
   });
 
+  it('keeps every live sample when the history for the metric is empty (a metric with no stored readings yet)', () => {
+    let state = applySample(emptyState(), at(1_790_000_000_000), WINDOW);
+    state = applySample(state, at(1_790_000_005_000), WINDOW);
+    state = applyHistory(state, 'm', []);
+    expect(state.series['m']?.map((s) => s.ts)).toEqual([1_790_000_000_000, 1_790_000_005_000]);
+  });
+
   it('keeps a live sample a few seconds past the history, as before', () => {
     let state = applySample(emptyState(), at(10_000), WINDOW);
     state = applyHistory(state, 'm', [at(1000), at(2000)]);
