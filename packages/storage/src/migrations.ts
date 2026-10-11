@@ -204,21 +204,35 @@ const migrations: ((db: DatabaseSync) => void)[] = [
 
 export const SCHEMA_VERSION = migrations.length;
 
-/** Brings `db` up to SCHEMA_VERSION. Throws on a database from a newer PiPulse. */
+const userVersion = (db: DatabaseSync) =>
+  (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+
+const tooNew = (current: number) =>
+  new Error(
+    `Database schema version ${current} is from a newer PiPulse (this one supports ${SCHEMA_VERSION}); upgrade PiPulse instead`
+  );
+
+/**
+ * Brings `db` up to SCHEMA_VERSION. Throws on a database from a newer PiPulse. Safe when several
+ * processes open the same file at once (the server and the standalone collector): each step takes
+ * the write lock first and reads the version again under it, so a process that lost the race finds
+ * the work done instead of running a migration a second time.
+ */
 export function migrate(db: DatabaseSync): void {
-  const { user_version: current } = db.prepare('PRAGMA user_version').get() as {
-    user_version: number;
-  };
-  if (current > SCHEMA_VERSION) {
-    throw new Error(
-      `Database schema version ${current} is from a newer PiPulse (this one supports ${SCHEMA_VERSION}); upgrade PiPulse instead`
-    );
-  }
-  for (let version = current + 1; version <= SCHEMA_VERSION; version++) {
-    db.exec('BEGIN');
+  const current = userVersion(db);
+  if (current > SCHEMA_VERSION) throw tooNew(current);
+  if (current === SCHEMA_VERSION) return; // nothing to write: no lock needed (or possible, if read-only)
+  for (;;) {
+    db.exec('BEGIN IMMEDIATE');
     try {
-      migrations[version - 1]!(db);
-      db.exec(`PRAGMA user_version = ${version}`);
+      const version = userVersion(db);
+      if (version > SCHEMA_VERSION) throw tooNew(version);
+      if (version === SCHEMA_VERSION) {
+        db.exec('COMMIT');
+        return;
+      }
+      migrations[version]!(db);
+      db.exec(`PRAGMA user_version = ${version + 1}`);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');

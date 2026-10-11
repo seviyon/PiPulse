@@ -35,7 +35,7 @@ function mockVcgencmd(outputs: Record<string, string | NodeJS.ErrnoException>) {
     callback: ExecCallback
   ) => {
     const result = outputs[args.join(' ')];
-    if (file !== 'vcgencmd' || result === undefined) {
+    if (file !== '/usr/bin/vcgencmd' || result === undefined) {
       callback(new Error(`unexpected command ${file} ${args.join(' ')}`), '', '');
     } else if (result instanceof Error) {
       callback(result, '', (result as { stderr?: string }).stderr ?? '');
@@ -194,5 +194,18 @@ describe('vcgencmd that cannot reach the firmware', () => {
 
     await expect(throttledPlugin.collect()).rejects.toThrow('Command failed');
     await expect(throttledPlugin.collect()).rejects.toThrow('Command failed');
+  });
+});
+
+describe('how vcgencmd is run', () => {
+  it('by its absolute path (not through PATH), and killed outright if it ignores the timeout', async () => {
+    mockVcgencmd({ measure_volts: 'volt=1.2000V\n' });
+    await cpuVoltagePlugin.collect();
+    expect(vi.mocked(execFile)).toHaveBeenCalledWith(
+      '/usr/bin/vcgencmd',
+      ['measure_volts'],
+      expect.objectContaining({ timeout: 2000, killSignal: 'SIGKILL' }),
+      expect.any(Function)
+    );
   });
 });

@@ -20,6 +20,16 @@ describe('api routes', () => {
     expect(res.json()).toEqual({ status: 'ok' });
   });
 
+  it('GET /api/metrics/latest ignores a reading stamped by a clock that read far ahead', async () => {
+    const now = Date.now();
+    insertSample(db, { ts: now - 1000, metric: 'cpu_load', value: 10 });
+    insertSample(db, { ts: now + 30 * 86_400_000, metric: 'cpu_load', value: 99 });
+
+    const res = await buildServer(db).inject({ method: 'GET', url: '/api/metrics/latest' });
+
+    expect(res.json()).toEqual([{ ts: now - 1000, metric: 'cpu_load', value: 10 }]);
+  });
+
   it('GET /api/metrics/latest returns the latest sample per metric', async () => {
     insertSample(db, { ts: 1000, metric: 'cpu_load', value: 10 });
     insertSample(db, { ts: 2000, metric: 'cpu_load', value: 20 });

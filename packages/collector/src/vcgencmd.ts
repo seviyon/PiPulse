@@ -4,6 +4,9 @@ import type { CollectorPlugin } from './index.js';
 /** vcgencmd answers in milliseconds; a hung firmware call must not stall the scheduler slot forever. */
 const TIMEOUT_MS = 2000;
 
+/** By absolute path: what is on PATH is the environment's choice, not ours. */
+const VCGENCMD = '/usr/bin/vcgencmd';
+
 /**
  * vcgencmd is installed but can't reach the firmware: the service user isn't
  * in the `video` group, or a container wasn't given /dev/vchiq. Unlike a
@@ -21,20 +24,27 @@ class VcgencmdUnusableError extends Error {}
  */
 function vcgencmd(args: string[]): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    execFile('vcgencmd', args, { timeout: TIMEOUT_MS }, (error, stdout, stderr) => {
-      const code = (error as NodeJS.ErrnoException | null)?.code;
-      if (code === 'ENOENT') resolve(null);
-      else if (error && (code === 'EACCES' || UNUSABLE_STDERR.test(String(stderr)))) {
-        const detail = String(stderr).trim() || error.message;
-        reject(
-          new VcgencmdUnusableError(
-            `vcgencmd can't reach the firmware (${detail}). Add the PiPulse service user to ` +
-              'the "video" group, or pass /dev/vchiq into the container, then restart PiPulse.'
-          )
-        );
-      } else if (error) reject(error);
-      else resolve(String(stdout));
-    });
+    // SIGKILL: the default SIGTERM is ignored by a process stuck in a driver call, and the callback
+    // then waits for it to exit on its own (measured: 6 s for a 0.5 s timeout).
+    execFile(
+      VCGENCMD,
+      args,
+      { timeout: TIMEOUT_MS, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) => {
+        const code = (error as NodeJS.ErrnoException | null)?.code;
+        if (code === 'ENOENT') resolve(null);
+        else if (error && (code === 'EACCES' || UNUSABLE_STDERR.test(String(stderr)))) {
+          const detail = String(stderr).trim() || error.message;
+          reject(
+            new VcgencmdUnusableError(
+              `vcgencmd can't reach the firmware (${detail}). Add the PiPulse service user to ` +
+                'the "video" group, or pass /dev/vchiq into the container, then restart PiPulse.'
+            )
+          );
+        } else if (error) reject(error);
+        else resolve(String(stdout));
+      }
+    );
   });
 }
 

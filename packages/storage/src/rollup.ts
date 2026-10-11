@@ -61,6 +61,10 @@ const levels: Level[] = [
   { resolution: '1d', source: '1m', bucketStart: localDayStart, nextBucket: nextLocalDay }
 ];
 
+/** A clock this far ahead of elapsed time is a jump, not time passing; it is believed after CLOCK_ACCEPT_MS. */
+const CLOCK_JUMP_MS = HOUR;
+const CLOCK_ACCEPT_MS = 15 * MIN;
+
 /** Charts stay responsive (and the Pi's reply small) under this many points. */
 const MAX_POINTS = 1500;
 
@@ -135,16 +139,19 @@ function rollUpDays(db: DatabaseSync, start: number, end: number): number {
  * Days track where they stopped rather than deriving it from the newest
  * row, since that row's end depends on the timezone it was written in.
  */
-function nextStart(db: DatabaseSync, level: Level): number | undefined {
+function nextStart(db: DatabaseSync, level: Level, end: number): number | undefined {
   if (level.resolution === '1d') {
     const progress = db
       .prepare("SELECT until FROM rollup_progress WHERE resolution = '1d'")
       .get() as { until: number } | undefined;
     if (progress) return progress.until;
   }
+  // Only buckets before `end`: rows stamped by a clock that read far ahead and then came back
+  // would otherwise put the next start in the future, and nothing real would roll up (or be
+  // pruned as covered) until time caught up with them.
   const newest = db
-    .prepare('SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = ?')
-    .get(level.resolution) as { ts: number | null };
+    .prepare('SELECT MAX(ts) AS ts FROM metrics_rollup WHERE resolution = ? AND ts < ?')
+    .get(level.resolution, end) as { ts: number | null };
   if (newest.ts !== null) return level.nextBucket(newest.ts);
   const oldest = (
     level.source === 'raw'
@@ -188,7 +195,7 @@ export function runHousekeeping(
       // A bucket closes when its time has passed *and* its source level is final that far.
       const end = level.bucketStart(complete[level.source]);
       complete[level.resolution] = end;
-      const start = nextStart(db, level);
+      const start = nextStart(db, level, end);
       if (start !== undefined && start < end) {
         rolledUp[level.resolution] = rollUp(db, level, start, end);
       }
@@ -335,6 +342,9 @@ export interface HousekeepingOptions {
   vacuum?: VacuumOptions | false;
   onResult?: (result: HousekeepingResult) => void;
   onError?: (error: unknown) => void;
+  /** Wall-clock and monotonic milliseconds (tests replace them). */
+  now?: () => number;
+  monotonic?: () => number;
 }
 
 /**
@@ -347,12 +357,34 @@ export function startHousekeeping(
 ): { stop(): void } {
   const retention = options.retention;
   let lastVacuumAttempt: number | undefined;
+  const wallClock = options.now ?? Date.now;
+  const monotonic = options.monotonic ?? (() => performance.now());
+  // The Pi has no RTC: a bad NTP answer or a hand-set date can make the clock read far ahead for
+  // a few minutes. Rolling up "to now" then would mark days that have not happened as done, and
+  // the real data that follows would wait for time to catch up. So a clock that is suddenly more
+  // than an hour ahead of where elapsed time puts it is not believed until it has stayed there.
+  let anchor: { wall: number; mono: number } | undefined;
+  let aheadSince: number | undefined;
+  const trustedNow = (): number => {
+    const wall = wallClock();
+    const mono = monotonic();
+    if (anchor) {
+      const expected = anchor.wall + (mono - anchor.mono);
+      if (wall - expected > CLOCK_JUMP_MS) {
+        aheadSince ??= mono;
+        if (mono - aheadSince < CLOCK_ACCEPT_MS) return expected;
+      }
+    }
+    aheadSince = undefined;
+    anchor = { wall, mono };
+    return wall;
+  };
   const run = () => {
     try {
       const policy = typeof retention === 'function' ? retention() : retention;
       // Not `onResult?.(runHousekeeping(…))`: an optional call skips evaluating
       // its arguments, so housekeeping would silently never run without onResult.
-      const result = runHousekeeping(db, Date.now(), policy);
+      const result = runHousekeeping(db, trustedNow(), policy);
       options.onResult?.(result);
       if (options.vacuum !== false) {
         const now = Date.now();
