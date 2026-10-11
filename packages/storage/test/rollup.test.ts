@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   chooseResolution,
   DEFAULT_RETENTION,
+  getLatest,
   getSeries,
   insertSample,
   openDb,
   runHousekeeping,
+  startHousekeeping,
   type PiPulseDb
 } from '../src/index.js';
 
@@ -393,5 +395,144 @@ describe('alert history pruning', () => {
       id: string;
     }[];
     expect(left.map((row) => row.id)).toEqual(['old_open', 'recent_cleared']);
+  });
+});
+
+describe('a clock that jumps forward and comes back (no RTC, bad NTP)', () => {
+  /** One sample per minute for `minutes`, from `from`. */
+  function feed(from: number, minutes: number, value = 1) {
+    for (let i = 0; i < minutes; i++)
+      insertSample(db, { ts: from + i * MIN, metric: 'cpu_load', value });
+  }
+  const minutesRolled = () =>
+    (
+      db.prepare("SELECT COUNT(*) AS n FROM metrics_rollup WHERE resolution = '1m'").get() as {
+        n: number;
+      }
+    ).n;
+
+  /** A day of readings, a jump 30 days ahead for 5 minutes, then three more days at the right time. */
+  function scenario() {
+    feed(T0, 24 * 60); // day 1, real
+    runHousekeeping(db, T0 + DAY);
+    const future = T0 + DAY + 30 * DAY;
+    feed(future, 5, 99); // the clock reads 30 days ahead for 5 minutes
+    runHousekeeping(db, future + 5 * MIN);
+    // the clock is corrected; three real days follow, with housekeeping every hour
+    const resume = T0 + DAY + 5 * MIN;
+    feed(resume, 3 * 24 * 60);
+    for (let at = resume; at <= resume + 3 * DAY; at += HOUR) runHousekeeping(db, at);
+    return { resume, end: resume + 3 * DAY };
+  }
+
+  it('keeps rolling the real data up, instead of waiting for time to catch up with the future rows', () => {
+    const { resume, end } = scenario();
+    const real = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM metrics_rollup WHERE resolution = '1m' AND ts >= ? AND ts < ?"
+      )
+      .get(resume, end - 2 * MIN) as { n: number };
+    expect(real.n).toBeGreaterThanOrEqual(3 * 24 * 60 - 120);
+    expect(minutesRolled()).toBeGreaterThan(3 * 24 * 60);
+  });
+
+  it('never prunes a raw sample that no rollup covers: every minute whose raw samples are gone is rolled up', () => {
+    const { resume, end } = scenario();
+    // Raw retention is 2 days, so the first real day's samples are gone by now.
+    const gone = db
+      .prepare('SELECT COUNT(*) AS n FROM metrics WHERE ts >= ? AND ts < ?')
+      .get(resume, end - 2 * DAY - HOUR) as { n: number };
+    expect(gone.n).toBe(0);
+    const expected = Math.floor((end - 2 * DAY - HOUR - resume) / MIN);
+    const rolled = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM metrics_rollup WHERE resolution = '1m' AND ts >= ? AND ts < ?"
+      )
+      .get(resume, end - 2 * DAY - HOUR) as { n: number };
+    expect(rolled.n).toBeGreaterThanOrEqual(expected - 1);
+  });
+
+  describe('the housekeeping loop does not believe a clock that jumps ahead and comes back', () => {
+    // Drives startHousekeeping with a clock the test moves; each tick of its timer is one run.
+    function run(steps: { wall: number; mono: number }[]) {
+      vi.useFakeTimers();
+      let step = 0;
+      const clock = () => steps[Math.min(step, steps.length - 1)]!;
+      const h = startHousekeeping(db, {
+        intervalMs: MIN,
+        vacuum: false,
+        now: () => clock().wall,
+        monotonic: () => clock().mono
+      });
+      for (step = 1; step < steps.length; step++) vi.advanceTimersByTime(MIN);
+      h.stop();
+      vi.useRealTimers();
+    }
+    afterEach(() => vi.useRealTimers());
+
+    it('leaves the days after the jump to roll up as they happen: nothing is marked done in advance', () => {
+      feed(T0, 3 * 24 * 60); // three real days
+      const steps: { wall: number; mono: number }[] = [];
+      let mono = 0;
+      // Real time up to the end of day 2, then 5 minutes reading 30 days ahead, then real time again.
+      for (let at = T0 + 2 * DAY - 3 * MIN; at < T0 + 2 * DAY; at += MIN, mono += MIN)
+        steps.push({ wall: at, mono });
+      for (let i = 0; i < 5; i++, mono += MIN)
+        steps.push({ wall: T0 + 2 * DAY + 30 * DAY + i * MIN, mono });
+      for (
+        let at = T0 + 2 * DAY + 5 * MIN;
+        at <= T0 + 3 * DAY + 10 * MIN;
+        at += 30 * MIN, mono += 30 * MIN
+      )
+        steps.push({ wall: at, mono });
+      run(steps);
+      const progress = db
+        .prepare("SELECT until FROM rollup_progress WHERE resolution = '1d'")
+        .get() as { until: number };
+      expect(progress.until).toBeLessThanOrEqual(T0 + 3 * DAY + DAY); // never a day that has not happened
+      const days = rollups('1d').map((d) => d.ts);
+      expect(days).toContain(T0 + 2 * DAY); // day 3 rolled up once it ended, after the jump
+      expect(days.some((d) => d > T0 + 4 * DAY)).toBe(false);
+      for (const day of rollups('1d')) expect(day.count).toBeLessThanOrEqual(25 * 60);
+    });
+
+    it('believes a jump that stays, after fifteen minutes', () => {
+      feed(T0, 24 * 60);
+      const steps: { wall: number; mono: number }[] = [{ wall: T0 + DAY, mono: 0 }];
+      for (let i = 1; i <= 20; i++)
+        steps.push({ wall: T0 + DAY + 30 * DAY + i * MIN, mono: i * MIN });
+      run(steps);
+      const progress = db
+        .prepare("SELECT until FROM rollup_progress WHERE resolution = '1d'")
+        .get() as { until: number };
+      expect(progress.until).toBeGreaterThan(T0 + 20 * DAY); // the new time was accepted
+    });
+
+    it('does not mind a clock that goes back or an ordinary run', () => {
+      feed(T0, 24 * 60);
+      run([
+        { wall: T0 + DAY, mono: 0 },
+        { wall: T0 + DAY - 2 * HOUR, mono: MIN },
+        { wall: T0 + DAY + MIN, mono: 2 * MIN }
+      ]);
+      expect(rollups('1m').length).toBeGreaterThan(24 * 60 - 5);
+    });
+  });
+});
+
+describe('getLatest and a clock that was ahead', () => {
+  it('ignores a reading stamped in the future, and takes the newest one that is not', () => {
+    const now = T0 + DAY;
+    insertSample(db, { ts: now - MIN, metric: 'cpu_load', value: 7 });
+    insertSample(db, { ts: now + 30 * DAY, metric: 'cpu_load', value: 99 }); // stamped by a clock that read 30 days ahead
+    expect(getLatest(db, now)).toEqual([{ ts: now - MIN, metric: 'cpu_load', value: 7 }]);
+    // Without a clock to judge by, it is the newest by timestamp, as before.
+    expect(getLatest(db)[0]?.value).toBe(99);
+  });
+
+  it('allows a few minutes of drift between the collector and the reader', () => {
+    const now = T0 + DAY;
+    insertSample(db, { ts: now + 2 * MIN, metric: 'cpu_load', value: 5 });
+    expect(getLatest(db, now)).toHaveLength(1);
   });
 });

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getHistory, openDb, runHousekeeping, SCHEMA_VERSION } from '../src/index.js';
+import { migrate } from '../src/migrations.js';
 
 let dir: string;
 
@@ -250,5 +251,43 @@ describe('schema migrations', () => {
       'failed_at'
     ]);
     db.close();
+  });
+});
+
+describe('migrate, when another process gets there between the check and the lock', () => {
+  /** A stand-in database: `versions` are what successive reads of user_version answer; every statement is recorded. */
+  function fake(versions: number[]) {
+    const statements: string[] = [];
+    const reads = [...versions];
+    const db = {
+      prepare: (sql: string) => ({
+        get: () => {
+          if (sql !== 'PRAGMA user_version') throw new Error(`unexpected ${sql}`);
+          return { user_version: reads.length > 1 ? reads.shift() : reads[0] };
+        }
+      }),
+      exec: (sql: string) => {
+        statements.push(sql);
+      }
+    };
+    return { db: db as never, statements };
+  }
+
+  it('does nothing when the schema is current, and never takes the lock', () => {
+    const { db, statements } = fake([SCHEMA_VERSION]);
+    migrate(db);
+    expect(statements).toEqual([]);
+  });
+
+  it('finds the work already done under the lock and runs no migration', () => {
+    const { db, statements } = fake([3, SCHEMA_VERSION]); // outdated at the first look, current by the time it has the lock
+    migrate(db);
+    expect(statements).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+  });
+
+  it('refuses a database that a newer PiPulse upgraded in that moment, and rolls back', () => {
+    const { db, statements } = fake([3, SCHEMA_VERSION + 1]);
+    expect(() => migrate(db)).toThrow(/from a newer PiPulse/);
+    expect(statements).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
   });
 });

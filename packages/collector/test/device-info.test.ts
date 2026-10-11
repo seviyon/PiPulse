@@ -23,4 +23,23 @@ describe('hostOverrides', () => {
   it('leaves out what is missing', () => {
     expect(hostOverrides(mkdtempSync(join(tmpdir(), 'pp-host-')))).toEqual({});
   });
+
+  it('reads only the start of a file: a huge or hostile file under the host root costs 4 KB', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pp-host-'));
+    mkdirSync(join(root, 'etc'));
+    // The name is on the first line; a megabyte of junk follows, and a second PRETTY_NAME beyond the limit.
+    writeFileSync(
+      join(root, 'etc/os-release'),
+      `PRETTY_NAME="Raspbian"\n${'#'.repeat(1 << 20)}\nPRETTY_NAME="after the limit"\n`
+    );
+    writeFileSync(join(root, 'model'), `Pi 5${'\0'.repeat(1 << 20)}`);
+    expect(hostOverrides(root)).toEqual({ os: 'Raspbian', model: 'Pi 5' });
+  });
+
+  it('does not follow a folder or an endless file where a regular file should be', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pp-host-'));
+    mkdirSync(join(root, 'etc/os-release'), { recursive: true }); // a folder
+    mkdirSync(join(root, 'model')); // another
+    expect(hostOverrides(root)).toEqual({});
+  });
 });
