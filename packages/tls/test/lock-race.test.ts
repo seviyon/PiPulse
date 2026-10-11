@@ -20,6 +20,8 @@ const gap = vi.hoisted(() => ({
   links: [] as (() => void)[],
   rename: undefined as (() => void) | undefined,
   linkError: undefined as string | undefined,
+  writeError: undefined as string | undefined,
+  readdirViews: [] as string[][],
   renameError: undefined as string | undefined,
   linkCalls: 0,
   renameCalls: 0
@@ -35,6 +37,17 @@ vi.mock('node:fs', async (importOriginal) => {
       }
       gap.links.shift()?.();
       return actual.linkSync(existing, next);
+    },
+    // A listing as a breaker saw it some milliseconds ago (before others took and tidied turns).
+    readdirSync: (...args: Parameters<typeof actual.readdirSync>) => {
+      const view = gap.readdirViews.shift();
+      return view ?? actual.readdirSync(...args);
+    },
+    writeSync: (...args: Parameters<typeof actual.writeSync>) => {
+      if (gap.writeError) {
+        throw Object.assign(new Error(gap.writeError), { code: gap.writeError });
+      }
+      return actual.writeSync(...args);
     },
     renameSync: (from: string, to: string) => {
       gap.renameCalls += 1;
@@ -65,6 +78,8 @@ afterEach(() => {
   gap.links = [];
   gap.rename = undefined;
   gap.linkError = undefined;
+  gap.writeError = undefined;
+  gap.readdirViews = [];
   gap.renameError = undefined;
   gap.linkCalls = 0;
   gap.renameCalls = 0;
@@ -152,8 +167,10 @@ describe('breakLock when the lock is no longer the one judged stale', () => {
   });
 
   it('loses the displaced holder’s lock without telling anyone (current behaviour)', () => {
-    // The one race left: A released, C took the path, and D took it again during the put-back.
-    // C only finds out at release. If breakLock ever reports a displaced lock, change this test.
+    // The one race left, and only when the judged holder was still alive: A released, C took the
+    // path, and D took it again during the put-back. C only finds out at release. (Waiters that
+    // all judged a *dead* holder no longer reach this: breakers take turns, see lock.test.ts and
+    // lock-stress.test.ts.) If breakLock ever reports a displaced lock, change this test.
     writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
     gap.rename = takeAs('taken-by-c');
     gap.links.push(
@@ -161,9 +178,9 @@ describe('breakLock when the lock is no longer the one judged stale', () => {
       () => writeFileSync(lockPath(), holder('taken-by-d'), { flag: 'wx', mode: 0o600 })
     );
 
-    const result = breakLock(lockPath(), judgedA()) as unknown;
+    const result = breakLock(lockPath(), judgedA());
 
-    expect(result).toBeUndefined();
+    expect(result).toBe('done'); // it reports no displaced lock
     expect(tokenOnDisk()).not.toBe('taken-by-c');
   });
 
@@ -268,5 +285,78 @@ describe('breakLock, when the file system misbehaves', () => {
     gap.linkError = 'EPERM';
     gap.renameError = 'ENOENT';
     expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
+  });
+});
+
+describe('breakLock, when the mutex cannot be written', () => {
+  it('leaves no empty mutex behind to block every other breaker', () => {
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    gap.writeError = 'ENOSPC';
+    expect(() => breakLock(lockPath(), judgedA())).toThrow('ENOSPC');
+    expect(readdirSync(dir).filter((name) => name.includes('.breaking.'))).toEqual([]);
+    expect(tokenOnDisk()).toBe('stale-a'); // and the lock is untouched
+  });
+});
+
+describe('breakLock, turn numbers and a listing that is out of date', () => {
+  const turn = (n: number) => `${lockPath()}.breaking.${n}`;
+  const turnNames = () => readdirSync(dir).filter((name) => /\.breaking\.\d+$/.test(name));
+  const live = (n: number) =>
+    writeFileSync(
+      turn(n),
+      JSON.stringify({ released: false, ...JSON.parse(holder(`turn-${n}`)), pid: process.pid }),
+      {
+        mode: 0o600
+      }
+    );
+
+  it('does not take a number below the live turn that an old listing makes look free', () => {
+    // C holds turn 3 (1 and 2 were tidied). B listed the folder when turn 1 was the newest and
+    // was slow: 1 reads as gone, and 2 is free to create again. B must see that 3 exists.
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    live(3);
+    gap.readdirViews.push([`${LOCK_FILE}.breaking.1`]);
+
+    expect(breakLock(lockPath(), judgedA())).toBe('busy');
+
+    expect(turnNames()).toEqual([`${LOCK_FILE}.breaking.3`]); // B took nothing and left C's turn
+    expect(tokenOnDisk()).toBe('stale-a'); // and did not touch the lock C is breaking
+  });
+
+  it('answers busy when the number it meant to take was taken first', () => {
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    writeFileSync(turn(1), JSON.stringify({ released: true }));
+    live(2);
+    gap.readdirViews.push([`${LOCK_FILE}.breaking.1`]); // B has not seen 2 yet
+    expect(breakLock(lockPath(), judgedA())).toBe('busy');
+    expect(tokenOnDisk()).toBe('stale-a');
+  });
+
+  it('gives its turn back by writing into the file it made, not the one now at that name', () => {
+    // While B breaks, its turn is taken over and tidied, and somebody makes a new file at the
+    // same name. B's release must not mark that one released.
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    gap.rename = () => {
+      rmSync(turn(1), { force: true });
+      live(1);
+    };
+    expect(breakLock(lockPath(), judgedA())).toBe('done');
+    expect(JSON.parse(readFileSync(turn(1), 'utf8')).released).toBe(false);
+  });
+
+  it('never restarts the numbering: the newest turn stays after a break, marked released', () => {
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    writeFileSync(turn(6), JSON.stringify({ released: true }));
+    expect(breakLock(lockPath(), judgedA())).toBe('done');
+    expect(turnNames()).toEqual([`${LOCK_FILE}.breaking.7`]);
+    expect(JSON.parse(readFileSync(turn(7), 'utf8')).released).toBe(true);
+  });
+
+  it('sweeps the copies a killed breaker left (nobody else is breaking while it holds a turn)', () => {
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    writeFileSync(`${lockPath()}.stale-abc123`, holder('old'));
+    writeFileSync(`${lockPath()}.stale-def456`, holder('old'));
+    expect(breakLock(lockPath(), judgedA())).toBe('done');
+    expect(readdirSync(dir).filter((name) => name.includes('.stale-'))).toEqual([]);
   });
 });

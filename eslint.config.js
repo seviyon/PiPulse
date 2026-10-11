@@ -20,8 +20,15 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     // Plain Node scripts (no TypeScript, no bundler): Node's globals.
-    files: ['scripts/**/*.mjs'],
-    languageOptions: { globals: { process: 'readonly', console: 'readonly' } }
+    files: ['scripts/**/*.mjs', 'packages/*/test/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly'
+      }
+    }
   },
   {
     rules: {

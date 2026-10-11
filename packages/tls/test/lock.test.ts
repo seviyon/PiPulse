@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   readdirSync,
   readFileSync,
@@ -272,6 +273,182 @@ describe('withLock', () => {
     utimesSync(lockPath(), old, old);
     breakLock(lockPath(), undefined);
     expect(existsSync(lockPath())).toBe(false);
+  });
+
+  describe('breakers take turns (numbered mutex files beside the lock)', () => {
+    // Generation n is `<lock>.breaking.<n>`. A breaker takes a turn by creating the next number
+    // with O_EXCL (one creator wins), and gives it back by writing "released" into its own file.
+    // Nothing is ever deleted to make room, so there is no leftover to clear and no window in
+    // which a live breaker's file could be removed by mistake.
+    const gen = (n: number) => `${lockPath()}.breaking.${n}`;
+    const gens = () =>
+      readdirSync(dir)
+        .filter((name) => /\.breaking\.\d+$/.test(name))
+        .map((name) => Number(name.slice(name.lastIndexOf('.') + 1)))
+        .sort((a, b) => a - b);
+    const released = (n: number) => JSON.parse(readFileSync(gen(n), 'utf8')).released === true;
+    const stale = () => {
+      writeHolder({ token: 'dead' });
+      return JSON.parse(readFileSync(lockPath(), 'utf8')) as LockHolder;
+    };
+    const owner = (n: number, over: Partial<LockHolder> = {}) =>
+      writeFileSync(
+        gen(n),
+        JSON.stringify({
+          pid: 999_999,
+          ...localIdentity(),
+          startTime: null,
+          token: `owner-${n}`,
+          startedAt: Date.now(),
+          ...over
+        }),
+        { mode: 0o600 }
+      );
+    const age = (n: number, ms: number) => {
+      const at = new Date(Date.now() + ms);
+      utimesSync(gen(n), at, at);
+    };
+
+    it('leaves the lock alone while another breaker holds a turn', () => {
+      const dead = stale();
+      owner(1, { pid: process.pid }); // alive: this very process
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
+      expect(gens()).toEqual([1]); // and its file is not touched
+    });
+
+    it('breaks the lock, then marks its turn released rather than deleting it', () => {
+      const dead = stale();
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(gens()).toEqual([1]);
+      expect(released(1)).toBe(true);
+    });
+
+    it('takes the next number after a released turn, and tidies the older ones', () => {
+      const dead = stale();
+      writeFileSync(gen(1), JSON.stringify({ released: true }));
+      writeFileSync(gen(2), JSON.stringify({ released: true }));
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(gens()).toEqual([3]);
+      expect(released(3)).toBe(true);
+    });
+
+    it('leaves a lock that turns out to be another holder’s where it is', () => {
+      const dead = stale();
+      writeHolder({ token: 'fresh' });
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('fresh');
+      expect(released(1)).toBe(true);
+    });
+
+    it('takes over the turn of a breaker that died, at once and without deleting anything first', () => {
+      const dead = stale();
+      owner(4); // pid 999999: not running
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(gens()).toEqual([5]);
+    });
+
+    it('takes over a turn whose file was never written (a breaker killed at that instant), once it is old', () => {
+      const dead = stale();
+      writeFileSync(gen(1), '', { mode: 0o600 });
+      expect(breakLock(lockPath(), dead)).toBe('busy'); // fresh: the creator may still be writing
+      age(1, -60_000);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(gens()).toEqual([2]);
+    });
+
+    it('never takes the turn of a breaker that is alive, however old its file: a stalled breaker keeps it', () => {
+      const dead = stale();
+      owner(1, { pid: process.pid });
+      age(1, -3_600_000);
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(gens()).toEqual([1]);
+    });
+
+    it('treats a turn file dated far in the future as old (the clock was stepped back)', () => {
+      const dead = stale();
+      writeFileSync(gen(1), '', { mode: 0o600 });
+      age(1, 3_600_000);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+    });
+
+    describe('who owns the newest turn', () => {
+      const me = { startTime: null, bootId: 'boot-b', pidNs: 'pid:[1]', host: 'here' };
+
+      it('takes the turn of a breaker from before a reboot, whatever its pid', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: 'boot-a', pidNs: 'pid:[1]', host: 'here' });
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('done');
+      });
+
+      it('judges a breaker in another PID namespace by the age of its file, not by a pid it cannot see', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: 'boot-b', pidNs: 'pid:[2]', host: 'there' });
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('busy'); // fresh: still at work
+        age(1, -60_000);
+        expect(breakLock(lockPath(), dead, { identity: me })).toBe('done'); // silent for a minute: gone
+      });
+
+      it('judges a breaker in our own namespace by the liveness check it is given', () => {
+        const dead = stale();
+        owner(1, { bootId: 'boot-b', pidNs: 'pid:[1]', host: 'here' });
+        expect(breakLock(lockPath(), dead, { identity: me, alive: () => true })).toBe('busy');
+        expect(breakLock(lockPath(), dead, { identity: me, alive: () => false })).toBe('done');
+      });
+
+      it('falls back on the host name when a namespace is not known', () => {
+        const dead = stale();
+        owner(1, { pid: process.pid, bootId: null, pidNs: null, host: 'elsewhere' });
+        const noNs = { ...me, bootId: null, pidNs: null };
+        expect(breakLock(lockPath(), dead, { identity: noNs })).toBe('busy'); // another host: by age
+        age(1, -60_000);
+        expect(breakLock(lockPath(), dead, { identity: noNs })).toBe('done');
+      });
+    });
+
+    it.skipIf(process.getuid?.() === 0)('does not hide a failure to make its turn file', () => {
+      const dead = stale();
+      chmodSync(dir, 0o500);
+      try {
+        expect(() => breakLock(lockPath(), dead)).toThrow(/EACCES/);
+      } finally {
+        chmodSync(dir, 0o700);
+      }
+    });
+
+    it('answers busy while the newest turn belongs to a live breaker, whatever older ones it finds', () => {
+      const dead = stale();
+      owner(1); // dead owner
+      // The first breaker has taken number 2 by the time the second tries to: it is alive.
+      owner(2, { pid: process.pid });
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
+    });
+
+    it('stops waiting at waitMs while another breaker holds the turn, with a message that says why', async () => {
+      stale();
+      writeFileSync(gen(1), '', { mode: 0o600 }); // fresh and unowned: busy for 10 s
+      const started = Date.now();
+      await expect(
+        withLock(layout, async () => 'ran', { create: true, waitMs: 150 })
+      ).rejects.toThrow(/clearing a stale lock/);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('a waiter holds off while a break is under way, then takes the lock once it is over', async () => {
+      stale();
+      owner(1, { pid: process.pid });
+      setTimeout(() => {
+        rmSync(lockPath(), { force: true }); // the other breaker finishes: the lock goes, its turn is released
+        writeFileSync(gen(1), JSON.stringify({ released: true }));
+      }, 60);
+      const started = Date.now();
+      const got = await withLock(layout, async () => 'ran', { create: true, waitMs: 5000 });
+      expect(got).toBe('ran');
+      expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+    });
   });
 
   it('releases the lock when the command throws', async () => {
