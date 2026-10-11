@@ -116,28 +116,24 @@ export function createRuleSource(
     return () => (retention ??= options.rawRetention());
   };
 
-  /** Throws for the first of `rule`'s look-backs that raw retention can't serve. */
-  const checkLookBack = (rule: Rule, retention: Retention) => {
+  /** The first of `rule`'s look-backs that raw retention can't serve, if any. */
+  const lookBackProblem = (rule: Rule, retention: Retention) => {
     for (const [field, ms] of [
       ['for', rule.forMs],
       ['clearAfter', rule.clearAfterMs]
     ] as const) {
       if (ms > retention.ms) {
         const detail = `longer than raw retention (${retention.text}); raise it on the Settings page first`;
-        throw new AlertRulesError(detail, field, detail);
+        return { field, detail };
       }
     }
+    return undefined;
   };
 
-  /** The first look-back of `rule` that raw retention can't serve, as text, if any. */
-  const lookBackProblem = (rule: Rule, retention: Retention): string | undefined => {
-    try {
-      checkLookBack(rule, retention);
-      return undefined;
-    } catch (error) {
-      if (!(error instanceof AlertRulesError)) throw error;
-      return error.detail ?? error.message;
-    }
+  /** Throws for the first of `rule`'s look-backs that raw retention can't serve. */
+  const checkLookBack = (rule: Rule, retention: Retention) => {
+    const problem = lookBackProblem(rule, retention);
+    if (problem) throw new AlertRulesError(problem.detail, problem.field, problem.detail);
   };
 
   /** Tells onProblem about a distinct problem, once. */
@@ -231,7 +227,7 @@ export function createRuleSource(
         // running it would be wrong, and the startup check would refuse to start over it.
         const unfit = lookBackProblem(rule, retention());
         if (unfit) {
-          s.problem = `${s.problem ?? 'not valid'}; the ${kindOf(rule)} rule below it is not in force either: ${unfit}`;
+          s.problem = `${s.problem!}; the ${kindOf(rule)} rule below it is not in force either: ${unfit.detail}`;
           report(`saved alert rule "${rule.id}" is not in force: ${s.problem}`);
         } else rules.push(rule);
         entries.push(view(rule.id, s, rule));
