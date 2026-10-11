@@ -286,7 +286,7 @@ describe('breakLock, when the mutex cannot be written', () => {
     writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
     gap.writeError = 'ENOSPC';
     expect(() => breakLock(lockPath(), judgedA())).toThrow('ENOSPC');
-    expect(existsSync(`${lockPath()}.breaking`)).toBe(false);
+    expect(readdirSync(dir).filter((name) => name.includes('.breaking.'))).toEqual([]);
     expect(tokenOnDisk()).toBe('stale-a'); // and the lock is untouched
   });
 });

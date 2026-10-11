@@ -274,94 +274,117 @@ describe('withLock', () => {
     expect(existsSync(lockPath())).toBe(false);
   });
 
-  describe('breakers take turns (one mutex file beside the lock)', () => {
-    const mutexPath = () => `${lockPath()}.breaking`;
+  describe('breakers take turns (numbered mutex files beside the lock)', () => {
+    // Generation n is `<lock>.breaking.<n>`. A breaker takes a turn by creating the next number
+    // with O_EXCL (one creator wins), and gives it back by writing "released" into its own file.
+    // Nothing is ever deleted to make room, so there is no leftover to clear and no window in
+    // which a live breaker's file could be removed by mistake.
+    const gen = (n: number) => `${lockPath()}.breaking.${n}`;
+    const gens = () =>
+      readdirSync(dir)
+        .filter((name) => /\.breaking\.\d+$/.test(name))
+        .map((name) => Number(name.slice(name.lastIndexOf('.') + 1)))
+        .sort((a, b) => a - b);
+    const released = (n: number) => JSON.parse(readFileSync(gen(n), 'utf8')).released === true;
     const stale = () => {
       writeHolder({ token: 'dead' });
       return JSON.parse(readFileSync(lockPath(), 'utf8')) as LockHolder;
     };
-
-    it('leaves the lock alone while another breaker holds the mutex', () => {
-      const dead = stale();
-      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: Date.now() }), { mode: 0o600 });
-      expect(breakLock(lockPath(), dead)).toBe('busy');
-      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
-      expect(existsSync(mutexPath())).toBe(true); // not ours: not removed
-    });
-
-    it('breaks the lock and gives the mutex back', () => {
-      const dead = stale();
-      expect(breakLock(lockPath(), dead)).toBe('done');
-      expect(existsSync(lockPath())).toBe(false);
-      expect(existsSync(mutexPath())).toBe(false);
-    });
-
-    it('gives the mutex back when the lock turns out to be another holder’s', () => {
-      const dead = stale();
-      writeHolder({ token: 'fresh' });
-      expect(breakLock(lockPath(), dead)).toBe('done');
-      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('fresh');
-      expect(existsSync(mutexPath())).toBe(false);
-    });
-
-    it('clears a mutex a crashed breaker left behind, and breaks on the next look', () => {
-      const dead = stale();
-      writeFileSync(mutexPath(), 'x', { mode: 0o600 }); // unreadable: judged by its age
-      const old = new Date(Date.now() - 60_000);
-      utimesSync(mutexPath(), old, old);
-      expect(breakLock(lockPath(), dead)).toBe('busy'); // cleared, not taken in the same call
-      expect(existsSync(mutexPath())).toBe(false);
-      expect(existsSync(lockPath())).toBe(true);
-      expect(breakLock(lockPath(), dead)).toBe('done');
-      expect(existsSync(lockPath())).toBe(false);
-      expect(existsSync(mutexPath())).toBe(false);
-    });
-
-    const mutexOf = (over: Partial<LockHolder>) =>
+    const owner = (n: number, over: Partial<LockHolder> = {}) =>
       writeFileSync(
-        mutexPath(),
+        gen(n),
         JSON.stringify({
           pid: 999_999,
           ...localIdentity(),
           startTime: null,
-          token: 'someone',
+          token: `owner-${n}`,
           startedAt: Date.now(),
           ...over
         }),
         { mode: 0o600 }
       );
+    const age = (n: number, ms: number) => {
+      const at = new Date(Date.now() + ms);
+      utimesSync(gen(n), at, at);
+    };
 
-    it('clears a mutex whose owner is dead at once, however fresh it looks', () => {
+    it('leaves the lock alone while another breaker holds a turn', () => {
       const dead = stale();
-      mutexOf({});
+      owner(1, { pid: process.pid }); // alive: this very process
       expect(breakLock(lockPath(), dead)).toBe('busy');
-      expect(existsSync(mutexPath())).toBe(false);
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
+      expect(gens()).toEqual([1]); // and its file is not touched
+    });
+
+    it('breaks the lock, then marks its turn released rather than deleting it', () => {
+      const dead = stale();
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(gens()).toEqual([1]);
+      expect(released(1)).toBe(true);
+    });
+
+    it('takes the next number after a released turn, and tidies the older ones', () => {
+      const dead = stale();
+      writeFileSync(gen(1), JSON.stringify({ released: true }));
+      writeFileSync(gen(2), JSON.stringify({ released: true }));
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(gens()).toEqual([3]);
+      expect(released(3)).toBe(true);
+    });
+
+    it('leaves a lock that turns out to be another holder’s where it is', () => {
+      const dead = stale();
+      writeHolder({ token: 'fresh' });
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('fresh');
+      expect(released(1)).toBe(true);
+    });
+
+    it('takes over the turn of a breaker that died, at once and without deleting anything first', () => {
+      const dead = stale();
+      owner(4); // pid 999999: not running
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(gens()).toEqual([5]);
+    });
+
+    it('takes over a turn whose file was never written (a breaker killed at that instant), once it is old', () => {
+      const dead = stale();
+      writeFileSync(gen(1), '', { mode: 0o600 });
+      expect(breakLock(lockPath(), dead)).toBe('busy'); // fresh: the creator may still be writing
+      age(1, -60_000);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(gens()).toEqual([2]);
+    });
+
+    it('never takes the turn of a breaker that is alive, however old its file: a stalled breaker keeps it', () => {
+      const dead = stale();
+      owner(1, { pid: process.pid });
+      age(1, -3_600_000);
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(gens()).toEqual([1]);
+    });
+
+    it('treats a turn file dated far in the future as old (the clock was stepped back)', () => {
+      const dead = stale();
+      writeFileSync(gen(1), '', { mode: 0o600 });
+      age(1, 3_600_000);
       expect(breakLock(lockPath(), dead)).toBe('done');
     });
 
-    it('never clears a mutex whose owner is alive, however old: a stalled breaker keeps its turn', () => {
+    it('answers busy to the second of two breakers that both found the same dead turn', () => {
       const dead = stale();
-      mutexOf({ pid: process.pid });
-      const old = new Date(Date.now() - 3_600_000);
-      utimesSync(mutexPath(), old, old);
+      owner(1); // dead owner
+      // The first breaker has taken number 2 by the time the second tries to: it is alive.
+      owner(2, { pid: process.pid });
       expect(breakLock(lockPath(), dead)).toBe('busy');
-      expect(existsSync(mutexPath())).toBe(true);
-      expect(existsSync(lockPath())).toBe(true);
-    });
-
-    it('treats a mutex dated far in the future as old (the clock was stepped back)', () => {
-      const dead = stale();
-      writeFileSync(mutexPath(), 'x', { mode: 0o600 });
-      const future = new Date(Date.now() + 3_600_000);
-      utimesSync(mutexPath(), future, future);
-      expect(breakLock(lockPath(), dead)).toBe('busy');
-      expect(existsSync(mutexPath())).toBe(false);
-      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
     });
 
     it('stops waiting at waitMs while another breaker holds the turn, with a message that says why', async () => {
       stale();
-      writeFileSync(mutexPath(), 'x', { mode: 0o600 }); // fresh and unowned: busy for 10 s
+      writeFileSync(gen(1), '', { mode: 0o600 }); // fresh and unowned: busy for 10 s
       const started = Date.now();
       await expect(
         withLock(layout, async () => 'ran', { create: true, waitMs: 150 })
@@ -371,10 +394,10 @@ describe('withLock', () => {
 
     it('a waiter holds off while a break is under way, then takes the lock once it is over', async () => {
       stale();
-      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: Date.now() }), { mode: 0o600 });
+      owner(1, { pid: process.pid });
       setTimeout(() => {
-        rmSync(lockPath(), { force: true }); // the other breaker finishes: lock and mutex go
-        rmSync(mutexPath(), { force: true });
+        rmSync(lockPath(), { force: true }); // the other breaker finishes: the lock goes, its turn is released
+        writeFileSync(gen(1), JSON.stringify({ released: true }));
       }, 60);
       const started = Date.now();
       const got = await withLock(layout, async () => 'ran', { create: true, waitMs: 5000 });

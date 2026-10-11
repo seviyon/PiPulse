@@ -11,9 +11,9 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
-  utimesSync,
   writeFileSync
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -79,14 +79,36 @@ if (role === 'worker') {
       // a lock is there: wait for it to go
     }
     if (process.env.LEFTOVERS === '1') {
-      // what a breaker killed mid-break leaves: an unowned mutex, a minute old
+      // What a breaker killed mid-break leaves: the next turn number, owned by a process that is
+      // gone. A real one only takes a turn after finding the newest free (released), so the
+      // planter does too: taking it over a live breaker's turn would make the test fail by itself.
       try {
-        const fd = openSync(`${path}.breaking`, 'wx', 0o600);
+        const turns = readdirSync(dir)
+          .map((name) => /\.breaking\.(\d+)$/.exec(name)?.[1])
+          .filter(Boolean)
+          .map(Number);
+        const newest = Math.max(0, ...turns);
+        if (newest > 0) {
+          const text = readFileSync(`${path}.breaking.${newest}`, 'utf8');
+          if (JSON.parse(text).released !== true) throw new Error('held');
+        }
+        const next = newest + 1;
+        const fd = openSync(`${path}.breaking.${next}`, 'wx', 0o600);
+        writeFileSync(
+          fd,
+          JSON.stringify({
+            pid: dead,
+            startTime: null,
+            bootId: null,
+            pidNs: null,
+            host: hostname(),
+            token: `dead-breaker-${Math.random()}`,
+            startedAt: Date.now()
+          })
+        );
         closeSync(fd);
-        const old = new Date(Date.now() - 60_000);
-        utimesSync(`${path}.breaking`, old, old);
       } catch {
-        // one is there already
+        // taken by a live breaker meanwhile
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 1));

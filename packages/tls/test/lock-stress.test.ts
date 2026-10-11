@@ -41,18 +41,15 @@ describe.skipIf(!process.env['PIPULSE_LOCK_STRESS'] || !built)('the lock under c
   );
 
   it(
-    '...and all but never when breakers keep dying and leaving their mutex behind',
+    '...and never when breakers keep dying and leaving their turn behind',
     {
       timeout: 120_000
     },
     () => {
-      // A leftover mutex is cleared with a check and then an rm, so a breaker stalled between the two
-      // can still remove a live one's: about 1 in 10,000 critical sections here (it was 1 in 40
-      // without the mutex), so the bound is 1 in 1,000, not 0.
       const { sections, overlaps, lost } = run(6, 20, true, true);
       expect(sections).toBeGreaterThan(100);
-      expect(overlaps).toBeLessThanOrEqual(Math.ceil(sections / 1000));
-      expect(lost).toBeLessThanOrEqual(Math.ceil(sections / 1000));
+      expect(overlaps).toBe(0);
+      expect(lost).toBe(0);
     }
   );
 });

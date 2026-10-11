@@ -3,10 +3,12 @@ import {
   closeSync,
   constants,
   fsyncSync,
+  ftruncateSync,
   futimesSync,
   linkSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -15,7 +17,7 @@ import {
   type Stats
 } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathExists } from './files.js';
 import type { Layout } from './layout.js';
 import { pidAlive, pidNamespace, processIdentity } from './proc.js';
@@ -26,7 +28,7 @@ export const LOCK_WAIT_MS = 30_000;
 export const LOCK_STALE_MS = 15 * 60_000;
 /** A lock file whose content isn't readable yet is being written, for this long. */
 const FRESH_MS = 5_000;
-/** A breaker's mutex file older than this was left by a breaker that died: breaking takes microseconds. */
+/** A breaker's turn file that can't be read, or whose owner can't be seen, and is older than this was left by a breaker that died: breaking takes microseconds. */
 export const BREAK_MUTEX_STALE_MS = 10_000;
 /** The holder touches the lock this often; a holder we can't see in /proc is judged by it. */
 export const LOCK_HEARTBEAT_MS = 20_000;
@@ -209,16 +211,44 @@ interface BreakerContext {
   alive?: (holder: LockHolder) => boolean;
 }
 
+/** `<lock>.breaking.<n>` — breaker turn number n. */
+const turnPath = (path: string, n: number) => `${path}.breaking.${n}`;
+
+/** The turn numbers present beside the lock, ascending. */
+function turnsOf(path: string): number[] {
+  const prefix = `${basename(path)}.breaking.`;
+  const turns: number[] = [];
+  for (const name of readdirSync(dirname(path))) {
+    if (name.startsWith(prefix) && /^\d{1,15}$/.test(name.slice(prefix.length)))
+      turns.push(Number(name.slice(prefix.length)));
+  }
+  return turns.sort((a, b) => a - b);
+}
+
 /**
- * Whether the breaker that made the mutex is gone. An owner this process can see (same PID
- * namespace) is judged by its pid and start time, never by age: a breaker that is merely
- * stalled (a stopped process, a slow SD card) keeps its turn. Only an owner that can't be seen
- * (another container, or a file that can't be read) is judged by the mutex file's age, in either
- * direction (a clock stepped back leaves a leftover dated in the future).
+ * Whether the newest turn can be taken over: its breaker gave it back ("released"), or is gone.
+ * An owner this process can see (same PID namespace) is judged by its pid and start time, never
+ * by age: a breaker that is merely stalled (a stopped process, a slow SD card) keeps its turn.
+ * Only an owner that can't be seen (another container, or a file that can't be read, such as one
+ * whose creator died before writing it) is judged by the file's age, in either direction (a
+ * clock stepped back leaves a leftover dated in the future).
  */
-function mutexOwnerGone(mutex: string, seen: Stats, context: BreakerContext): boolean {
+function turnFree(file: string, context: BreakerContext): boolean {
+  let seen: Stats;
+  let text: string;
+  try {
+    seen = statSync(file);
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return true; // gone
+  }
+  try {
+    if ((JSON.parse(text) as { released?: unknown }).released === true) return true;
+  } catch {
+    // unreadable: judged below
+  }
   const me = context.identity ?? localIdentity();
-  const owner = readHolder(mutex);
+  const owner = readHolder(file);
   if (owner) {
     if (owner.bootId !== null && me.bootId !== null && owner.bootId !== me.bootId) return true;
     const sameNamespace =
@@ -228,66 +258,61 @@ function mutexOwnerGone(mutex: string, seen: Stats, context: BreakerContext): bo
   return Math.abs(Date.now() - seen.mtimeMs) > BREAK_MUTEX_STALE_MS;
 }
 
-/** The same file as `judged`: its inode alone proves nothing (numbers are reused at once), its mtime too does. */
-const sameFile = (a: Stats, b: Stats) => a.ino === b.ino && a.mtimeMs === b.mtimeMs;
-
 /**
- * Removes a mutex judged to be a dead breaker's, if it is still the file that was judged (the
- * leftover may have been cleared and a live breaker may have made its own since). A window of a
- * few microseconds remains between that check and the rm: a breaker stalled exactly there could
- * remove a live breaker's mutex, which only matters after a breaker died (a leftover to clear in
- * the first place). Moving the file aside and putting it back was tried and was worse under load:
- * the mutex path is empty meanwhile, and other breakers take it.
- */
-function clearMutex(mutex: string, judged: Stats): void {
-  try {
-    if (!sameFile(statSync(mutex), judged)) return;
-  } catch {
-    return; // gone already
-  }
-  rmSync(mutex, { force: true });
-}
-
-/**
- * Takes the mutex that makes breakers take turns: a file beside the lock, made with O_EXCL and
- * holding this process's identity. 'busy' when another breaker holds it, or when it just cleared
- * one that a dead breaker left (the caller looks again after a moment, so two waiters that both
- * found the same leftover don't each take a mutex the other's clean-up could remove).
+ * Takes a turn at breaking, so only one breaker acts at a time. A turn is a file numbered one
+ * more than the newest, made with O_EXCL: of any number of breakers that find the newest turn
+ * free, exactly one creates the next, and the others answer 'busy' and look again. Nothing is
+ * deleted to make room (a leftover of a breaker that died is simply left behind and outnumbered),
+ * so there is no moment at which one breaker's clean-up could remove another's live turn: that
+ * was the weakness of a single mutex file, which a stalled breaker could still remove. Older turns
+ * are tidied once ours is taken; the newest is kept, marked "released", so numbers never restart.
  */
 function takeBreakerMutex(path: string, context: BreakerContext): (() => void) | 'busy' {
-  const mutex = `${path}.breaking`;
-  const token = randomBytes(8).toString('hex');
+  const turns = turnsOf(path);
+  const newest = turns.at(-1) ?? 0;
+  if (newest > 0 && !turnFree(turnPath(path, newest), context)) return 'busy';
+  const mine = turnPath(path, newest + 1);
   let fd: number;
   try {
     fd = openSync(
-      mutex,
+      mine,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
       0o600
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    try {
-      const seen = statSync(mutex);
-      if (mutexOwnerGone(mutex, seen, context)) clearMutex(mutex, seen);
-    } catch {
-      // released meanwhile
-    }
-    return 'busy';
+    return 'busy'; // another breaker took this number first
   }
   try {
     const me = context.identity ?? localIdentity();
-    writeSync(fd, JSON.stringify({ pid: process.pid, ...me, token, startedAt: Date.now() }));
+    writeSync(
+      fd,
+      JSON.stringify({
+        pid: process.pid,
+        ...me,
+        token: randomBytes(8).toString('hex'),
+        startedAt: Date.now()
+      })
+    );
   } catch (error) {
-    rmSync(mutex, { force: true }); // an empty mutex would hold every other breaker off
+    rmSync(mine, { force: true }); // an empty turn would hold every other breaker off for a while
     throw error;
   } finally {
     closeSync(fd);
   }
+  for (const older of turns) rmSync(turnPath(path, older), { force: true });
   return () => {
+    // Give the turn back by saying so in our own file (the newest is kept, so numbers go on).
     try {
-      if (readHolder(mutex)?.token === token) rmSync(mutex, { force: true });
+      const out = openSync(mine, constants.O_WRONLY | constants.O_NOFOLLOW);
+      try {
+        ftruncateSync(out, 0);
+        writeSync(out, JSON.stringify({ released: true }));
+      } finally {
+        closeSync(out);
+      }
     } catch {
-      // already gone
+      rmSync(mine, { force: true }); // the file is gone or can't be rewritten: don't keep a turn we can't release
     }
   };
 }
