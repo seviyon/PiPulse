@@ -138,12 +138,14 @@ export function clearAlert(
   clearedAt: number,
   clearedBy: ClearedBy
 ): Alert {
-  return db
-    // MAX: a clock that stepped back must not record a clear before the raise.
-    .prepare(
-      `UPDATE alerts SET cleared_at = MAX(?, raised_at), cleared_by = ? WHERE id = ? RETURNING ${COLUMNS}`
-    )
-    .get(clearedAt, clearedBy, id) as unknown as Alert;
+  return (
+    db
+      // MAX: a clock that stepped back must not record a clear before the raise.
+      .prepare(
+        `UPDATE alerts SET cleared_at = MAX(?, raised_at), cleared_by = ? WHERE id = ? RETURNING ${COLUMNS}`
+      )
+      .get(clearedAt, clearedBy, id) as unknown as Alert
+  );
 }
 
 /**

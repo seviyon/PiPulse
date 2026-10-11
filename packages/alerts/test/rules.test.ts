@@ -292,9 +292,9 @@ describe('ruleProblem', () => {
     ).toBeUndefined();
     // a '*' rule must fit its slowest metric
     const slow = [...metrics, { id: 'cpu_load', intervalMs: 5000 }];
-    expect(ruleProblem({ ...base, metric: '*', forMs: 30_000 }, ['disk_used'], DAY, slow)?.field).toBe(
-      'for'
-    );
+    expect(
+      ruleProblem({ ...base, metric: '*', forMs: 30_000 }, ['disk_used'], DAY, slow)?.field
+    ).toBe('for');
   });
 });
 

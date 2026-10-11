@@ -154,7 +154,12 @@ export function startAlerts(
           try {
             const current = open.get(key(rule.id, metric.id));
             if (isCertificateRule(rule)) {
-              const decision = evaluateCertificate(rule, certificate, trusted, current !== undefined);
+              const decision = evaluateCertificate(
+                rule,
+                certificate,
+                trusted,
+                current !== undefined
+              );
               const state =
                 decision.action === 'unavailable' || decision.action === 'undecided'
                   ? decision.action
