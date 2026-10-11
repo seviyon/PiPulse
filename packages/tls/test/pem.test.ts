@@ -106,3 +106,40 @@ describe('parseCertificateFile', () => {
     );
   });
 });
+
+describe('review fixes: key files people really have', () => {
+  const ecKey = fixture('leaf.ec.key');
+  const params = '-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n';
+  const legacyEncrypted =
+    '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,0011\n\nAAAA\n-----END RSA PRIVATE KEY-----\n';
+
+  it('ignores the EC PARAMETERS block that `openssl ecparam -genkey` writes before the key', () => {
+    expect(parseKeyFile(params + ecKey, 'k')).toBe(parseKeyFile(ecKey, 'k'));
+    expect(() => parseKeyFile(params + ecKey + key, 'k')).toThrow(/exactly one private key/);
+    expect(() => parseKeyFile(params, 'k')).toThrow(/exactly one private key/);
+  });
+
+  it('says a legacy Proc-Type key is encrypted, in a key file and in a bundle', () => {
+    expect(() => parseKeyFile(legacyEncrypted, 'PIPULSE_TLS_KEY')).toThrow(
+      'PIPULSE_TLS_KEY is encrypted; PiPulse needs an unencrypted key'
+    );
+    expect(() => parseBundle(legacyEncrypted + leaf, 'leaf.pem')).toThrow(/is encrypted/);
+  });
+
+  it('accepts trailing spaces and tabs on lines, and bare CR line endings', () => {
+    const padded = leaf
+      .split('\n')
+      .map((line) => (line === '' ? line : `${line} \t`))
+      .join('\n');
+    expect(parseCertificateFile(padded, 'c')).toEqual(parseCertificateFile(leaf, 'c'));
+    expect(parseCertificateFile(leaf.replace(/\n/g, '\r'), 'c')).toEqual(
+      parseCertificateFile(leaf, 'c')
+    );
+  });
+
+  it('stays fast on a long run of spaces', () => {
+    const started = performance.now();
+    expect(() => parsePemBlocks(' '.repeat(60_000) + 'x', 'f')).toThrow(/isn't a PEM block/);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});

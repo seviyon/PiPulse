@@ -25,7 +25,13 @@ export function parsePemBlocks(text: string, what: string): PemBlock[] {
   if (Buffer.byteLength(text, 'utf8') > MAX_PEM_BYTES) {
     throw new PemError(`${what} is larger than 64 KiB`);
   }
-  const normalized = text.replace(/\r\n/g, '\n');
+  // CRLF and bare CR to LF, and no trailing blanks on a line (an editor or a mail client
+  // adds them): per line, so a long run of spaces can't make the match quadratic.
+  const normalized = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n');
   const blocks: PemBlock[] = [];
   let at = 0;
   for (;;) {
@@ -49,14 +55,24 @@ export function parsePemBlocks(text: string, what: string): PemBlock[] {
 
 const OPERATOR_KEY_LABELS = new Set(['PRIVATE KEY', 'EC PRIVATE KEY', 'RSA PRIVATE KEY']);
 
+// A legacy (RFC 1421) encrypted key keeps its header inside the block, which the block
+// pattern doesn't match: say what it is instead of "isn't a PEM block".
+const LEGACY_ENCRYPTED = /^Proc-Type:\s*4,\s*ENCRYPTED\s*$/im;
+
 function refuseEncrypted(blocks: PemBlock[], what: string): void {
   if (blocks.some((block) => block.label === 'ENCRYPTED PRIVATE KEY')) {
     throw new PemError(`${what} is encrypted; PiPulse needs an unencrypted key`);
   }
 }
 
+function refuseLegacyEncrypted(text: string, what: string): void {
+  if (text.length <= MAX_PEM_BYTES * 2 && LEGACY_ENCRYPTED.test(text))
+    throw new PemError(`${what} is encrypted; PiPulse needs an unencrypted key`);
+}
+
 /** A generated leaf.pem: one PKCS#8 PRIVATE KEY and the certificate chain, leaf first. */
 export function parseBundle(text: string, what: string): { key: string; certs: string[] } {
+  refuseLegacyEncrypted(text, what);
   const blocks = parsePemBlocks(text, what);
   refuseEncrypted(blocks, what);
   const other = blocks.find((b) => b.label !== 'PRIVATE KEY' && b.label !== 'CERTIFICATE');
@@ -70,7 +86,9 @@ export function parseBundle(text: string, what: string): { key: string; certs: s
 
 /** An operator key file: one unencrypted PKCS#8, SEC1 (EC) or PKCS#1 (RSA) key. */
 export function parseKeyFile(text: string, what: string): string {
-  const blocks = parsePemBlocks(text, what);
+  refuseLegacyEncrypted(text, what);
+  // `openssl ecparam -genkey` writes the curve parameters before the key: not a second key.
+  const blocks = parsePemBlocks(text, what).filter((block) => block.label !== 'EC PARAMETERS');
   refuseEncrypted(blocks, what);
   if (blocks.length !== 1 || !OPERATOR_KEY_LABELS.has(blocks[0]!.label)) {
     throw new PemError(`${what} must hold exactly one private key`);

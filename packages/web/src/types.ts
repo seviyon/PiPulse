@@ -154,7 +154,12 @@ export type TlsView =
       fingerprint: string;
       caFingerprint?: string;
       sans: { dns: string[]; ip: string[] };
-      class: 'valid' | 'degraded-incomplete-chain' | 'degraded-san' | 'degraded-untrusted';
+      class:
+        | 'valid'
+        | 'degraded-incomplete-chain'
+        | 'degraded-san'
+        | 'degraded-untrusted'
+        | 'degraded-purpose';
       reasons: string[];
       missingNames: string[];
       certificateAgeMs: number;

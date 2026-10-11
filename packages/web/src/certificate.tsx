@@ -23,7 +23,8 @@ const CLASS_TEXT: Record<Https['class'], string> = {
   valid: 'Complete and trusted',
   'degraded-incomplete-chain': 'Chain incomplete: an intermediate certificate is missing',
   'degraded-san': 'Missing a configured name',
-  'degraded-untrusted': 'Not issued by a trusted certificate authority'
+  'degraded-untrusted': 'Not issued by a trusted certificate authority',
+  'degraded-purpose': 'Not allowed for a web server (its key usage leaves out serverAuth)'
 };
 
 function HttpBody({ tls, signIn }: { tls: Http | undefined; signIn: boolean }) {

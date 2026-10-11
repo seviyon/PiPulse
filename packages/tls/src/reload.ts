@@ -46,7 +46,14 @@ export function startReloader(options: {
    */
   initialSignature?: string;
   pollMs?: number;
+  /** Wall-clock ms, for what is shown (the time of an attempt). */
   now?: () => number;
+  /**
+   * Monotonic ms for the retry and log intervals, so a clock that steps back (NTP after
+   * boot on a Pi with no RTC) can't mute them. Default: performance.now, or `now` when
+   * only `now` is given (tests that drive time through it).
+   */
+  monotonic?: () => number;
   log?: (message: string) => void;
   /**
    * Called after every reload attempt, successful or not, so the server can
@@ -57,17 +64,19 @@ export function startReloader(options: {
   timer?: boolean;
 }): CertificateProvider {
   const now = options.now ?? Date.now;
+  const mono = options.monotonic ?? (options.now ? options.now : () => performance.now());
   const log = options.log ?? (() => {});
   let active = options.initial;
   let activeSignature = options.initialSignature ?? options.signature();
   let pending: string | undefined;
   const state: ReloadState = { state: 'ok', lastAttempt: null, lastError: null };
   let lastLogged: { message: string; at: number } | undefined;
+  let lastAttemptMono: number | undefined;
 
   const fail = (message: string) => {
     state.state = 'failing';
     state.lastError = message;
-    const t = now();
+    const t = mono();
     if (!lastLogged || lastLogged.message !== message || t - lastLogged.at >= HOUR_MS) {
       log(`HTTPS certificate not reloaded: ${message}`);
       lastLogged = { message, at: t };
@@ -76,6 +85,7 @@ export function startReloader(options: {
 
   const tryReload = () => {
     state.lastAttempt = now();
+    lastAttemptMono = mono();
     let candidate: LoadedCertificate;
     try {
       candidate = options.load();
@@ -91,7 +101,16 @@ export function startReloader(options: {
       state.lastError = null;
       return;
     }
-    if (CLASS_RANK[candidate.class] < CLASS_RANK[active.class]) {
+    // An expired active certificate fails every client, so a replacement that is in date
+    // is better than it even when its chain is worse (a missing intermediate still works
+    // for many clients), unless clients would refuse that one outright too.
+    const t = now();
+    const replacesExpired =
+      t >= active.notAfter &&
+      t >= candidate.notBefore &&
+      t < candidate.notAfter &&
+      CLASS_RANK[candidate.class] > 0;
+    if (!replacesExpired && CLASS_RANK[candidate.class] < CLASS_RANK[active.class]) {
       fail(
         `the replacement is ${candidate.class} and the active certificate is ${active.class}; kept the active one`
       );
@@ -129,7 +148,8 @@ export function startReloader(options: {
       pending = undefined;
       // A refusal can be about time (not yet valid, the clock not synced yet)
       // and stop applying without the files changing: try them again now and then.
-      if (state.state === 'failing' && now() - (state.lastAttempt ?? 0) >= RETRY_MS) attempt();
+      if (state.state === 'failing' && mono() - (lastAttemptMono ?? -RETRY_MS) >= RETRY_MS)
+        attempt();
       return;
     }
     if (signature !== pending) {

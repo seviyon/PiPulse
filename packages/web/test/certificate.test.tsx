@@ -102,6 +102,12 @@ describe('CertificateSection', () => {
     expect(root.textContent).toContain('Not issued by a trusted certificate authority');
   });
 
+  it('says a certificate that is not allowed for a web server is that, not untrusted', async () => {
+    await show({ ...https, class: 'degraded-purpose', reasons: ['no-server-auth'] });
+    expect(root.textContent).toContain('Not allowed for a web server');
+    expect(root.textContent).toContain('serverAuth');
+  });
+
   it('names a degraded chain and the names it misses', async () => {
     await show({
       ...https,
