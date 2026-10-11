@@ -125,6 +125,29 @@ describe('sessions, the cookie that carries them', () => {
   });
 });
 
+describe('sessions, housekeeping', () => {
+  it('forgets sessions that ran out when a new one is made, and ends nothing for no id', () => {
+    let now = 0;
+    const sessions = createSessions({ now: () => now });
+    const old = sessions.create();
+    now = 8 * DAY;
+    const fresh = sessions.create();
+    expect(sessions.valid(old)).toBe(false);
+    expect(sessions.valid(fresh)).toBe(true);
+    sessions.end(undefined);
+    expect(sessions.valid(fresh)).toBe(true);
+  });
+
+  it('marks the cookie Secure on HTTPS, for sign-in and for sign-out alike', () => {
+    expect(sessionCookie('abc', true)).toMatch(/; Secure$/);
+    expect(sessionCookie('abc', false)).not.toMatch(/Secure/);
+    expect(clearedSessionCookie(true)).toMatch(/Max-Age=0; Secure$/);
+    expect(clearedSessionCookie(false)).toBe(
+      'pipulse_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
+    );
+  });
+});
+
 describe('clientKey', () => {
   it('is the address for IPv4, and the /64 for IPv6, so one host cannot rotate addresses', () => {
     expect(clientKey('10.0.0.2')).toBe('10.0.0.2');
@@ -138,6 +161,7 @@ describe('clientKey', () => {
 
   it('leaves what is not an address alone', () => {
     expect(clientKey('unknown')).toBe('unknown');
+    expect(clientKey('not:an:address')).toBe('not:an:address');
   });
 });
 

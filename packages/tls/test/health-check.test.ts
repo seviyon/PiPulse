@@ -422,6 +422,31 @@ describe('review fixes: the plain-HTTP check is as strict as the HTTPS one', () 
     expect(result.message).toContain('202');
   });
 
+  it('is not healthy for an answer with no body, or a body that is not JSON', async () => {
+    const empty = createHttpServer((_q, res) => {
+      res.statusCode = 204;
+      res.end();
+    });
+    const emptyPort = await listen(empty);
+    const none = await checkHealth(httpEnv(emptyPort), { readState: noState });
+    expect(none).toEqual({ code: 1, message: 'unhealthy (HTTP 204)' });
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    const port = await listen(respond(200, 'not json'));
+    expect(await checkHealth(httpEnv(port), { readState: noState })).toEqual({
+      code: 1,
+      message: 'unhealthy (HTTP 200)'
+    });
+  });
+
+  it('says what is wrong with PIPULSE_PORT instead of trying a port', async () => {
+    const result = await checkHealth(
+      { PIPULSE_TLS: 'off', PIPULSE_PORT: '80x' },
+      { readState: noState }
+    );
+    expect(result.code).toBe(1);
+    expect(result.message).toMatch(/^PIPULSE_PORT must be a port number/);
+  });
+
   it('refuses an oversized body instead of reading it all', async () => {
     const port = await listen(respond(200, 'x'.repeat(65 * 1024)));
     const result = await checkHealth(httpEnv(port), { readState: noState });
