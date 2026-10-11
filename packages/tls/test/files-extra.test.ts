@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ensureDir,
+  cleanTemp,
   readSecureFile,
   removeTree,
   renameDurable,
@@ -260,5 +261,51 @@ describe('ensureDir', () => {
     ensureDir(path, { mode: 0o2750, owner: { uid: process.getuid!(), gid: process.getgid!() } });
     ensureDir(path, { mode: 0o2750, owner: { uid: process.getuid!(), gid: process.getgid!() } });
     expect(statSync(path).mode & 0o7777).toBe(0o2750);
+  });
+});
+
+describe('cleanTemp', () => {
+  it('removes only leftovers of writeAtomic, matching the whole name', () => {
+    const removed = ['.leaf.pem.0123456789ab.tmp', '.a.b.0123456789ab.tmp'];
+    const kept = [
+      'leaf.pem.0123456789ab.tmp', // no leading dot
+      '.leaf.pem.0123456789ab.tmp.keep', // something after .tmp
+      '.x0123456789ab.tmp', // no dot before the random part
+      '.leaf.pem.0123456789zz.tmp', // not hex
+      'notes.tmp'
+    ];
+    for (const name of [...removed, ...kept]) writeFileSync(join(dir, name), 'x');
+    cleanTemp(dir);
+    expect(readdirSync(dir).sort()).toEqual([...kept].sort());
+  });
+
+  it('does nothing for a folder that is not there', () => {
+    expect(() => cleanTemp(join(dir, 'missing'))).not.toThrow();
+  });
+});
+
+describe('readSecureFile, limits and other errors', () => {
+  it('accepts a file of exactly 64 KiB and refuses one byte more', () => {
+    writeFileSync(join(dir, 'ok.pem'), 'x'.repeat(64 * 1024));
+    chmodSync(join(dir, 'ok.pem'), 0o640);
+    expect(readSecureFile(join(dir, 'ok.pem'), generated, 'ok.pem')).toHaveLength(64 * 1024);
+    writeFileSync(join(dir, 'big.pem'), 'x'.repeat(64 * 1024 + 1));
+    chmodSync(join(dir, 'big.pem'), 0o640);
+    expect(() => readSecureFile(join(dir, 'big.pem'), generated, 'big.pem')).toThrow(
+      'big.pem: larger than 64 KiB'
+    );
+  });
+
+  it('names the error code when it is not one it knows', () => {
+    writeFileSync(join(dir, 'file'), 'x');
+    expect(() => readSecureFile(join(dir, 'file', 'inside'), generated, 'x.pem')).toThrow(
+      /x\.pem: can't be opened \(ENOTDIR\)/
+    );
+  });
+});
+
+describe('ensureDir, errors', () => {
+  it('does not hide a failure to create the folder', () => {
+    expect(() => ensureDir(join(dir, 'no', 'parent', 'here'), { mode: 0o700 })).toThrow(/ENOENT/);
   });
 });

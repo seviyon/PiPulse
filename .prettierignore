@@ -5,3 +5,5 @@ e2e/test-results
 e2e/playwright-report
 README.md
 packaging/node-keys/
+.stryker-tmp
+reports

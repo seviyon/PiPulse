@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Layout } from '../src/layout.js';
 import {
   LOCK_FILE,
+  LOCK_HEARTBEAT_MS,
   LOCK_OBSERVE_MS,
   LockError,
   breakLock,
@@ -19,6 +20,7 @@ import {
   withLock,
   type LockHolder
 } from '../src/lock.js';
+import { processIdentity } from '../src/proc.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;
@@ -295,5 +297,56 @@ describe('withLock', () => {
     expect(
       await withLock(missing, async () => existsSync(join(tls, LOCK_FILE)), { create: true })
     ).toBe(true);
+  });
+});
+
+describe('lock constants and errors', () => {
+  it('watches a remote heartbeat for two beats and 5 s (45 s)', () => {
+    expect(LOCK_HEARTBEAT_MS).toBe(20_000);
+    expect(LOCK_OBSERVE_MS).toBe(45_000);
+  });
+
+  it('refuses with a LockError that says so', async () => {
+    writeHolder({ pid: process.pid });
+    const error = await withLock(layout, async () => 'no', { create: true, waitMs: 0 }).catch(
+      (caught: unknown) => caught
+    );
+    expect(error).toBeInstanceOf(LockError);
+    expect((error as Error).name).toBe('LockError');
+  });
+});
+
+describe('a lock file that is not a lock holder', () => {
+  // A fresh file with unusable content is somebody's lock being written: it is waited for,
+  // and the message cannot name a pid.
+  it.each([
+    ['a pid that is not an integer', { pid: 1.5, startedAt: Date.now() }],
+    ['a start time that is not a number', { pid: 4242, startedAt: 'now' }],
+    ['no pid', { startedAt: Date.now() }]
+  ])('treats %s as unreadable', async (_name, content) => {
+    writeFileSync(lockPath(), JSON.stringify(content));
+    await expect(withLock(layout, async () => 'no', { create: true, waitMs: 0 })).rejects.toThrow(
+      /\(pid \?\)/
+    );
+  });
+
+  it('names the pid of a real holder', async () => {
+    writeHolder({ pid: process.pid });
+    await expect(withLock(layout, async () => 'no', { create: true, waitMs: 0 })).rejects.toThrow(
+      new RegExp(`pid ${process.pid}`)
+    );
+  });
+});
+
+// /proc has the process start time only on Linux (the CI and the packaging container run it).
+describe.skipIf(!existsSync('/proc/self/stat'))('a pid that was reused (Linux)', () => {
+  it('is not the holder when the start time differs, and is when it matches', async () => {
+    const mine = processIdentity(process.pid)!;
+    writeHolder({ pid: process.pid, startTime: 'not-my-start' });
+    expect(await withLock(layout, async () => 'ran', { create: true, waitMs: 0 })).toBe('ran');
+    writeHolder({ pid: process.pid, startTime: mine.startTime });
+    await expect(withLock(layout, async () => 'no', { create: true, waitMs: 0 })).rejects.toThrow(
+      LockError
+    );
   });
 });

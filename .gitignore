@@ -19,3 +19,7 @@ e2e/playwright-report/
 
 # Local graphify knowledge graph: part of the maintainer's setup, not the repository
 graphify-out/
+
+# Mutation testing output (see docs/development.md)
+.stryker-tmp/
+reports/
