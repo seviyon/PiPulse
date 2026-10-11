@@ -46,7 +46,7 @@ Coverage says which lines the tests ran; mutation testing says whether they woul
 npm run mutate -- tls src/runtime-status.ts:100-126 test/runtime-status.test.ts
 ```
 
-Give it one file (or a line range) and the tests that cover it: every mutant runs those tests once, so a whole package takes a long time. The report prints in the terminal and as HTML in `packages/<package>/reports/mutation/index.html`. Neither `reports/` nor `.stryker-tmp/` is committed.
+Give it one file (or a line range) and the tests that cover it: every mutant runs those tests once, so a whole package takes a long time. The report prints in the terminal and as HTML in `packages/<package>/reports/mutation/index.html`. Neither `reports/` nor `.stryker-tmp/` is committed. The terminal prints nothing until the end, so a long run looks stuck: add `--bail=1` after the test files (`npm run mutate -- tls src/journal.ts test/journal.test.ts --bail=1`) so a mutant that is caught stops at its first failing test. The 236 mutants of `journal.ts` still took about 74 minutes; avoid running other test suites meanwhile, because a slowed mutant that hits the 60 s timeout counts as caught.
 
 A surviving mutant is either a missing test or an _equivalent_ mutant that cannot change behaviour (the text of an error message a caller never reads, a type check that the next check makes redundant). Only the first kind is worth a test.
 
