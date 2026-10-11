@@ -304,14 +304,69 @@ describe('withLock', () => {
       expect(existsSync(mutexPath())).toBe(false);
     });
 
-    it('clears a mutex a crashed breaker left behind, then breaks', () => {
+    it('clears a mutex a crashed breaker left behind, and breaks on the next look', () => {
       const dead = stale();
-      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: 0 }), { mode: 0o600 });
+      writeFileSync(mutexPath(), 'x', { mode: 0o600 }); // unreadable: judged by its age
       const old = new Date(Date.now() - 60_000);
       utimesSync(mutexPath(), old, old);
+      expect(breakLock(lockPath(), dead)).toBe('busy'); // cleared, not taken in the same call
+      expect(existsSync(mutexPath())).toBe(false);
+      expect(existsSync(lockPath())).toBe(true);
       expect(breakLock(lockPath(), dead)).toBe('done');
       expect(existsSync(lockPath())).toBe(false);
       expect(existsSync(mutexPath())).toBe(false);
+    });
+
+    const mutexOf = (over: Partial<LockHolder>) =>
+      writeFileSync(
+        mutexPath(),
+        JSON.stringify({
+          pid: 999_999,
+          ...localIdentity(),
+          startTime: null,
+          token: 'someone',
+          startedAt: Date.now(),
+          ...over
+        }),
+        { mode: 0o600 }
+      );
+
+    it('clears a mutex whose owner is dead at once, however fresh it looks', () => {
+      const dead = stale();
+      mutexOf({});
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(existsSync(mutexPath())).toBe(false);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+    });
+
+    it('never clears a mutex whose owner is alive, however old: a stalled breaker keeps its turn', () => {
+      const dead = stale();
+      mutexOf({ pid: process.pid });
+      const old = new Date(Date.now() - 3_600_000);
+      utimesSync(mutexPath(), old, old);
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(existsSync(mutexPath())).toBe(true);
+      expect(existsSync(lockPath())).toBe(true);
+    });
+
+    it('treats a mutex dated far in the future as old (the clock was stepped back)', () => {
+      const dead = stale();
+      writeFileSync(mutexPath(), 'x', { mode: 0o600 });
+      const future = new Date(Date.now() + 3_600_000);
+      utimesSync(mutexPath(), future, future);
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(existsSync(mutexPath())).toBe(false);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+    });
+
+    it('stops waiting at waitMs while another breaker holds the turn, with a message that says why', async () => {
+      stale();
+      writeFileSync(mutexPath(), 'x', { mode: 0o600 }); // fresh and unowned: busy for 10 s
+      const started = Date.now();
+      await expect(
+        withLock(layout, async () => 'ran', { create: true, waitMs: 150 })
+      ).rejects.toThrow(/clearing a stale lock/);
+      expect(Date.now() - started).toBeLessThan(2000);
     });
 
     it('a waiter holds off while a break is under way, then takes the lock once it is over', async () => {

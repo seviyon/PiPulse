@@ -20,6 +20,7 @@ const gap = vi.hoisted(() => ({
   links: [] as (() => void)[],
   rename: undefined as (() => void) | undefined,
   linkError: undefined as string | undefined,
+  writeError: undefined as string | undefined,
   renameError: undefined as string | undefined,
   linkCalls: 0,
   renameCalls: 0
@@ -35,6 +36,12 @@ vi.mock('node:fs', async (importOriginal) => {
       }
       gap.links.shift()?.();
       return actual.linkSync(existing, next);
+    },
+    writeSync: (...args: Parameters<typeof actual.writeSync>) => {
+      if (gap.writeError) {
+        throw Object.assign(new Error(gap.writeError), { code: gap.writeError });
+      }
+      return actual.writeSync(...args);
     },
     renameSync: (from: string, to: string) => {
       gap.renameCalls += 1;
@@ -65,6 +72,7 @@ afterEach(() => {
   gap.links = [];
   gap.rename = undefined;
   gap.linkError = undefined;
+  gap.writeError = undefined;
   gap.renameError = undefined;
   gap.linkCalls = 0;
   gap.renameCalls = 0;
@@ -270,5 +278,15 @@ describe('breakLock, when the file system misbehaves', () => {
     gap.linkError = 'EPERM';
     gap.renameError = 'ENOENT';
     expect(() => breakLock(lockPath(), judgedA())).not.toThrow();
+  });
+});
+
+describe('breakLock, when the mutex cannot be written', () => {
+  it('leaves no empty mutex behind to block every other breaker', () => {
+    writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
+    gap.writeError = 'ENOSPC';
+    expect(() => breakLock(lockPath(), judgedA())).toThrow('ENOSPC');
+    expect(existsSync(`${lockPath()}.breaking`)).toBe(false);
+    expect(tokenOnDisk()).toBe('stale-a'); // and the lock is untouched
   });
 });

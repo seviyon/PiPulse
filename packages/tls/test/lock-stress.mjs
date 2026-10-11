@@ -13,6 +13,7 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -76,6 +77,17 @@ if (role === 'worker') {
       closeSync(fd);
     } catch {
       // a lock is there: wait for it to go
+    }
+    if (process.env.LEFTOVERS === '1') {
+      // what a breaker killed mid-break leaves: an unowned mutex, a minute old
+      try {
+        const fd = openSync(`${path}.breaking`, 'wx', 0o600);
+        closeSync(fd);
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(`${path}.breaking`, old, old);
+      } catch {
+        // one is there already
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }

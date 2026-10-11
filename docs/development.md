@@ -54,7 +54,7 @@ Stryker's own Vitest runner does not work with Vitest 5 yet (mutants never switc
 
 ## Lock stress test
 
-Breaking a stale `pipulse tls` lock is a run of syscalls, so a race in it can only show between processes. `packages/tls/test/lock-stress.mjs` starts several processes that queue on the lock and mark a critical section with an `O_EXCL` file, while another keeps putting the lock of a dead process on the path (`STALE=1`); it prints how many times two were inside at once. It is opt-in, since it runs for tens of seconds:
+Breaking a stale `pipulse tls` lock is a run of syscalls, so a race in it can only show between processes. `packages/tls/test/lock-stress.mjs` starts several processes that queue on the lock and mark a critical section with an `O_EXCL` file, while another keeps putting the lock of a dead process on the path (`STALE=1`); it prints how many times two were inside at once. It is opt-in, since it runs for tens of seconds (`LEFTOVERS=1` also plants the mutex files of breakers that died):
 
 ```bash
 npm run build

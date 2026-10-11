@@ -10,10 +10,10 @@ import { describe, expect, it } from 'vitest';
 const script = fileURLToPath(new URL('./lock-stress.mjs', import.meta.url));
 const built = existsSync(fileURLToPath(new URL('../dist/lock.js', import.meta.url)));
 
-const run = (workers: number, seconds: number, stale: boolean) => {
+const run = (workers: number, seconds: number, stale: boolean, leftovers = false) => {
   const result = spawnSync(process.execPath, [script, String(workers), String(seconds)], {
     encoding: 'utf8',
-    env: { ...process.env, STALE: stale ? '1' : '0' }
+    env: { ...process.env, STALE: stale ? '1' : '0', LEFTOVERS: leftovers ? '1' : '0' }
   });
   const match = /sections=(\d+) overlaps=(\d+) lost=(\d+)/.exec(result.stdout);
   if (!match) throw new Error(`no result: ${result.stdout}${result.stderr}`);
@@ -33,9 +33,26 @@ describe.skipIf(!process.env['PIPULSE_LOCK_STRESS'] || !built)('the lock under c
       timeout: 120_000
     },
     () => {
-      const { sections, overlaps } = run(6, 20, true);
+      const { sections, overlaps, lost } = run(6, 20, true);
       expect(sections).toBeGreaterThan(100);
       expect(overlaps).toBe(0);
+      expect(lost).toBe(0); // no holder found its lock gone at release
+    }
+  );
+
+  it(
+    '...and all but never when breakers keep dying and leaving their mutex behind',
+    {
+      timeout: 120_000
+    },
+    () => {
+      // A leftover mutex is cleared with a check and then an rm, so a breaker stalled between the two
+      // can still remove a live one's: about 1 in 10,000 critical sections here (it was 1 in 40
+      // without the mutex), so the bound is 1 in 1,000, not 0.
+      const { sections, overlaps, lost } = run(6, 20, true, true);
+      expect(sections).toBeGreaterThan(100);
+      expect(overlaps).toBeLessThanOrEqual(Math.ceil(sections / 1000));
+      expect(lost).toBeLessThanOrEqual(Math.ceil(sections / 1000));
     }
   );
 });

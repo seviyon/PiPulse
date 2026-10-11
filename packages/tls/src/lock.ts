@@ -11,7 +11,8 @@ import {
   renameSync,
   rmSync,
   statSync,
-  writeSync
+  writeSync,
+  type Stats
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -201,47 +202,94 @@ function breakJudged(path: string, judged: LockHolder | undefined): void {
   }
 }
 
+interface BreakerContext {
+  /** What this process is (default: localIdentity()). */
+  identity?: LocalIdentity;
+  /** Overrides the check that an owner in our own PID namespace is still running. */
+  alive?: (holder: LockHolder) => boolean;
+}
+
 /**
- * Takes the mutex that makes breakers take turns: a file beside the lock, made with O_EXCL.
- * Undefined when another breaker holds it. A mutex older than BREAK_MUTEX_STALE_MS was left by a
- * breaker that died, and is cleared.
+ * Whether the breaker that made the mutex is gone. An owner this process can see (same PID
+ * namespace) is judged by its pid and start time, never by age: a breaker that is merely
+ * stalled (a stopped process, a slow SD card) keeps its turn. Only an owner that can't be seen
+ * (another container, or a file that can't be read) is judged by the mutex file's age, in either
+ * direction (a clock stepped back leaves a leftover dated in the future).
  */
-function takeBreakerMutex(path: string): (() => void) | undefined {
+function mutexOwnerGone(mutex: string, seen: Stats, context: BreakerContext): boolean {
+  const me = context.identity ?? localIdentity();
+  const owner = readHolder(mutex);
+  if (owner) {
+    if (owner.bootId !== null && me.bootId !== null && owner.bootId !== me.bootId) return true;
+    const sameNamespace =
+      owner.pidNs !== null && me.pidNs !== null ? owner.pidNs === me.pidNs : owner.host === me.host;
+    if (sameNamespace) return !(context.alive ?? localHolderAlive)(owner);
+  }
+  return Math.abs(Date.now() - seen.mtimeMs) > BREAK_MUTEX_STALE_MS;
+}
+
+/** The same file as `judged`: its inode alone proves nothing (numbers are reused at once), its mtime too does. */
+const sameFile = (a: Stats, b: Stats) => a.ino === b.ino && a.mtimeMs === b.mtimeMs;
+
+/**
+ * Removes a mutex judged to be a dead breaker's, if it is still the file that was judged (the
+ * leftover may have been cleared and a live breaker may have made its own since). A window of a
+ * few microseconds remains between that check and the rm: a breaker stalled exactly there could
+ * remove a live breaker's mutex, which only matters after a breaker died (a leftover to clear in
+ * the first place). Moving the file aside and putting it back was tried and was worse under load:
+ * the mutex path is empty meanwhile, and other breakers take it.
+ */
+function clearMutex(mutex: string, judged: Stats): void {
+  try {
+    if (!sameFile(statSync(mutex), judged)) return;
+  } catch {
+    return; // gone already
+  }
+  rmSync(mutex, { force: true });
+}
+
+/**
+ * Takes the mutex that makes breakers take turns: a file beside the lock, made with O_EXCL and
+ * holding this process's identity. 'busy' when another breaker holds it, or when it just cleared
+ * one that a dead breaker left (the caller looks again after a moment, so two waiters that both
+ * found the same leftover don't each take a mutex the other's clean-up could remove).
+ */
+function takeBreakerMutex(path: string, context: BreakerContext): (() => void) | 'busy' {
   const mutex = `${path}.breaking`;
   const token = randomBytes(8).toString('hex');
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let fd: number;
+  try {
+    fd = openSync(
+      mutex,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     try {
-      const fd = openSync(
-        mutex,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o600
-      );
-      try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, token, at: Date.now() }));
-      } finally {
-        closeSync(fd);
-      }
-      return () => {
-        try {
-          if ((JSON.parse(readFileSync(mutex, 'utf8')) as { token?: string }).token === token)
-            rmSync(mutex, { force: true });
-        } catch {
-          // already gone, or somebody else's after a clean-up of a "stale" one
-        }
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    let age: number;
-    try {
-      age = Date.now() - statSync(mutex).mtimeMs;
+      const seen = statSync(mutex);
+      if (mutexOwnerGone(mutex, seen, context)) clearMutex(mutex, seen);
     } catch {
-      continue; // released meanwhile: take it
+      // released meanwhile
     }
-    if (age <= BREAK_MUTEX_STALE_MS) return undefined;
-    rmSync(mutex, { force: true }); // a breaker died holding it
+    return 'busy';
   }
-  return undefined;
+  try {
+    const me = context.identity ?? localIdentity();
+    writeSync(fd, JSON.stringify({ pid: process.pid, ...me, token, startedAt: Date.now() }));
+  } catch (error) {
+    rmSync(mutex, { force: true }); // an empty mutex would hold every other breaker off
+    throw error;
+  } finally {
+    closeSync(fd);
+  }
+  return () => {
+    try {
+      if (readHolder(mutex)?.token === token) rmSync(mutex, { force: true });
+    } catch {
+      // already gone
+    }
+  };
 }
 
 /**
@@ -251,9 +299,13 @@ function takeBreakerMutex(path: string): (() => void) | undefined {
  * waiters that all judged the same dead holder could each move a newer lock aside in turn, and a
  * process arriving in the gap would take the lock while its owner still ran.
  */
-export function breakLock(path: string, judged: LockHolder | undefined): 'done' | 'busy' {
-  const release = takeBreakerMutex(path);
-  if (!release) return 'busy';
+export function breakLock(
+  path: string,
+  judged: LockHolder | undefined,
+  context: BreakerContext = {}
+): 'done' | 'busy' {
+  const release = takeBreakerMutex(path, context);
+  if (release === 'busy') return 'busy';
   try {
     breakJudged(path, judged);
   } finally {
@@ -419,8 +471,21 @@ export async function withLock<T>(
     }
     if (stale) {
       observed = undefined;
-      // Another waiter is breaking it: give it a moment rather than spin or break it twice.
-      if (breakLock(path, holder) === 'busy') await sleep(10);
+      // Another waiter is breaking it: give it a moment rather than spin or break it twice, but
+      // not past waitMs (a leftover from a dead breaker is cleared on the way).
+      if (
+        breakLock(path, holder, {
+          identity: me,
+          ...(options.alive ? { alive: options.alive } : {})
+        }) === 'busy'
+      ) {
+        if (now() >= deadline) {
+          throw new LockError(
+            'another pipulse tls command is clearing a stale lock; try again in a moment'
+          );
+        }
+        await sleep(10);
+      }
       continue;
     }
     // While a remote holder's heartbeat is being watched, the wait is not cut short by waitMs.
