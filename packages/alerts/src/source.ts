@@ -129,6 +129,24 @@ export function createRuleSource(
     }
   };
 
+  /** The first look-back of `rule` that raw retention can't serve, as text, if any. */
+  const lookBackProblem = (rule: Rule, retention: Retention): string | undefined => {
+    try {
+      checkLookBack(rule, retention);
+      return undefined;
+    } catch (error) {
+      if (!(error instanceof AlertRulesError)) throw error;
+      return error.detail ?? error.message;
+    }
+  };
+
+  /** Tells onProblem about a distinct problem, once. */
+  const report = (line: string) => {
+    if (reported.has(line)) return;
+    reported.add(line);
+    options.onProblem?.(line);
+  };
+
   /** Validates one saved entry against the rules below it and this host. */
   const check = (raw: unknown, retention: () => Retention): Entry => {
     const entry = parseRuleEntry(raw, 'rule', 'saved');
@@ -166,11 +184,7 @@ export function createRuleSource(
         if (!(error instanceof AlertRulesError)) throw error;
         const problem = error.detail ?? error.message;
         saved.set(id, { raw, problem });
-        const line = `saved alert rule "${id}" is not in force: ${problem}`;
-        if (!reported.has(line)) {
-          reported.add(line);
-          options.onProblem?.(line);
-        }
+        report(`saved alert rule "${id}" is not in force: ${problem}`);
       }
     }
 
@@ -211,9 +225,20 @@ export function createRuleSource(
         });
         continue;
       }
+      if (!s.entry) {
+        // The saved entry can't run, so the rule below stays in force, unless raw retention
+        // can't serve its look-back (a rule disabled earlier let retention shrink): then
+        // running it would be wrong, and the startup check would refuse to start over it.
+        const unfit = lookBackProblem(rule, retention());
+        if (unfit) {
+          s.problem = `${s.problem ?? 'not valid'}; the ${kindOf(rule)} rule below it is not in force either: ${unfit}`;
+          report(`saved alert rule "${rule.id}" is not in force: ${s.problem}`);
+        } else rules.push(rule);
+        entries.push(view(rule.id, s, rule));
+        continue;
+      }
       entries.push(view(rule.id, s, rule));
-      if (!s.entry) rules.push(rule);
-      else if (!s.entry.disabled && s.entry.rule) rules.push(s.entry.rule);
+      if (!s.entry.disabled && s.entry.rule) rules.push(s.entry.rule);
     }
     for (const [id, s] of saved) {
       if (below.has(id)) continue;
