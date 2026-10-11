@@ -410,3 +410,181 @@ describe('constraints feed the issuer', () => {
     expect(() => caExtensions(scopeOf(constraints))).not.toThrow();
   });
 });
+
+describe('address and subnet edge cases', () => {
+  it('refuses IPv6 text with too few or too many groups', () => {
+    for (const bad of ['1:2:3:4:5:6:7', '1:2:3:4:5:6:7:8::', '1:2:3:4:5:6:7:8:9', '::1::', ':::']) {
+      expect(() => parseAddress(bad)).toThrow(ConstraintError);
+    }
+    expect(formatAddress(parseAddress('1:2:3:4:5:6::8'))).toBe('1:2:3:4:5:6:0:8');
+  });
+
+  it('compresses only a run of two or more zero groups', () => {
+    expect(formatAddress(parseAddress('2001:db8:1:2:3:4:5:6'))).toBe('2001:db8:1:2:3:4:5:6');
+    expect(formatAddress(parseAddress('1:0:1:1:1:1:1:1'))).toBe('1:0:1:1:1:1:1:1');
+    expect(formatAddress(parseAddress('1:0:0:1:0:0:0:1'))).toBe('1:0:0:1::1');
+  });
+
+  it.each([
+    '192.168.1.0',
+    '192.168.1.0/24/1',
+    '192.168.1.0/abc',
+    '192.168.1.0/1234',
+    '192.168.1.0/'
+  ])('refuses %j as a subnet', (text) => {
+    expect(() => parseCidr(text)).toThrow(/is not a subnet like 192\.168\.1\.0\/24/);
+  });
+
+  it('refuses a prefix longer than the address family allows', () => {
+    expect(() => parseCidr('192.168.1.0/33')).toThrow(/prefix that is too long/);
+    expect(() => parseCidr('2001:db8::/129')).toThrow(/prefix that is too long/);
+    expect(parseCidr('192.168.1.7/32').text).toBe('192.168.1.7/32');
+  });
+});
+
+describe('parseConstraints, what is refused', () => {
+  const good = { dns: ['io', 'io.local'], excludedDns: ['.io'], subnets: ['192.168.1.0/24'] };
+
+  it('needs an object', () => {
+    for (const bad of [null, [], 'x', 3, undefined])
+      expect(() => parseConstraints(bad)).toThrow('constraints must be an object');
+  });
+
+  it('needs three lists of strings', () => {
+    for (const field of ['dns', 'excludedDns', 'subnets'] as const) {
+      expect(() => parseConstraints({ ...good, [field]: 'x' })).toThrow(
+        `constraints: ${field} must be a list of strings`
+      );
+      expect(() => parseConstraints({ ...good, [field]: [1] })).toThrow(
+        `constraints: ${field} must be a list of strings`
+      );
+    }
+    expect(() => parseConstraints({ dns: ['io'], excludedDns: [] })).toThrow(/subnets must be/);
+  });
+
+  it('refuses values that are not already in canonical form', () => {
+    expect(() => parseConstraints({ ...good, dns: ['IO'] })).toThrow(/"IO" is not canonical/);
+    expect(() => parseConstraints({ ...good, excludedDns: ['io'] })).toThrow(/bad exclusion "io"/);
+    expect(() => parseConstraints({ ...good, excludedDns: ['.IO'] })).toThrow(
+      /bad exclusion "\.IO"/
+    );
+    expect(() => parseConstraints({ ...good, subnets: ['2001:DB8:1::/48'] })).toThrow(
+      /"2001:DB8:1::\/48" is not canonical/
+    );
+  });
+
+  it('needs at least one DNS name, and accepts a valid record unchanged', () => {
+    expect(() => parseConstraints({ ...good, dns: [] })).toThrow('constraints: no DNS names');
+    expect(parseConstraints(good)).toEqual(good);
+  });
+});
+
+describe('default route parsing, edge cases', () => {
+  it('skips short or malformed lines and keeps the lowest metric whatever the order', () => {
+    expect(defaultRouteInterfaces(route4('eth0\t00000000', DEFAULT_ETH0, DEFAULT_WLAN0))).toEqual({
+      v4: 'eth0'
+    });
+    expect(
+      defaultRouteInterfaces(
+        route4(),
+        ['too short', route6Default('eth0'), route6Default('wlan0', '00000900')].join('\n')
+      )
+    ).toEqual({ v6: 'eth0' });
+  });
+
+  it('ignores IPv6 routes that are not the default route', () => {
+    const notDefaultPrefix = `${ZERO} 40 ${ZERO} 00 fe800000000000000000000000000001 00000400 00000001 00000000 00450003 eth0`;
+    const notZeroDestination = `fd000000000000000000000000000000 00 ${ZERO} 00 ${ZERO} 00000400 00000001 00000000 00450003 eth0`;
+    expect(
+      defaultRouteInterfaces(route4(), [notDefaultPrefix, notZeroDestination].join('\n'))
+    ).toEqual({});
+  });
+
+  it('names nothing for an interface that does not exist or has unusable entries', () => {
+    expect(defaultRouteAddresses({ v4: 'nope', v6: 'nope' }, PI)).toEqual([]);
+    const odd = {
+      eth0: [
+        v4('10.1.1.1', '10.1.1.1/24', true),
+        v6('2001:db8::9', '2001:db8::9/64'),
+        v4('192.168.1.35', '192.168.1.35/24')
+      ],
+      eth1: [
+        v4('10.2.2.2', '10.2.2.2/24'),
+        { ...v6('2001:db8::7', '2001:db8::7/64'), internal: true }
+      ]
+    };
+    expect(defaultRouteAddresses({ v4: 'eth0' }, odd)).toEqual(['192.168.1.35']);
+    expect(defaultRouteAddresses({ v6: 'eth1' }, odd)).toEqual([]);
+  });
+
+  it('proposes no subnet when the interface is missing, has no CIDR, or a range that is refused', () => {
+    expect(candidateSubnet({ v4: 'nope' }, PI)).toBeUndefined();
+    const { cidr: _unused, ...withoutCidr } = v4('192.168.1.35', '');
+    expect(candidateSubnet({ v4: 'eth0' }, { eth0: [withoutCidr] })).toBeUndefined();
+    expect(
+      candidateSubnet({ v4: 'eth0' }, { eth0: [v4('169.254.3.4', '169.254.3.4/24')] })
+    ).toBeUndefined();
+    expect(
+      candidateSubnet({ v4: 'eth0' }, { eth0: [v4('10.0.0.5', '10.0.0.5/8')] })
+    ).toBeUndefined();
+  });
+
+  it('skips bridge entries it cannot read, and bridges with no entries', () => {
+    const interfaces = {
+      docker0: [v4('garbage', 'garbage/24'), v4('172.17.0.1', '172.17.0.1/16')],
+      veth1: undefined
+    };
+    expect(subnetWarning('172.17.0.0/16', interfaces)).toMatch(/docker0/);
+    expect(subnetWarning('192.168.9.0/24', interfaces)).toBeUndefined();
+    expect(subnetWarning('172.17.0.0/16', { veth1: undefined })).toBeUndefined();
+  });
+});
+
+describe('leafNames, edge cases', () => {
+  const lan = buildConstraints({
+    hostname: 'io',
+    names: ['io.lan'],
+    subnets: ['192.168.1.0/24']
+  }).constraints;
+
+  it('reports an address or name it cannot parse, and carries on', () => {
+    expect(
+      leafNames({ constraints: lan, hostname: 'io', names: ['a b'], addresses: ['garbage'] })
+    ).toEqual({
+      dns: ['io', 'io.local', 'localhost'],
+      ip: ['127.0.0.1', '::1'],
+      outside: ['a b', 'garbage']
+    });
+  });
+
+  it('lists nothing twice', () => {
+    expect(
+      leafNames({
+        constraints: lan,
+        hostname: 'io',
+        names: ['io', 'IO.LOCAL', '192.168.1.35'],
+        addresses: ['192.168.1.35', '127.0.0.1', '10.0.0.7', '10.0.0.7']
+      })
+    ).toEqual({
+      dns: ['io', 'io.local', 'localhost'],
+      ip: ['127.0.0.1', '::1', '192.168.1.35'],
+      outside: ['10.0.0.7']
+    });
+    expect(
+      leafNames({ constraints: lan, hostname: 'europa', names: ['europa'], addresses: [] }).outside
+    ).toEqual(['europa', 'europa.local']);
+  });
+});
+
+describe('consequenceText without exclusions', () => {
+  it('leaves out the "except below" clause when nothing is excluded', () => {
+    const { constraints } = buildConstraints(
+      { hostname: 'io', names: [], subnets: [] },
+      { excludeBelowSingleLabel: false }
+    );
+    const text = consequenceText(constraints).join('\n');
+    expect(text).toContain('DNS: io, io.local, localhost (and names below them)');
+    expect(text).not.toContain('except below');
+    expect(text).not.toContain('Accepting');
+  });
+});

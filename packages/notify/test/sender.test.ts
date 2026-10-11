@@ -325,3 +325,211 @@ describe('startNotifications', () => {
     expect(rows).toEqual([{ event: 'cleared' }]);
   });
 });
+
+/** The database, but a statement matching `pattern` throws while `armed.on` is set. */
+function breaking(pattern: RegExp) {
+  const armed = { on: false };
+  const proxy = {
+    prepare(sql: string) {
+      if (armed.on && pattern.test(sql)) throw new Error('disk I/O error');
+      return db.prepare(sql);
+    }
+  } as unknown as PiPulseDb;
+  return { db: proxy, armed };
+}
+const hook = (id: string, timeoutMs = 1000) => ({
+  id,
+  url: 'http://127.0.0.1:1/x',
+  method: 'POST' as const,
+  headers: {},
+  events: ['raised' as const, 'cleared' as const],
+  minSeverity: 'warning' as const,
+  timeoutMs
+});
+
+describe('delivery that fails in odd ways', () => {
+  it('records the text of a failure that is not an Error', async () => {
+    add('a');
+    const odd: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      deliver: () => Promise.reject('plain string')
+    };
+    expect(await run([odd])).toBe(0);
+    expect(headOf(db, 'a')).toMatchObject({ attempts: 1, lastError: 'plain string' });
+  });
+
+  it('survives its row disappearing during the attempt', async () => {
+    add('a');
+    const vanishing: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      deliver: async () => {
+        db.exec('DELETE FROM notifications');
+        throw new Error('HTTP 500');
+      }
+    };
+    expect(await run([vanishing])).toBe(0);
+    expect(headOf(db, 'a')).toBeUndefined();
+  });
+});
+
+describe('startNotifications, problems it logs instead of throwing', () => {
+  it('with no webhooks: still prunes old rows, reports nothing, and stops at once', async () => {
+    add('old');
+    markSent(db, headOf(db, 'old')!.id, now);
+    now += PRUNE_AFTER_MS + 1000;
+    const n = startNotifications(db, { webhooks: [], hostname: 'Io', metrics: [], now: () => now });
+    expect(n.status()).toEqual([]);
+    n.enqueue({} as never); // nothing to deliver: ignored
+    await n.stop();
+    expect(db.prepare('SELECT count(*) AS n FROM notifications').get()).toEqual({ n: 0 });
+  });
+
+  it('logs a failed prune, with the default logger when none is given', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { db: flaky, armed } = breaking(/DELETE FROM notifications/);
+      armed.on = true;
+      const n = startNotifications(flaky, { webhooks: [], hostname: 'Io', metrics: [] });
+      await n.stop();
+      expect(warn).toHaveBeenCalledWith('[pipulse] notification pruning failed: disk I/O error');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs a failed clock adjustment and keeps running', async () => {
+    const { db: flaky, armed } = breaking(/SET created_at = created_at \+/);
+    const logs: string[] = [];
+    const mono = 0;
+    const n = startNotifications(flaky, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      monotonic: () => mono,
+      log: (m) => logs.push(m),
+      intervalMs: 5,
+      actions: [action('a', [])]
+    });
+    armed.on = true;
+    now += 10 * 60 * 60_000; // the wall clock jumps, monotonic time does not
+    await vi.waitFor(() =>
+      expect(logs).toContain('notification clock adjustment failed: disk I/O error')
+    );
+    await n.stop();
+  });
+
+  it('words a clock jump over several queued rows in the plural', async () => {
+    add('a');
+    add('a', 'cleared');
+    const logs: string[] = [];
+    const mono = 0;
+    const n = startNotifications(db, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      monotonic: () => mono,
+      log: (m) => logs.push(m),
+      intervalMs: 5,
+      actions: [action('a', ['HTTP 500'])]
+    });
+    await vi.waitFor(() => expect(headOf(db, 'a')!.attempts).toBe(1));
+    now += 60 * 60_000;
+    await vi.waitFor(() =>
+      expect(logs.join('\n')).toMatch(
+        /clock jumped forward 3600 s; moved 2 queued notifications with it/
+      )
+    );
+    await n.stop();
+  });
+
+  it('logs a delivery loop that throws, and keeps its timer', async () => {
+    const { db: flaky, armed } = breaking(/SELECT[\s\S]*FROM notifications/);
+    const logs: string[] = [];
+    const n = startNotifications(flaky, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      log: (m) => logs.push(m),
+      intervalMs: 5,
+      actions: [action('a', [])]
+    });
+    armed.on = true;
+    await vi.waitFor(() => expect(logs).toContain('notification delivery failed: disk I/O error'));
+    await n.stop();
+  });
+
+  it('logs an event it cannot queue, without throwing into the engine', async () => {
+    const { db: flaky, armed } = breaking(/INSERT INTO notifications/);
+    const logs: string[] = [];
+    const n = startNotifications(flaky, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      log: (m) => logs.push(m),
+      intervalMs: 1e9,
+      actions: [action('a', [])]
+    });
+    const { raiseAlert } = await import('@pipulse/alerts');
+    const alert = raiseAlert(db, {
+      ruleId: 'r',
+      metric: 'm',
+      severity: 'warning',
+      message: 'M',
+      value: 1,
+      raisedAt: now
+    });
+    armed.on = true;
+    expect(() => n.enqueue({ type: 'raised', alert })).not.toThrow();
+    expect(logs).toContain('notification queueing failed: disk I/O error');
+    await n.stop();
+  });
+});
+
+describe('startNotifications, wakes while a delivery is in flight', () => {
+  it('runs another pass after a failed delivery that a wake arrived during', async () => {
+    add('a');
+    let release!: () => void;
+    let calls = 0;
+    const slow: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      deliver: () => {
+        calls++;
+        return new Promise<void>((_, reject) => {
+          release = () => reject(new Error('HTTP 500'));
+        });
+      }
+    };
+    const n = startNotifications(db, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      intervalMs: 5,
+      actions: [slow]
+    });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 40)); // several timer wakes land while busy
+    release();
+    await vi.waitFor(() => expect(headOf(db, 'a')!.attempts).toBe(1));
+    expect(calls).toBe(1); // the retry is not due yet: the extra pass sent nothing
+    await n.stop();
+  });
+
+  it('builds the webhook action itself when none is supplied', async () => {
+    const n = startNotifications(db, {
+      webhooks: [hook('a')],
+      hostname: 'Io',
+      metrics: [],
+      intervalMs: 1e9
+    });
+    expect(n.status()).toHaveLength(1);
+    await n.stop();
+  });
+});
