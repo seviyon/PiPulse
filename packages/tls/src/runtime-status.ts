@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeAtomic } from './files.js';
 import { FINGERPRINT } from './layout.js';
@@ -43,6 +43,23 @@ const MAX_STATUS_BYTES = 16 * 1024;
 class StatusFileProblem extends Error {}
 
 /**
+ * At most `max` bytes of what is behind `fd`, as text; a longer file is refused. The size is
+ * not taken from fstat: the service owns the file and can keep appending after the check, and
+ * readFileSync on a descriptor reads to the end whatever the size was.
+ */
+export function readBoundedText(fd: number, max: number, path: string): string {
+  const buffer = Buffer.alloc(max + 1);
+  let length = 0;
+  while (length < buffer.length) {
+    const n = readSync(fd, buffer, length, buffer.length - length, null);
+    if (n === 0) break;
+    length += n;
+  }
+  if (length > max) throw new StatusFileProblem(`${path} is too large`);
+  return buffer.toString('utf8', 0, length);
+}
+
+/**
  * Reads the file the service wrote, as root. The service owns the directory, so the path
  * can be swapped after the lstat above (a FIFO or /dev/zero would hang or exhaust a root
  * command): open without following links or blocking, then judge the descriptor itself.
@@ -56,8 +73,7 @@ function readText(path: string, expectUid?: number): string {
     if (expectUid !== undefined && stat.uid !== expectUid) {
       throw new StatusFileProblem(`${path} is owned by uid ${stat.uid}, not the service`);
     }
-    if (stat.size > MAX_STATUS_BYTES) throw new StatusFileProblem(`${path} is too large`);
-    return readFileSync(fd, 'utf8');
+    return readBoundedText(fd, MAX_STATUS_BYTES, path);
   } finally {
     closeSync(fd);
   }
@@ -86,10 +102,18 @@ const SHORT_TEXT = /^[\w.:-]{1,128}$/;
  * that fakes a line) may reach the screen.
  */
 export function printable(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?');
+  // Also the invisible direction controls (U+200B-200F, U+202A-202E, U+2066-2069, U+061C): in a
+  // terminal that applies bidi they reorder the line, so a value could read as another.
+  const unsafe =
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+  const clean = text.replace(unsafe, '?');
   return clean.length > MAX_TEXT ? `${clean.slice(0, MAX_TEXT)}…` : clean;
 }
+
+/** Whole milliseconds that are a real date (±8.64e15): anything else would throw when printed. */
+const isDateMs = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && Math.abs(value) <= 8.64e15;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -110,8 +134,7 @@ function parseRuntimeStatus(content: string): RuntimeStatus {
   if (typeof startTime !== 'string' || !SHORT_TEXT.test(startTime))
     throw new Error('unexpected content');
   if (typeof bootId !== 'string' || !SHORT_TEXT.test(bootId)) throw new Error('unexpected content');
-  if (typeof writtenAt !== 'number' || !Number.isFinite(writtenAt))
-    throw new Error('unexpected content');
+  if (!isDateMs(writtenAt)) throw new Error('unexpected content');
   let certificate: RuntimeStatus['certificate'] = null;
   if (cert !== null) {
     if (!isObject(cert)) throw new Error('unexpected content');
@@ -122,13 +145,11 @@ function parseRuntimeStatus(content: string): RuntimeStatus {
       throw new Error('unexpected content');
     const klass = CLASSES.find((c) => c === cert['class']);
     if (!klass) throw new Error('unexpected content');
-    if (typeof notAfter !== 'number' || !Number.isFinite(notAfter))
-      throw new Error('unexpected content');
+    if (!isDateMs(notAfter)) throw new Error('unexpected content');
     if (!isObject(reload) || (reload['state'] !== 'ok' && reload['state'] !== 'failing'))
       throw new Error('unexpected content');
     const { lastAttempt, lastError } = reload;
-    if (lastAttempt !== null && (typeof lastAttempt !== 'number' || !Number.isFinite(lastAttempt)))
-      throw new Error('unexpected content');
+    if (lastAttempt !== null && !isDateMs(lastAttempt)) throw new Error('unexpected content');
     if (lastError !== null && typeof lastError !== 'string') throw new Error('unexpected content');
     certificate = {
       source,

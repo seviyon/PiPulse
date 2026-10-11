@@ -4,7 +4,7 @@ import { request } from 'node:https';
 import { isIP } from 'node:net';
 import { checkServerIdentity } from 'node:tls';
 import { pathToFileURL } from 'node:url';
-import { RELEASE_DEFAULT, readTlsConfig } from './config.js';
+import { RELEASE_DEFAULT, listenPort, readTlsConfig } from './config.js';
 import { parseSans } from './inspect.js';
 import { parseBundle, parseCertificateFile } from './pem.js';
 
@@ -80,6 +80,29 @@ export function healthTarget(
   return { connect: '127.0.0.1', identity };
 }
 
+/** The response body as JSON, read in full only up to MAX_HEALTH_BODY_BYTES (else it throws). */
+async function readSmallJson(res: Response): Promise<unknown> {
+  const reader = res.body?.getReader();
+  if (!reader) return undefined;
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_HEALTH_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error('health response is too large');
+    }
+    chunks.push(value);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The one check the installer, the Docker HEALTHCHECK and `pipulse tls enable`
  * share: resolves the mode as the server does, then asks /api/health. Over
@@ -101,16 +124,22 @@ export async function checkHealth(
   } catch (error) {
     return { code: 1, message: messageOf(error) };
   }
-  const port = Number(env['PIPULSE_PORT']?.trim() || 8889);
+  let port: number;
+  try {
+    port = listenPort(env);
+  } catch (error) {
+    return { code: 1, message: messageOf(error) };
+  }
   const timeoutMs = options.timeoutMs ?? 4000;
 
   if (config.mode === 'http' || !config.source) {
     const { connect: host } = healthTarget(env, { dns: [], ip: [] }, []);
     const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}/api/health`;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-      const body: unknown = await res.json().catch(() => undefined);
-      return res.ok && healthy(body)
+      // A redirect is not an answer from PiPulse, and only a small JSON body is expected.
+      const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+      const body = await readSmallJson(res);
+      return res.status === 200 && healthy(body)
         ? { code: 0, message: 'healthy' }
         : { code: 1, message: `unhealthy (HTTP ${res.status})` };
     } catch (error) {
@@ -168,6 +197,9 @@ export async function checkHealth(
             : checkServerIdentity(identity, cert),
         headers: { host: identity.includes(':') ? `[${identity}]:${port}` : `${identity}:${port}` },
         timeout: timeoutMs,
+        // Never inherited from NODE_TLS_REJECT_UNAUTHORIZED: the Docker HEALTHCHECK and a root
+        // shell see the operator's environment, and "0" there would turn every check off.
+        rejectUnauthorized: true,
         ...(ca !== undefined ? { ca } : {})
       },
       (res) => {

@@ -1,8 +1,17 @@
-import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   processIdentity,
+  readBoundedText,
   readRuntimeStatus,
   writeRuntimeStatus,
   type RuntimeStatus
@@ -123,7 +132,13 @@ describe('readRuntimeStatus', () => {
       ['an unknown reload state', (c: Doc) => (c.certificate.reload.state = 'great')],
       ['a non-string lastError', (c: Doc) => (c.certificate.reload.lastError = { a: 1 })],
       ['a non-numeric lastAttempt', (c: Doc) => (c.certificate.reload.lastAttempt = 'x')],
-      ['a bootId with a newline', (c: Doc) => (c.bootId = 'a\nb')]
+      ['a bootId with a newline', (c: Doc) => (c.bootId = 'a\nb')],
+      // Finite, but not a date: printing it would throw in the root command.
+      ['a notAfter beyond the range of dates', (c: Doc) => (c.certificate.notAfter = 1e300)],
+      ['a negative notAfter beyond the range', (c: Doc) => (c.certificate.notAfter = -1e300)],
+      ['a lastAttempt beyond the range', (c: Doc) => (c.certificate.reload.lastAttempt = 1e300)],
+      ['a fractional notAfter', (c: Doc) => (c.certificate.notAfter = 1.5)],
+      ['a writtenAt beyond the range', (c: Doc) => (c.writtenAt = 8.64e15 + 1)]
     ])('rejects %s', (_name, mutate) => {
       expect(read(mutate)).toMatchObject({ state: 'status-file-corrupt' });
     });
@@ -262,5 +277,47 @@ describe('readRuntimeStatus, documents that are valid', () => {
     expect(read()).toMatchObject({ state: 'status-file-corrupt' });
     put({ ...status, certificate: { ...status.certificate, fingerprint: undefined } });
     expect(read()).toMatchObject({ state: 'status-file-corrupt' });
+  });
+});
+
+describe('readRuntimeStatus, review fixes', () => {
+  it('prints no terminal-bidi override from lastError (they reorder the line on screen)', () => {
+    const doc = JSON.parse(JSON.stringify(status));
+    doc.certificate.reload = {
+      state: 'failing',
+      lastAttempt: 1,
+      lastError: 'ok\u202Eevil\u2066x\u2069y\u200Ez'
+    };
+    writeFileSync(join(dir, 'tls-status.json'), JSON.stringify(doc), { mode: 0o640 });
+    const view = readRuntimeStatus(dir, running);
+    expect(view.state).toBe('running');
+    if (view.state !== 'running') return;
+    expect(view.status.certificate!.reload.lastError).toBe('ok?evil?x?y?z');
+  });
+
+  it('accepts the largest date JavaScript can represent', () => {
+    const doc = JSON.parse(JSON.stringify(status));
+    doc.certificate.notAfter = 8.64e15;
+    writeFileSync(join(dir, 'tls-status.json'), JSON.stringify(doc), { mode: 0o640 });
+    expect(readRuntimeStatus(dir, running).state).toBe('running');
+  });
+
+  it('reads at most the cap from a descriptor, whatever its size was when it was measured', () => {
+    // The service owns the file and can append between the size check and the read.
+    const path = join(dir, 'grown');
+    writeFileSync(path, 'x'.repeat(40 * 1024));
+    const fd = openSync(path, 'r');
+    try {
+      expect(() => readBoundedText(fd, 16 * 1024, path)).toThrow(/is too large/);
+    } finally {
+      closeSync(fd);
+    }
+    writeFileSync(path, 'x'.repeat(16 * 1024)); // exactly the cap is still a status file
+    const exact = openSync(path, 'r');
+    try {
+      expect(readBoundedText(exact, 16 * 1024, path)).toHaveLength(16 * 1024);
+    } finally {
+      closeSync(exact);
+    }
   });
 });
