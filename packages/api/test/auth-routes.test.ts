@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
-import { hashPassword, parsePasswordHash, type PasswordHash } from '../src/auth.js';
+import { createSessions, hashPassword, parsePasswordHash, type PasswordHash } from '../src/auth.js';
 import { buildServer, createLiveFeed, type AuthOptions } from '../src/index.js';
 
 let passwordHash: PasswordHash;
@@ -22,8 +22,12 @@ afterEach(async () => {
   db.close();
 });
 
-function server(auth: AuthOptions): FastifyInstance {
-  app = buildServer(db, { auth: { failureDelayMs: 0, ...auth }, live: createLiveFeed() });
+function server(auth: AuthOptions, extra: { heartbeatMs?: number } = {}): FastifyInstance {
+  app = buildServer(db, {
+    auth: { failureDelayMs: 0, ...auth },
+    live: createLiveFeed(),
+    ...extra
+  });
   return app;
 }
 
@@ -224,6 +228,61 @@ describe('/api/live with read protection', () => {
       inside.once('message', (data) => resolve(String(data)))
     );
     expect(JSON.parse(first).type).toBe('snapshot');
+    inside.terminate();
+  });
+});
+
+describe('the session cookie follows the session', () => {
+  const DAY = 86_400_000;
+  it('is sent again once a day of use, so a daily user is not signed out on day seven', async () => {
+    let now = 1_000_000;
+    const api = server({ passwordHash, sessions: createSessions({ now: () => now }) });
+    const cookie = await signIn(api);
+    const id = cookie.split('=')[1];
+    const get = () => api.inject({ url: '/api/session', headers: { cookie } });
+    expect((await get()).headers['set-cookie']).toBeUndefined();
+    now += DAY / 2;
+    expect((await get()).headers['set-cookie']).toBeUndefined();
+    now += DAY / 2;
+    const again = await get();
+    expect(again.headers['set-cookie']).toMatch(
+      new RegExp(`^pipulse_session=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`)
+    );
+    expect((await get()).headers['set-cookie']).toBeUndefined();
+  });
+
+  it('is not sent to a request without a live session, nor with the sign-out answer', async () => {
+    const api = server({ passwordHash });
+    expect((await api.inject({ url: '/api/session' })).headers['set-cookie']).toBeUndefined();
+    const cookie = await signIn(api);
+    const out = await api.inject({ method: 'POST', url: '/api/logout', headers: { cookie } });
+    expect([out.headers['set-cookie']].flat()).toHaveLength(1);
+    expect(String(out.headers['set-cookie'])).toMatch(/Max-Age=0/);
+  });
+});
+
+describe('/api/live after sign-out', () => {
+  it('closes a socket whose session ended, instead of streaming to it until it reconnects', async () => {
+    const api = server({ passwordHash, protectReads: true }, { heartbeatMs: 30 });
+    const cookie = await signIn(api);
+    await api.listen({ port: 0, host: '127.0.0.1' });
+    const url = `ws://127.0.0.1:${(api.server.address() as AddressInfo).port}/api/live`;
+    const inside = new WebSocket(url, { headers: { cookie } });
+    await new Promise<void>((resolve) => inside.once('message', () => resolve()));
+    const closed = new Promise<number>((resolve) => inside.on('close', (code) => resolve(code)));
+    await api.inject({ method: 'POST', url: '/api/logout', headers: { cookie } });
+    expect(await closed).toBe(4401);
+  });
+
+  it('keeps a socket whose session is still live', async () => {
+    const api = server({ passwordHash, protectReads: true }, { heartbeatMs: 30 });
+    const cookie = await signIn(api);
+    await api.listen({ port: 0, host: '127.0.0.1' });
+    const url = `ws://127.0.0.1:${(api.server.address() as AddressInfo).port}/api/live`;
+    const inside = new WebSocket(url, { headers: { cookie } });
+    await new Promise<void>((resolve) => inside.once('message', () => resolve()));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(inside.readyState).toBe(WebSocket.OPEN);
     inside.terminate();
   });
 });

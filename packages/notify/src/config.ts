@@ -105,6 +105,8 @@ function parseWebhook(raw: unknown, where: string): WebhookConfig {
   }
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:')
     fail('url must be an http:// or https:// URL');
+  if (parsedUrl.username !== '' || parsedUrl.password !== '')
+    fail('url must not contain a username or password: use an Authorization header instead');
   if (parsedUrl.port !== '' && BLOCKED_PORTS.includes(Number(parsedUrl.port)))
     fail(`url uses port ${parsedUrl.port}, which fetch refuses to connect to`);
 

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
   clearedSessionCookie,
   createLoginLimiter,
+  clientKey,
   createSessions,
   readCookie,
   SESSION_COOKIE,
@@ -73,6 +74,13 @@ export function registerAuth(
   app.addHook('onRequest', async (request, reply) => {
     const path = requestPath(request);
     if (!path.startsWith('/api/')) return;
+    // The session slides with use, so its cookie is sent again now and then (login and logout
+    // set their own).
+    if (path !== '/api/login' && path !== '/api/logout') {
+      const id = sessionId(request);
+      if (sessions.valid(id) && sessions.cookieDue(id))
+        reply.header('set-cookie', sessionCookie(id!, secure(request)));
+    }
     if (request.method === 'GET' || request.method === 'HEAD') {
       // The WebSocket handler closes an unauthorised socket with 4401 itself.
       if (!protectReads || PUBLIC_READS.has(path) || path === '/api/live') return;
@@ -99,15 +107,16 @@ export function registerAuth(
     '/api/login',
     { schema: { body: loginSchema } },
     async (request, reply) => {
-      if (limiter.blocked(request.ip) || checking.has(request.ip)) {
+      const who = clientKey(request.ip);
+      if (limiter.blocked(who) || checking.has(who)) {
         return reply
           .status(429)
           .send({ error: 'too many sign-in attempts; try again in 15 minutes' });
       }
       // Count the attempt before the slow check, so parallel guesses can't
       // all get past the limit while scrypt runs; a success clears it.
-      limiter.fail(request.ip);
-      checking.add(request.ip);
+      limiter.fail(who);
+      checking.add(who);
       try {
         // The hook has already answered 403 when there is no password.
         if (!(await verifyPassword(request.body.password, passwordHash!))) {
@@ -115,9 +124,9 @@ export function registerAuth(
           return reply.status(401).send({ error: 'sign-in failed' });
         }
       } finally {
-        checking.delete(request.ip);
+        checking.delete(who);
       }
-      limiter.succeed(request.ip);
+      limiter.succeed(who);
       reply.header('set-cookie', sessionCookie(sessions.create(), secure(request)));
       return { signedIn: true };
     }

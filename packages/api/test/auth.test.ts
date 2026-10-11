@@ -6,6 +6,7 @@ import {
   AuthConfigError,
   checkNewPassword,
   clearedSessionCookie,
+  clientKey,
   createLoginLimiter,
   createSessions,
   hashPassword,
@@ -54,6 +55,26 @@ describe('password hashes', () => {
     expect(() => parsePasswordHash('scrypt$1000$8$1$AAAA$AAAA')).toThrow(AuthConfigError);
   });
 
+  it('refuses scrypt parameters that exceed the memory limit when the file is read, not at every sign-in', () => {
+    // Node's scrypt throws "memory limit exceeded" for these: the service would start and then
+    // answer every sign-in with a 500 carrying OpenSSL's text.
+    const tail = `${Buffer.alloc(16, 1).toString('base64')}$${Buffer.alloc(32, 2).toString('base64')}`;
+    for (const [N, r, p] of [
+      [2 ** 20, 8, 1],
+      [2 ** 15, 8, 1_000_000],
+      [2 ** 15, 1 << 20, 1],
+      [2 ** 18, 8, 1]
+    ]) {
+      expect(() => parsePasswordHash(`scrypt$${N}$${r}$${p}$${tail}`)).toThrow(
+        /is not a PiPulse password hash|too much memory/
+      );
+    }
+    expect(() => parsePasswordHash(`scrypt$${2 ** 20}$8$1$${tail}`)).toThrow(/too much memory/);
+    // What hash-password makes today is fine, and so is a cheaper file from tests or older runs.
+    expect(parsePasswordHash(`scrypt$${2 ** 15}$8$1$${tail}`).N).toBe(2 ** 15);
+    expect(parsePasswordHash(`scrypt$${2 ** 14}$8$4$${tail}`).p).toBe(4);
+  });
+
   it('refuses an empty or mismatched new password', () => {
     expect(checkNewPassword('', '')).toMatch(/empty/);
     expect(checkNewPassword('a', 'b')).toMatch(/did not match/);
@@ -83,6 +104,40 @@ describe('sessions', () => {
     const id = sessions.create();
     sessions.end(id);
     expect(sessions.valid(id)).toBe(false);
+  });
+});
+
+describe('sessions, the cookie that carries them', () => {
+  it('asks for the cookie to be sent again once a day, so it lives as long as the session', () => {
+    let now = 0;
+    const sessions = createSessions({ now: () => now });
+    const id = sessions.create();
+    expect(sessions.cookieDue(id)).toBe(false); // it was just sent with the sign-in
+    now = DAY - 1;
+    expect(sessions.cookieDue(id)).toBe(false);
+    now = DAY;
+    expect(sessions.cookieDue(id)).toBe(true);
+    expect(sessions.cookieDue(id)).toBe(false); // once per day, not on every request
+    now = 2 * DAY;
+    expect(sessions.cookieDue(id)).toBe(true);
+    expect(sessions.cookieDue('forged')).toBe(false);
+    expect(sessions.cookieDue(undefined)).toBe(false);
+  });
+});
+
+describe('clientKey', () => {
+  it('is the address for IPv4, and the /64 for IPv6, so one host cannot rotate addresses', () => {
+    expect(clientKey('10.0.0.2')).toBe('10.0.0.2');
+    expect(clientKey('::ffff:10.0.0.2')).toBe('10.0.0.2');
+    expect(clientKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe(clientKey('2001:db8:1:2::1'));
+    expect(clientKey('2001:DB8:1:2::1')).toBe(clientKey('2001:db8:1:2:0:0:0:1'));
+    expect(clientKey('2001:db8:1:3::1')).not.toBe(clientKey('2001:db8:1:2::1'));
+    expect(clientKey('fe80::1%eth0')).toBe(clientKey('fe80::2'));
+    expect(clientKey('::1')).toBe('0:0:0:0::/64');
+  });
+
+  it('leaves what is not an address alone', () => {
+    expect(clientKey('unknown')).toBe('unknown');
   });
 });
 
@@ -150,5 +205,17 @@ describe('readAuthConfig', () => {
     expect(() => readAuthConfig({ PIPULSE_PROTECT_READS: 'true' })).toThrow(
       /^PIPULSE_PROTECT_READS=true needs PIPULSE_ADMIN_PASSWORD_HASH_FILE/
     );
+  });
+});
+
+describe('createLoginLimiter, memory', () => {
+  it('forgets addresses whose failures have all aged out, so the map cannot grow forever', () => {
+    let now = 0;
+    const limiter = createLoginLimiter({ now: () => now });
+    for (let i = 0; i < 1000; i++) limiter.fail(`10.1.${i >> 8}.${i & 255}`);
+    expect(limiter.tracked()).toBe(1000);
+    now = 15 * 60_000 + 1;
+    limiter.fail('10.9.9.9');
+    expect(limiter.tracked()).toBe(1);
   });
 });
