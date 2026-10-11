@@ -99,6 +99,24 @@ describe('parseNotifyConfig', () => {
     );
   });
 
+  it('refuses a URL with a username or password, which fetch refuses to send to', () => {
+    // Node's fetch throws "Request cannot be constructed from a URL that includes credentials":
+    // every delivery would fail for 6 hours with no useful reason in the log.
+    for (const url of [
+      'https://user:pass@apprise.lan/notify',
+      'https://user@apprise.lan/notify',
+      'https://:pass@apprise.lan/notify'
+    ]) {
+      fails(
+        [{ id: 'a', url }],
+        /url must not contain a username or password: use an Authorization header/
+      );
+    }
+    expect(parse([{ id: 'a', url: 'https://apprise.lan/notify@x?u=p' }])[0]!.url).toBe(
+      'https://apprise.lan/notify@x?u=p'
+    );
+  });
+
   it('lists only ports that fetch really blocks', async () => {
     for (const port of BLOCKED_PORTS) {
       const error = await fetch(`http://127.0.0.1:${port}/`).catch((e: unknown) => e);

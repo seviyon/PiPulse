@@ -11,7 +11,7 @@ import {
   verificationFailure,
   VERIFY_CODES
 } from '../src/health-check.js';
-import { REFUSE_LINE } from '../src/config.js';
+import { listenHost, listenPort, REFUSE_LINE } from '../src/config.js';
 import { issueCa, issueLeaf } from '../src/issue.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
@@ -358,5 +358,120 @@ describe('verificationFailure', () => {
     expect(verificationFailure({ code: 'UNSPECIFIED', message: 'socket hang up' })).toBe(false);
     expect(verificationFailure({ code: 'CERT_HAS_EXPIRED', message: '' })).toBe(true);
     expect(verificationFailure({ code: 'ECONNREFUSED', message: '' })).toBe(false);
+  });
+});
+
+describe('review fixes: the check never relaxes verification', () => {
+  const setting = 'NODE_TLS_REJECT_UNAUTHORIZED';
+  const before = process.env[setting];
+  afterEach(() => {
+    if (before === undefined) delete process.env[setting];
+    else process.env[setting] = before;
+  });
+
+  it('still verifies when the environment says not to (Docker HEALTHCHECK inherits it)', async () => {
+    process.env[setting] = '0';
+    // A certificate from an unrelated CA, and a name the certificate does not carry.
+    const port = await listen(httpsServer(200, OK, 'other-leaf'));
+    const result = await checkHealth(tlsEnv(port, { PIPULSE_TLS_NAMES: 'wrong.example' }), {
+      readState: noState
+    });
+    expect(result.code).toBe(2);
+    expect(result.message).toMatch(/^TLS verification failed: /);
+  });
+
+  it('still passes a good certificate with the same environment', async () => {
+    process.env[setting] = '0';
+    const port = await listen(httpsServer(200, OK));
+    expect((await checkHealth(tlsEnv(port), { readState: noState })).code).toBe(0);
+  });
+});
+
+describe('review fixes: the plain-HTTP check is as strict as the HTTPS one', () => {
+  const httpEnv = (port: number) => ({ PIPULSE_TLS: 'off', PIPULSE_PORT: String(port) });
+  const respond = (status: number, body: string, headers: Record<string, string> = {}) =>
+    createHttpServer((_q, res) => {
+      res.writeHead(status, { 'content-type': 'application/json', ...headers });
+      res.end(body);
+    });
+
+  it('passes a 200 with a healthy body', async () => {
+    const port = await listen(respond(200, JSON.stringify(OK)));
+    expect((await checkHealth(httpEnv(port), { readState: noState })).code).toBe(0);
+  });
+
+  it('does not follow a redirect to something that looks healthy', async () => {
+    const target = respond(200, JSON.stringify(OK));
+    const targetPort = await listen(target);
+    const other = respond(302, '', { location: `http://127.0.0.1:${targetPort}/api/health` });
+    await new Promise<void>((resolve) => other.listen(0, '127.0.0.1', resolve));
+    const port = (other.address() as AddressInfo).port;
+    try {
+      const result = await checkHealth(httpEnv(port), { readState: noState });
+      expect(result.code).toBe(1);
+      expect(result.message).toContain('302');
+    } finally {
+      await new Promise<void>((resolve) => other.close(() => resolve()));
+    }
+  });
+
+  it('wants exactly 200, as over HTTPS (a 202 with a healthy body is not PiPulse)', async () => {
+    const port = await listen(respond(202, JSON.stringify(OK)));
+    const result = await checkHealth(httpEnv(port), { readState: noState });
+    expect(result.code).toBe(1);
+    expect(result.message).toContain('202');
+  });
+
+  it('is not healthy for an answer with no body, or a body that is not JSON', async () => {
+    const empty = createHttpServer((_q, res) => {
+      res.statusCode = 204;
+      res.end();
+    });
+    const emptyPort = await listen(empty);
+    const none = await checkHealth(httpEnv(emptyPort), { readState: noState });
+    expect(none).toEqual({ code: 1, message: 'unhealthy (HTTP 204)' });
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    const port = await listen(respond(200, 'not json'));
+    expect(await checkHealth(httpEnv(port), { readState: noState })).toEqual({
+      code: 1,
+      message: 'unhealthy (HTTP 200)'
+    });
+  });
+
+  it('says what is wrong with PIPULSE_PORT instead of trying a port', async () => {
+    const result = await checkHealth(
+      { PIPULSE_TLS: 'off', PIPULSE_PORT: '80x' },
+      { readState: noState }
+    );
+    expect(result.code).toBe(1);
+    expect(result.message).toMatch(/^PIPULSE_PORT must be a port number/);
+  });
+
+  it('refuses an oversized body instead of reading it all', async () => {
+    const port = await listen(respond(200, 'x'.repeat(65 * 1024)));
+    const result = await checkHealth(httpEnv(port), { readState: noState });
+    expect(result.code).toBe(1);
+    expect(result.message).toContain('too large');
+  });
+});
+
+describe('review fixes: one reading of the port and the host', () => {
+  it('an empty PIPULSE_PORT is the default port for the check, as for the server', () => {
+    expect(listenPort({})).toBe(8889);
+    expect(listenPort({ PIPULSE_PORT: '' })).toBe(8889);
+    expect(listenPort({ PIPULSE_PORT: '  ' })).toBe(8889);
+    expect(listenPort({ PIPULSE_PORT: ' 9000 ' })).toBe(9000);
+    expect(listenPort({ PIPULSE_PORT: '0' })).toBe(0);
+  });
+
+  it.each(['abc', '70000', '-1', '80.5', '1e3', '0x50'])('refuses PIPULSE_PORT=%s', (port) => {
+    expect(() => listenPort({ PIPULSE_PORT: port })).toThrow(/PIPULSE_PORT/);
+  });
+
+  it('an empty or blank PIPULSE_HOST is every address, and a host is trimmed', () => {
+    expect(listenHost({})).toBe('0.0.0.0');
+    expect(listenHost({ PIPULSE_HOST: '' })).toBe('0.0.0.0');
+    expect(listenHost({ PIPULSE_HOST: '  ' })).toBe('0.0.0.0');
+    expect(listenHost({ PIPULSE_HOST: ' 127.0.0.1 ' })).toBe('127.0.0.1');
   });
 });

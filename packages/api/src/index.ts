@@ -148,6 +148,8 @@ export interface ServerOptions {
   notify?: { status(): WebhookStatus[] };
 }
 
+/** The largest frame a /api/live client may send; the dashboard sends none. */
+const MAX_CLIENT_FRAME_BYTES = 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 
@@ -323,7 +325,9 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     const maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
 
-    void app.register(websocket);
+    // Clients only listen: any frame beyond a few bytes is refused (close code 1009) instead of
+    // being buffered, as ws's default of 100 MiB would, once per connection.
+    void app.register(websocket, { options: { maxPayload: MAX_CLIENT_FRAME_BYTES } });
     // The plugin's own preClose sends each client a graceful close, and the
     // HTTP server then waits for the handshake — up to ws's 30 s timeout for
     // a client that never answers. Terminate instead so shutdown is prompt.
@@ -379,6 +383,11 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
             alive = true;
           });
           const heartbeat = setInterval(() => {
+            // A tab that signed out, or whose session ran out, must not keep receiving data.
+            if (auth.protectReads && !auth.signedIn(request)) {
+              socket.close(4401, 'sign in required');
+              return;
+            }
             if (!alive) {
               socket.terminate();
               return;
