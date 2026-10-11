@@ -71,7 +71,7 @@ export function startReloader(options: {
   let pending: string | undefined;
   const state: ReloadState = { state: 'ok', lastAttempt: null, lastError: null };
   let lastLogged: { message: string; at: number } | undefined;
-  let lastAttemptMono: number | undefined;
+  let lastAttemptMono = -RETRY_MS;
 
   const fail = (message: string) => {
     state.state = 'failing';
@@ -148,8 +148,7 @@ export function startReloader(options: {
       pending = undefined;
       // A refusal can be about time (not yet valid, the clock not synced yet)
       // and stop applying without the files changing: try them again now and then.
-      if (state.state === 'failing' && mono() - (lastAttemptMono ?? -RETRY_MS) >= RETRY_MS)
-        attempt();
+      if (state.state === 'failing' && mono() - lastAttemptMono >= RETRY_MS) attempt();
       return;
     }
     if (signature !== pending) {

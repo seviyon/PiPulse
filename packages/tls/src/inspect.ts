@@ -27,8 +27,6 @@ export const CLASS_RANK: Record<ChainClass, number> = {
 const DAY_MS = 86_400_000;
 const SERVER_AUTH = '1.3.6.1.5.5.7.3.1';
 const ANY_PURPOSE = '2.5.29.37.0';
-/** Anchors climbed from a configured intermediate to its root before giving up. */
-const MAX_ANCHOR_DEPTH = 8;
 export const EXPIRING_SOON_MS = { operator: 14 * DAY_MS, generated: 30 * DAY_MS } as const;
 
 /** Material that must never be served: startup stops, a reload keeps the old context. */
@@ -204,12 +202,10 @@ export function inspectMaterial(input: {
     climbed.push(root);
     if (!served.has(root.fingerprint256)) degrade('degraded-incomplete-chain', 'incomplete-chain');
     const below = root;
-    root =
-      climbed.length > MAX_ANCHOR_DEPTH
-        ? undefined
-        : anchors.find(
-            (a) => !climbed.some((c) => c.fingerprint256 === a.fingerprint256) && issuedBy(below, a)
-          );
+    // Each anchor is climbed at most once, so this ends even when the anchors loop.
+    root = anchors.find(
+      (a) => !climbed.some((c) => c.fingerprint256 === a.fingerprint256) && issuedBy(below, a)
+    );
     if (!root) degrade('degraded-incomplete-chain', 'incomplete-chain');
   }
 

@@ -509,6 +509,20 @@ describe('review fixes: intermediates and anchors', () => {
   });
 });
 
+describe('review fixes: a generated CA that is itself an intermediate', () => {
+  it('reports the anchor it stopped at, and an incomplete chain', () => {
+    const cert = inspectMaterial({
+      source: 'generated',
+      keyPem: fixture('leaf.key'),
+      certPems: [leaf, intermediate],
+      trust: { anchors: [intermediate], system: false },
+      names: []
+    });
+    expect(cert.class).toBe('degraded-incomplete-chain');
+    expect(cert.caFingerprint).toBe(new X509Certificate(intermediate).fingerprint256);
+  });
+});
+
 describe('review fixes: what a server certificate must allow', () => {
   const selfSigned = (extra: string[]) => {
     const tmp = tempDir();
