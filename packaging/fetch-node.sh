@@ -8,8 +8,14 @@ here=$(cd "$(dirname "$0")" && pwd)
 arch=$1 dest=$2
 version=$(PIPULSE_NODE_VERSIONS="$here/node-versions.json" node_version "$arch")
 [ -n "$version" ] || die "no Node version pinned for $arch"
-mirror=${PIPULSE_NODE_MIRROR:-https://nodejs.org/dist}
-keyring=${PIPULSE_NODE_KEYRING:-$here/node-keys/pubring.kbx}
+mirror=https://nodejs.org/dist
+keyring=$here/node-keys/pubring.kbx
+# Test hooks count only with PIPULSE_TEST_HOOKS=1: a stale export must not point root at another
+# mirror or trust another key.
+if [ "${PIPULSE_TEST_HOOKS:-}" = 1 ]; then
+  mirror=${PIPULSE_NODE_MIRROR:-$mirror}
+  keyring=${PIPULSE_NODE_KEYRING:-$keyring}
+fi
 file="node-v$version-linux-$(node_dist "$arch").tar.xz"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -23,7 +29,7 @@ curl -fsSL -o "$work/$file" "$mirror/v$version/$file"
 mkdir -p "$dest/node"
 # PiPulse needs only the node binary (its dependencies ship installed): leave out
 # npm, corepack, headers and docs.
-tar -xJf "$work/$file" -C "$work"
+tar --no-same-owner --no-same-permissions -xJf "$work/$file" -C "$work"
 mkdir -p "$dest/node/bin"
 cp "$work/${file%.tar.xz}/bin/node" "$dest/node/bin/node"
 cp "$work/${file%.tar.xz}/LICENSE" "$dest/node/LICENSE"

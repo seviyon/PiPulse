@@ -8,8 +8,48 @@
 # Everything is inside main(), called on the last line, so a truncated download runs nothing.
 set -eu
 REPO=seviyon/PiPulse
-# PIPULSE_APT_URL is for tests only (a local repository).
-APT_URL=${PIPULSE_APT_URL:-https://seviyon.github.io/PiPulse/apt}
+
+# Test hooks. They are ignored unless PIPULSE_TEST_HOOKS=1: a stale export under `sudo -E`, or in
+# a root shell, must never make this script run a command of the environment's choosing as root,
+# or trust another repository, key or release.
+hooks() { [ "${PIPULSE_TEST_HOOKS:-}" = 1 ]; }
+# hook_value NAME DEFAULT — the hook's value when hooks are on and it is set, else DEFAULT.
+hook_value() {
+  if hooks; then
+    case $1 in
+      PIPULSE_APT_URL) [ -z "${PIPULSE_APT_URL:-}" ] || { printf '%s' "$PIPULSE_APT_URL"; return; } ;;
+      PIPULSE_RELEASES_URL) [ -z "${PIPULSE_RELEASES_URL:-}" ] || { printf '%s' "$PIPULSE_RELEASES_URL"; return; } ;;
+      PIPULSE_HEALTH_URL) [ -z "${PIPULSE_HEALTH_URL:-}" ] || { printf '%s' "$PIPULSE_HEALTH_URL"; return; } ;;
+      PIPULSE_RESTART_CMD) [ -z "${PIPULSE_RESTART_CMD:-}" ] || { printf '%s' "$PIPULSE_RESTART_CMD"; return; } ;;
+      PIPULSE_STOP_CMD) [ -z "${PIPULSE_STOP_CMD:-}" ] || { printf '%s' "$PIPULSE_STOP_CMD"; return; } ;;
+      PIPULSE_FREE_KB) [ -z "${PIPULSE_FREE_KB:-}" ] || { printf '%s' "$PIPULSE_FREE_KB"; return; } ;;
+      PIPULSE_APT_KEY_FILE) [ -z "${PIPULSE_APT_KEY_FILE:-}" ] || { printf '%s' "$PIPULSE_APT_KEY_FILE"; return; } ;;
+    esac
+  fi
+  printf '%s' "$2"
+}
+APT_URL=$(hook_value PIPULSE_APT_URL https://seviyon.github.io/PiPulse/apt)
+RELEASES_URL=$(hook_value PIPULSE_RELEASES_URL "https://github.com/$REPO/releases/download")
+
+# The public key that signs the apt repository and SHA256SUMS, as a base64 OpenPGP keyring. A
+# release stamps it in (packaging/stamp-installer.sh, from packaging/apt-key.gpg, which is
+# reviewed like any other file); this copy is trusted instead of anything the apt site serves.
+APT_KEY_B64='@@PIPULSE_APT_KEY@@'
+
+# Tests without systemd restart through the hook instead.
+force_restart() { hooks && [ -n "${PIPULSE_FORCE_RESTART:-}" ]; }
+
+# write_apt_key FILE — the keyring this installer trusts, as a binary file.
+write_apt_key() {
+  if [ -n "$(hook_value PIPULSE_APT_KEY_FILE '')" ]; then
+    cp "$(hook_value PIPULSE_APT_KEY_FILE '')" "$1"
+  else
+    case $APT_KEY_B64 in
+      '@@'*) die 'this copy of install.sh has no signing key (it is a source checkout): use the install.sh of a release' ;;
+    esac
+    printf '%s' "$APT_KEY_B64" | base64 -d > "$1" || die 'the signing key inside install.sh is damaged'
+  fi
+}
 
 log() { printf '[pipulse] %s\n' "$*"; }
 die() { printf '[pipulse] error: %s\n' "$*" >&2; exit 1; }
@@ -33,7 +73,8 @@ install_apt() {
   #    anything an existing install depends on.
   log 'adding the PiPulse apt repository'
   key=$(mktemp)
-  curl -fsSL "$APT_URL/pipulse.gpg" -o "$key" || { rm -rf "$key" "$saved"; die "could not download the repository key from $APT_URL; nothing was changed"; }
+  # The key is the one inside this installer, never one the repository serves.
+  (write_apt_key "$key") || { rm -rf "$key" "$saved"; die 'no signing key to trust; nothing was changed'; }
   install -m 644 "$key" /usr/share/keyrings/pipulse.gpg
   rm -f "$key"
   echo "deb [signed-by=/usr/share/keyrings/pipulse.gpg] $APT_URL stable main" > /etc/apt/sources.list.d/pipulse.list
@@ -146,10 +187,16 @@ restore_tarball() {
 
 drop_tarball_backup() { rm -rf "$ASIDE"; }
 
-fetch_release() { # fetch_release VERSION DIR → DIR/pipulse-VERSION.tar.gz, checked
-  base="https://github.com/$REPO/releases/download/v$1"
+fetch_release() { # fetch_release VERSION DIR → DIR/pipulse-VERSION.tar.gz, checked and verified
+  base="$RELEASES_URL/v$1"
   curl -fsSL -o "$2/pipulse-$1.tar.gz" "$base/pipulse-$1.tar.gz"
   curl -fsSL -o "$2/SHA256SUMS" "$base/SHA256SUMS"
+  curl -fsSL -o "$2/SHA256SUMS.asc" "$base/SHA256SUMS.asc" || die "could not download SHA256SUMS.asc for $1"
+  # The list of checksums is what the release's signing key signed: a tarball swapped together
+  # with an unsigned list fails here, not just a corrupted download.
+  command -v gpgv >/dev/null 2>&1 || die 'gpgv is needed to verify the release (apt-get install gpgv)'
+  (write_apt_key "$2/key.gpg") || die 'no signing key to verify the release with'
+  gpgv --keyring "$2/key.gpg" "$2/SHA256SUMS.asc" "$2/SHA256SUMS" >/dev/null 2>&1 || die "SHA256SUMS of $1 is not signed by the PiPulse release key"
   (cd "$2" && grep " pipulse-$1.tar.gz\$" SHA256SUMS | sha256sum -c --quiet -) || die "pipulse-$1.tar.gz does not match SHA256SUMS"
 }
 
@@ -161,7 +208,7 @@ latest_version() {
 HEALTH_MSG=
 health_ok() {
   HEALTH_MSG=
-  url=${PIPULSE_HEALTH_URL:-}
+  url=$(hook_value PIPULSE_HEALTH_URL '')
   check=/opt/pipulse/app/packages/tls/dist/health-check.js
   i=0
   while [ "$i" -lt "${PIPULSE_HEALTH_WAIT:-30}" ]; do
@@ -215,7 +262,7 @@ env_value() {
   sed -n "s/^$1=//p" /etc/pipulse/pipulse.env 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
-restart() { sh -c "${PIPULSE_RESTART_CMD:-systemctl restart pipulse}"; }
+restart() { sh -c "$(hook_value PIPULSE_RESTART_CMD 'systemctl restart pipulse')"; }
 
 # The installed release, e.g. 0.6.0.
 installed() { sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /opt/pipulse/app/version.json; }
@@ -228,9 +275,19 @@ backup_db() {
   db=$(db_path)
   for f in "$db" "$db-wal" "$db-shm"; do
     rm -f "$f.pre-upgrade"
-    if [ -e "$f" ]; then cp -p "$f" "$f.pre-upgrade"; fi
+    if [ -e "$f" ]; then cp -p "$f" "$f.pre-upgrade" || return 1; fi
   done
 }
+# Kilobytes the copy needs, and kilobytes free where it goes (a test hook can say).
+backup_size_kb() {
+  db=$(db_path)
+  n=0
+  for f in "$db" "$db-wal" "$db-shm"; do
+    if [ -e "$f" ]; then n=$((n + $(du -Pk "$f" | cut -f1))); fi
+  done
+  echo "$n"
+}
+free_kb() { hook_value PIPULSE_FREE_KB "$(df -Pk "$(dirname "$(db_path)")" 2>/dev/null | awk 'NR==2 { print $4 }')"; }
 restore_db() {
   db=$(db_path)
   [ -e "$db.pre-upgrade" ] || return 0
@@ -241,11 +298,11 @@ restore_db() {
 }
 drop_db_backup() { db=$(db_path); rm -f "$db.pre-upgrade" "$db-wal.pre-upgrade" "$db-shm.pre-upgrade"; }
 
-stop_service() { sh -c "${PIPULSE_STOP_CMD:-systemctl stop pipulse}" >/dev/null 2>&1 || true; }
+stop_service() { sh -c "$(hook_value PIPULSE_STOP_CMD 'systemctl stop pipulse')" >/dev/null 2>&1 || true; }
 
 # Runs setup and (re)starts the service. FIRST is yes on a first install.
 start_service() {
-  if [ -n "${PIPULSE_FORCE_RESTART:-}" ]; then # tests without systemd
+  if force_restart; then # tests without systemd
     if [ "$1" = yes ]; then
       sh /opt/pipulse/app/packaging/setup.sh --no-start --first-install
     else
@@ -261,19 +318,35 @@ start_service() {
 
 # Whether the service is meant to run (an operator may have disabled or masked it).
 service_wanted() {
-  [ -n "${PIPULSE_FORCE_RESTART:-}" ] || [ "$(systemctl is-enabled pipulse 2>/dev/null || true)" = enabled ]
+  force_restart || [ "$(systemctl is-enabled pipulse 2>/dev/null || true)" = enabled ]
+}
+
+# Refuses a tarball with a member that would be written outside the extraction folder (an
+# absolute path, a "..") or that is not a file, folder or link (a device, a pipe).
+check_tarball_members() { # check_tarball_members FILE
+  if tar -tzf "$1" 2>/dev/null | grep -qE '^/|(^|/)\.\.(/|$)'; then
+    die "$1 has a member outside its own folder: not a PiPulse release tarball"
+  fi
+  if tar -tvzf "$1" 2>/dev/null | cut -c1 | grep -qv '[-dlh]'; then
+    die "$1 has a member that is not a file, folder or link: not a PiPulse release tarball"
+  fi
 }
 
 install_tarball() { # install_tarball FILE NO_START
   tarball=$1 no_start=$2
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
-  tar -xzf "$tarball" -C "$work"
+  check_tarball_members "$tarball"
+  # No owners and no setuid bits from the archive (a release is built by another user), and the
+  # tree is made root's here, inside the private $work, before it is moved anywhere a local user
+  # can reach: root runs scripts from it.
+  tar --no-same-owner --no-same-permissions -xzf "$tarball" -C "$work"
   src=$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'pipulse-*' | head -n 1)
   [ -n "$src" ] || die "$tarball is not a PiPulse release tarball"
+  chown -R root:root "$src"
   arch=$(PIPULSE_NODE_VERSIONS="$src/packaging/node-versions.json" sh -c ". '$src/packaging/lib.sh'; pipulse_arch")
   sh "$src/packaging/fetch-node.sh" "$arch" "$work/staged"
-  if [ "$no_start" = no ] && [ -z "${PIPULSE_FORCE_RESTART:-}" ]; then
+  if [ "$no_start" = no ] && ! force_restart; then
     [ -d /run/systemd/system ] || die 'systemd is not running: use --no-start'
   fi
   mkdir -p /opt/pipulse
@@ -291,8 +364,21 @@ install_tarball() { # install_tarball FILE NO_START
   if [ -d /opt/pipulse/app ]; then
     had_previous=yes
     if [ "$no_start" = no ]; then
+      # Checked before the service is stopped, and undone if the copy still fails: a full disk (the
+      # usual Pi failure) must never leave PiPulse stopped with half a copy eating what is left.
+      need=$(($(backup_size_kb) + 1024))
+      have=$(free_kb)
+      if [ "${have:-0}" -lt "$need" ] 2>/dev/null; then
+        rm -rf /opt/pipulse/app.new /opt/pipulse/node.new
+        die "not enough free space for a copy of the database ($need KB needed, ${have:-0} KB free): free some space and run the installer again; nothing was changed"
+      fi
       stop_service
-      backup_db
+      if ! backup_db; then
+        drop_db_backup
+        rm -rf /opt/pipulse/app.new /opt/pipulse/node.new
+        if service_wanted; then restart || true; fi
+        die 'could not copy the database before the upgrade (is the disk full?): the current version was started again and nothing else was changed'
+      fi
     fi
     mv /opt/pipulse/app /opt/pipulse/app.previous
     mv /opt/pipulse/node /opt/pipulse/node.previous
@@ -373,10 +459,17 @@ uninstall() { # uninstall PURGE
   rm -f /etc/pipulse/.renew-timer-enabled
   rm -rf /opt/pipulse /usr/bin/pipulse
   if [ "$1" = yes ]; then
+    # Read before /etc/pipulse goes: a database somewhere else is the operator's, not ours to delete.
+    custom=$(db_path)
     rm -rf /etc/pipulse /var/lib/pipulse
     if getent passwd pipulse >/dev/null; then deluser --system pipulse >/dev/null 2>&1 || userdel pipulse; fi
     getent group pipulse >/dev/null && { delgroup --system pipulse >/dev/null 2>&1 || groupdel pipulse; } || true
     log 'removed PiPulse, its settings and its data'
+    case $custom in
+      /var/lib/pipulse/*) ;;
+      *) if [ -e "$custom" ]; then log "left in place: $custom (a PIPULSE_DB_PATH of your own): delete it yourself if you do not want it"; fi ;;
+    esac
+    if [ -d /var/lib/pipulse-tarball-backup ]; then log 'left in place: /var/lib/pipulse-tarball-backup (kept by an interrupted move to apt): delete it once you have checked the data'; fi
   else
     log 'removed PiPulse; kept /etc/pipulse and /var/lib/pipulse (use --purge to remove them)'
   fi

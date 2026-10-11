@@ -79,7 +79,8 @@ jobs:
             sh packaging/build-deb.sh "$V" "$arch" "out/pipulse-$V.tar.gz" out
             lintian --fail-on error "out/pipulse_${V}_${arch}.deb"
           done
-          cp packaging/install.sh compose.yaml out/
+          sh packaging/stamp-installer.sh packaging/install.sh out/install.sh
+          cp compose.yaml out/
           # The shipped compose file runs this release's image (the repository copy follows :latest).
           sed -i "s#ghcr.io/seviyon/pipulse:latest#ghcr.io/seviyon/pipulse:$V#" out/compose.yaml
           grep -c "ghcr.io/seviyon/pipulse:$V" out/compose.yaml | grep -qx 3
@@ -143,7 +144,13 @@ jobs:
       - name: Import the signing key
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
-        run: printf '%s' "$APT_SIGNING_KEY" | gpg --batch --import
+        run: |
+          printf '%s' "$APT_SIGNING_KEY" | gpg --batch --import
+          # The installer trusts packaging/apt-key.gpg, so the key that signs must be that one: a
+          # release signed by any other key would not verify for anybody who runs the installer.
+          gpg --export | gpg --show-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}' > /tmp/signing-fpr
+          gpg --show-keys --with-colons packaging/apt-key.gpg | awk -F: '/^fpr/ {print $10; exit}' > /tmp/committed-fpr
+          cmp /tmp/signing-fpr /tmp/committed-fpr || { echo "the signing key is not the one in packaging/apt-key.gpg"; exit 1; }
       - name: Apt repository
         env:
           V: ${{ needs.version.outputs.version }}

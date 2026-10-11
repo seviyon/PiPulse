@@ -57,17 +57,19 @@ Do these once, before merging the Phase 6 PR.
 
    Without these, the jobs above fail at their login step. If the token has an expiry, replace the secret before it passes.
 
+   **Commit the public half too:** `gpg --export 'PiPulse apt repository' > packaging/apt-key.gpg`. `install.sh` trusts that key and nothing the apt site serves: the release stamps it into the installer (`packaging/stamp-installer.sh`), which writes it to `/usr/share/keyrings/pipulse.gpg` and verifies `SHA256SUMS.asc` with it. The `publish` job refuses to release if the secret key's fingerprint is not the one in `packaging/apt-key.gpg`. The current key is `8D7C 444E F948 DB10 BF46 F1D7 DC0C DCCD B605 4E4A` (expires 2029-09-28).
+
+7. **Keep the signing key and the apt branch out of reach (repository settings).**
+   - Settings → Environments → _New environment_ `release`, limited to the `main` branch (and ideally a required reviewer); move `APT_SIGNING_KEY` and `APT_SIGNING_PASSPHRASE` from repository secrets into it, then add `environment: release` to the `publish` job. Otherwise any workflow run on another branch (a Renovate PR runs its own copy of `release-dry-run.yml`; `workflow_dispatch` takes any branch) can read the key and publish a signed release.
+   - Settings → Rules → Rulesets: protect `gh-pages` (restrict who can push, and only the `publish` job's token). The apt repository is served from it.
+
 ## Rotating the apt key
 
 Before it expires (3 years) or if it may have leaked:
 
-1. Make a new key as in step 4 and replace both secrets.
-2. Release (a `release:patch` PR, or _Run workflow_). The repository and `pipulse.gpg` are re-signed with the new key.
-3. Pis that added the old key must fetch the new one once:
-
-   ```bash
-   curl -fsSL https://seviyon.github.io/PiPulse/apt/pipulse.gpg | sudo tee /usr/share/keyrings/pipulse.gpg >/dev/null
-   ```
+1. Make a new key as in step 4, replace both secrets, and commit its public half as `packaging/apt-key.gpg` in the same PR (the `publish` job checks the two agree).
+2. Release (a `release:patch` PR, or _Run workflow_). The repository is re-signed with the new key, and the release's `install.sh` carries it.
+3. Pis that added the old key take the new one by running the installer of that release once (`curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh`): it writes its stamped key to `/usr/share/keyrings/pipulse.gpg`. Until they do, `apt update` fails with an unknown-key error rather than installing anything.
 
    A leaked key means someone else could sign packages Pis would install: rotate at once and say so in the release notes.
 

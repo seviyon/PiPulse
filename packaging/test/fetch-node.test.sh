@@ -33,10 +33,10 @@ mirror=$(mktemp -d)
 mkdir -p "$mirror/v$version"
 curl -fsSL "https://nodejs.org/dist/v$version/SHASUMS256.txt" | sed '1s/^./0/' > "$mirror/v$version/SHASUMS256.txt"
 curl -fsSL -o "$mirror/v$version/SHASUMS256.txt.sig" "https://nodejs.org/dist/v$version/SHASUMS256.txt.sig"
-check sh -c "! PIPULSE_NODE_MIRROR='file://$mirror' '$here/fetch-node.sh' '$arch' '$(mktemp -d)' 2>/dev/null"
+check sh -c "! PIPULSE_TEST_HOOKS=1 PIPULSE_NODE_MIRROR='file://$mirror' '$here/fetch-node.sh' '$arch' '$(mktemp -d)' 2>/dev/null"
 
 name='refuses a list signed by an unknown key'
 empty=$(mktemp -d)
-check sh -c "! PIPULSE_NODE_KEYRING='$empty/none.kbx' '$here/fetch-node.sh' '$arch' '$(mktemp -d)' 2>/dev/null"
+check sh -c "! PIPULSE_TEST_HOOKS=1 PIPULSE_NODE_KEYRING='$empty/none.kbx' '$here/fetch-node.sh' '$arch' '$(mktemp -d)' 2>/dev/null"
 
 exit $fail

@@ -24,9 +24,20 @@ done
 find "$root/node_modules" -type d -empty -delete
 cp -R "$here" "$root/packaging"
 rm -rf "$root/packaging/test"
-cp "$here/install.sh" "$root/install.sh"
+# The installer carries the signing key it trusts (also the copy inside packaging/).
+sh "$here/stamp-installer.sh" "$here/install.sh" "$root/install.sh"
+cp "$root/install.sh" "$root/packaging/install.sh"
 printf '{"version":"%s"}\n' "$version" > "$root/version.json"
 # No extended attributes: macOS tar would add its own (com.apple.provenance),
 # which GNU tar on the Pi warns about for every file.
-COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/$name.tar.gz" -C "$stage" "$name"
+# Every member is owned by root:root whoever builds it: the release runner is uid 1001, and an
+# installer that kept those owners would leave /opt/pipulse writable by a local user 1001 until
+# its chown. GNU tar and bsdtar (macOS) spell the options differently.
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+  owner='--owner=0 --group=0 --numeric-owner'
+else
+  owner='--uid 0 --gid 0 --uname root --gname root'
+fi
+# shellcheck disable=SC2086 # the options are words on purpose
+COPYFILE_DISABLE=1 tar --no-xattrs $owner -czf "$out/$name.tar.gz" -C "$stage" "$name"
 log "built $out/$name.tar.gz"

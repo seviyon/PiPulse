@@ -6,10 +6,26 @@ node=/opt/pipulse/node/bin/node
 [ -x "$node" ] || node=/usr/local/bin/node
 app=/opt/pipulse/app
 env=/etc/pipulse/pipulse.env
+# The service's settings (and NODE_EXTRA_CA_CERTS), read as data the way systemd reads them: one
+# NAME=value per line, one pair of surrounding quotes dropped, the last line for a name wins.
+# Never sourced as shell, so a value with $, backticks or quotes cannot run anything.
+load_env() {
+  [ -r "$env" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in '' | '#'* | ' '* | '	'*) continue ;; esac
+    name=${line%%=*}
+    [ "$name" != "$line" ] || continue
+    case $name in '' | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+    value=${line#*=}
+    case $value in
+      \"*\") value=${value#\"}; value=${value%\"} ;;
+      \'*\') value=${value#\'}; value=${value%\'} ;;
+    esac
+    export "$name=$value"
+  done < "$env"
+}
 run() {
-  # Load the service's settings (and NODE_EXTRA_CA_CERTS) the way systemd does.
-  # shellcheck source=/dev/null  # settings, not code to follow
-  if [ -r "$env" ]; then set -a; . "$env"; set +a; fi
+  load_env
   exec "$node" --disable-warning=ExperimentalWarning "$@"
 }
 case ${1:-} in

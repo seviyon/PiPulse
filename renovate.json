@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "docker:pinDigests"],
+  "internalChecksFilter": "strict",
   "vulnerabilityAlerts": {
     "labels": ["release:patch", "security"]
   },
@@ -47,7 +48,8 @@
     {
       "description": "Only updates that change what ships make a release: runtime dependencies (bundled into the app or the dashboard).",
       "matchDepTypes": ["dependencies"],
-      "addLabels": ["release:patch"]
+      "addLabels": ["release:patch"],
+      "minimumReleaseAge": "3 days"
     },
     {
       "description": "The Node bundled into every native install.",
