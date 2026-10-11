@@ -164,6 +164,31 @@ describe('createRuleSource', () => {
     ]);
   });
 
+  it('does not put a rule below back in force when its look-back no longer fits raw retention', () => {
+    // A rule disabled from the browser, raw retention cut to fit what remains, then the saved
+    // entry damaged by hand: falling back to the rule below would run a look-back that raw
+    // retention can't serve, and the startup check would refuse to start over it.
+    const s = source({ rules: [{ ...busy, id: 'long_for', for: '2h' }] });
+    expect(s.save({ id: 'long_for', disabled: true })).toEqual({ ok: true });
+    raw = { ms: 60 * MIN, text: '1h' };
+    saveSettings(db, { [SAVED_RULES_KEY]: [{ id: 'long_for', disabled: 'yes' }] });
+
+    const { rules, entries } = s.read();
+    expect(ids(rules)).not.toContain('long_for');
+    expect(rules.filter((r) => r.source !== 'saved').every((r) => r.forMs <= 60 * MIN)).toBe(true);
+    const entry = entries.find((e) => e.id === 'long_for');
+    expect(entry?.problem).toMatch(/is not in force|disabled/);
+    expect(entry?.problem).toContain('longer than raw retention (1h)');
+    expect(problems.join('\n')).toContain('longer than raw retention (1h)');
+    const reported = problems.length;
+    s.read();
+    expect(problems).toHaveLength(reported); // each distinct problem once
+
+    // Once raw retention fits again, the rule below is back in force.
+    raw = { ms: 3 * 60 * MIN, text: '3h' };
+    expect(ids(s.read().rules)).toContain('long_for');
+  });
+
   it('refuses to revert or enable a rule below whose look-back no longer fits raw retention', () => {
     const s = source({
       rules: [
