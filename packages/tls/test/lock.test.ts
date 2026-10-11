@@ -373,7 +373,7 @@ describe('withLock', () => {
       expect(breakLock(lockPath(), dead)).toBe('done');
     });
 
-    it('answers busy to the second of two breakers that both found the same dead turn', () => {
+    it('answers busy while the newest turn belongs to a live breaker, whatever older ones it finds', () => {
       const dead = stale();
       owner(1); // dead owner
       // The first breaker has taken number 2 by the time the second tries to: it is alive.

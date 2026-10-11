@@ -3,7 +3,6 @@ import {
   closeSync,
   constants,
   fsyncSync,
-  ftruncateSync,
   futimesSync,
   linkSync,
   mkdirSync,
@@ -258,20 +257,30 @@ function turnFree(file: string, context: BreakerContext): boolean {
   return Math.abs(Date.now() - seen.mtimeMs) > BREAK_MUTEX_STALE_MS;
 }
 
+/** Where "false" sits in a turn file ({"released":false,...}): release overwrites it in place with "true ". */
+const RELEASED_AT = '{"released":'.length;
+
 /**
  * Takes a turn at breaking, so only one breaker acts at a time. A turn is a file numbered one
  * more than the newest, made with O_EXCL: of any number of breakers that find the newest turn
- * free, exactly one creates the next, and the others answer 'busy' and look again. Nothing is
- * deleted to make room (a leftover of a breaker that died is simply left behind and outnumbered),
- * so there is no moment at which one breaker's clean-up could remove another's live turn: that
- * was the weakness of a single mutex file, which a stalled breaker could still remove. Older turns
- * are tidied once ours is taken; the newest is kept, marked "released", so numbers never restart.
+ * free, exactly one creates the next, and the others answer 'busy' and look again.
+ *
+ * Nothing is deleted to make room (a leftover of a breaker that died is simply outnumbered), and
+ * the newest turn is never removed, only marked released, so numbers never restart. The one way
+ * a number below the newest can be free to create again is that a higher one was made first (the
+ * winner tidies older turns after taking its own): so after making ours the folder is listed
+ * again, and if a higher number is there our listing was out of date and we step aside. Turn
+ * files are not to be deleted while commands run (purge and uninstall remove the whole folder).
+ *
+ * A turn's age (for an owner we can't see) is the wall clock's: a forward jump can make a live
+ * foreign turn look old for the few microseconds a break takes. The main lock watches a heartbeat
+ * on the monotonic clock for that; here the window is too small to be worth a heartbeat.
  */
 function takeBreakerMutex(path: string, context: BreakerContext): (() => void) | 'busy' {
-  const turns = turnsOf(path);
-  const newest = turns.at(-1) ?? 0;
+  const newest = turnsOf(path).at(-1) ?? 0;
   if (newest > 0 && !turnFree(turnPath(path, newest), context)) return 'busy';
-  const mine = turnPath(path, newest + 1);
+  const number = newest + 1;
+  const mine = turnPath(path, number);
   let fd: number;
   try {
     fd = openSync(
@@ -283,11 +292,16 @@ function takeBreakerMutex(path: string, context: BreakerContext): (() => void) |
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     return 'busy'; // another breaker took this number first
   }
+  const giveUp = () => {
+    closeSync(fd);
+    rmSync(mine, { force: true });
+  };
   try {
     const me = context.identity ?? localIdentity();
     writeSync(
       fd,
       JSON.stringify({
+        released: false,
         pid: process.pid,
         ...me,
         token: randomBytes(8).toString('hex'),
@@ -295,24 +309,29 @@ function takeBreakerMutex(path: string, context: BreakerContext): (() => void) |
       })
     );
   } catch (error) {
-    rmSync(mine, { force: true }); // an empty turn would hold every other breaker off for a while
+    giveUp(); // an empty turn would hold every other breaker off for a while; older ones are still there
     throw error;
-  } finally {
-    closeSync(fd);
   }
-  for (const older of turns) rmSync(turnPath(path, older), { force: true });
+  const all = turnsOf(path);
+  if (all.some((n) => n > number)) {
+    giveUp(); // our listing was old: a higher turn exists and its breaker is at work
+    return 'busy';
+  }
+  for (const older of all) if (older < number) rmSync(turnPath(path, older), { force: true });
+  // Nobody else is breaking while we hold a turn, so copies a killed breaker left are garbage.
+  const stale = `${basename(path)}.stale-`;
+  for (const name of readdirSync(dirname(path))) {
+    if (name.startsWith(stale)) rmSync(join(dirname(path), name), { force: true });
+  }
   return () => {
-    // Give the turn back by saying so in our own file (the newest is kept, so numbers go on).
+    // Say so in the file we made (through its descriptor: by name it may be somebody else's by
+    // now), in place and the same length, so there is nothing to allocate and nothing to fail.
     try {
-      const out = openSync(mine, constants.O_WRONLY | constants.O_NOFOLLOW);
-      try {
-        ftruncateSync(out, 0);
-        writeSync(out, JSON.stringify({ released: true }));
-      } finally {
-        closeSync(out);
-      }
+      writeSync(fd, 'true ', RELEASED_AT);
     } catch {
-      rmSync(mine, { force: true }); // the file is gone or can't be rewritten: don't keep a turn we can't release
+      // A turn that can't be released is freed when this process ends, by the owner check.
+    } finally {
+      closeSync(fd);
     }
   };
 }
