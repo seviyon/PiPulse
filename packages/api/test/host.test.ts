@@ -18,12 +18,23 @@ describe('hostOf', () => {
     expect(hostOf(header)).toBe(expected);
   });
 
-  it.each([undefined, '', ' ', 'a b', 'io.lan:', 'io.lan:80:80', '::1', '[::1', 'io.lan/x', 'a@b'])(
-    'cannot read %j',
-    (header) => {
-      expect(hostOf(header)).toBeUndefined();
-    }
-  );
+  it.each([
+    undefined,
+    '',
+    ' ',
+    'a b',
+    'io.lan:',
+    'io.lan:80:80',
+    '::1',
+    '[::1',
+    'io.lan/x',
+    'a@b',
+    '[io.lan]',
+    '[10.0.0.1]:8889',
+    '[]'
+  ])('cannot read %j', (header) => {
+    expect(hostOf(header)).toBeUndefined();
+  });
 });
 
 describe('isAllowedHost', () => {
