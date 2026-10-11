@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildConstraints } from '../src/constraints.js';
 import { SimulatedCrash, type FsHook } from '../src/files.js';
-import { readTxn, recover, runTransaction } from '../src/journal.js';
+import { JournalError, readTxn, recover, runTransaction, TXN_STEPS } from '../src/journal.js';
 import { listBackups, paths, pub, readMeta, type Layout } from '../src/layout.js';
 import {
   checkCa,
@@ -350,5 +350,62 @@ describe('recover after a crash at every hook point', () => {
   it('a second recover is a no-op', async () => {
     await init(ctx);
     expect(recover(ctx.layout)).toBe('none');
+  });
+});
+
+describe('what the journal records and when (found by mutation testing)', () => {
+  const nothing = { stage: async () => {}, validate: () => {} };
+
+  it('names its errors, so a log line says where they come from', () => {
+    expect(new JournalError('x').name).toBe('JournalError');
+  });
+
+  it('writes every step to txn.json before the work after it starts', async () => {
+    // The step on disk when each later disk change begins: a crash there is recovered from it.
+    const seen: string[] = [];
+    const hook: FsHook = () => {
+      const txn = readTxn(ctx.layout);
+      if (txn && seen.at(-1) !== txn.step) seen.push(txn.step);
+    };
+    await runTransaction(ctx.layout, { kind: 'init', now: NOW, hook, ...nothing });
+    expect(seen).toEqual([...TXN_STEPS]);
+    expect(readTxn(ctx.layout)).toBeUndefined();
+  });
+
+  it('runs the validation, and a validation that refuses leaves nothing behind', async () => {
+    const validated: string[] = [];
+    await expect(
+      runTransaction(ctx.layout, {
+        kind: 'init',
+        now: NOW,
+        stage: async () => {},
+        validate: (dirs) => {
+          validated.push(dirs.ca);
+          throw new Error('the staged CA is not complete');
+        }
+      })
+    ).rejects.toThrow('the staged CA is not complete');
+    expect(validated).toHaveLength(1);
+    expect(readTxn(ctx.layout)).toBeUndefined();
+    expect(readdirSync(dir).filter((name) => /^(ca\.next-|\.next-)/.test(name))).toEqual([]);
+  });
+
+  it('tidies up after an ordinary failure but never after a simulated crash', async () => {
+    const crash = () => {
+      throw new SimulatedCrash('killed');
+    };
+    await expect(
+      runTransaction(ctx.layout, {
+        kind: 'init',
+        now: NOW,
+        stage: async () => crash(),
+        validate: () => {}
+      })
+    ).rejects.toBeInstanceOf(SimulatedCrash);
+    // A killed process cleans nothing: the journal and the stage are what recover() works from.
+    expect(readTxn(ctx.layout)?.step).toBe('staged');
+    expect(readdirSync(dir).some((name) => /^ca\.next-/.test(name))).toBe(true);
+    expect(recover(ctx.layout)).toBe('discarded');
+    expect(readdirSync(dir).filter((name) => /^(ca\.next-|\.next-)/.test(name))).toEqual([]);
   });
 });
