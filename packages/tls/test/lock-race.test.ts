@@ -152,8 +152,10 @@ describe('breakLock when the lock is no longer the one judged stale', () => {
   });
 
   it('loses the displaced holder’s lock without telling anyone (current behaviour)', () => {
-    // The one race left: A released, C took the path, and D took it again during the put-back.
-    // C only finds out at release. If breakLock ever reports a displaced lock, change this test.
+    // The one race left, and only when the judged holder was still alive: A released, C took the
+    // path, and D took it again during the put-back. C only finds out at release. (Waiters that
+    // all judged a *dead* holder no longer reach this: breakers take turns, see lock.test.ts and
+    // lock-stress.test.ts.) If breakLock ever reports a displaced lock, change this test.
     writeFileSync(lockPath(), holder('stale-a'), { mode: 0o600 });
     gap.rename = takeAs('taken-by-c');
     gap.links.push(
@@ -161,9 +163,9 @@ describe('breakLock when the lock is no longer the one judged stale', () => {
       () => writeFileSync(lockPath(), holder('taken-by-d'), { flag: 'wx', mode: 0o600 })
     );
 
-    const result = breakLock(lockPath(), judgedA()) as unknown;
+    const result = breakLock(lockPath(), judgedA());
 
-    expect(result).toBeUndefined();
+    expect(result).toBe('done'); // it reports no displaced lock
     expect(tokenOnDisk()).not.toBe('taken-by-c');
   });
 

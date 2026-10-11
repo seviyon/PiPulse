@@ -274,6 +274,60 @@ describe('withLock', () => {
     expect(existsSync(lockPath())).toBe(false);
   });
 
+  describe('breakers take turns (one mutex file beside the lock)', () => {
+    const mutexPath = () => `${lockPath()}.breaking`;
+    const stale = () => {
+      writeHolder({ token: 'dead' });
+      return JSON.parse(readFileSync(lockPath(), 'utf8')) as LockHolder;
+    };
+
+    it('leaves the lock alone while another breaker holds the mutex', () => {
+      const dead = stale();
+      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: Date.now() }), { mode: 0o600 });
+      expect(breakLock(lockPath(), dead)).toBe('busy');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('dead');
+      expect(existsSync(mutexPath())).toBe(true); // not ours: not removed
+    });
+
+    it('breaks the lock and gives the mutex back', () => {
+      const dead = stale();
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(existsSync(mutexPath())).toBe(false);
+    });
+
+    it('gives the mutex back when the lock turns out to be another holder’s', () => {
+      const dead = stale();
+      writeHolder({ token: 'fresh' });
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8')).token).toBe('fresh');
+      expect(existsSync(mutexPath())).toBe(false);
+    });
+
+    it('clears a mutex a crashed breaker left behind, then breaks', () => {
+      const dead = stale();
+      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: 0 }), { mode: 0o600 });
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(mutexPath(), old, old);
+      expect(breakLock(lockPath(), dead)).toBe('done');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(existsSync(mutexPath())).toBe(false);
+    });
+
+    it('a waiter holds off while a break is under way, then takes the lock once it is over', async () => {
+      stale();
+      writeFileSync(mutexPath(), JSON.stringify({ pid: 1, at: Date.now() }), { mode: 0o600 });
+      setTimeout(() => {
+        rmSync(lockPath(), { force: true }); // the other breaker finishes: lock and mutex go
+        rmSync(mutexPath(), { force: true });
+      }, 60);
+      const started = Date.now();
+      const got = await withLock(layout, async () => 'ran', { create: true, waitMs: 5000 });
+      expect(got).toBe('ran');
+      expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+    });
+  });
+
   it('releases the lock when the command throws', async () => {
     await expect(
       withLock(

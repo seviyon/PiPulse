@@ -25,6 +25,8 @@ export const LOCK_WAIT_MS = 30_000;
 export const LOCK_STALE_MS = 15 * 60_000;
 /** A lock file whose content isn't readable yet is being written, for this long. */
 const FRESH_MS = 5_000;
+/** A breaker's mutex file older than this was left by a breaker that died: breaking takes microseconds. */
+export const BREAK_MUTEX_STALE_MS = 10_000;
 /** The holder touches the lock this often; a holder we can't see in /proc is judged by it. */
 export const LOCK_HEARTBEAT_MS = 20_000;
 /** A holder in another PID namespace (another container) looks gone after this long without a heartbeat. */
@@ -161,11 +163,14 @@ function matchesJudgement(aside: string, judged: LockHolder | undefined): boolea
  * when it is the judged lock is it renamed away, and the inode is compared with the linked
  * copy: if the lock was released and retaken in between, the newer lock is put back.
  *
- * What remains is a triple race (the judged holder releases, a new holder takes the path,
- * and yet another process takes it during the put-back); the displaced holder then finds out
- * only at release. Filesystems without hard links use breakLockByRename().
+ * Only one process runs this at a time (breakLock holds the breakers' mutex), so two waiters
+ * that judged the same dead holder can no longer both act, with the second moving the first's
+ * brand-new lock aside while a third takes the empty path. What remains is a judged holder that
+ * is still alive and releases during the break, and only for a holder that could not be verified
+ * (see holderGone): its displaced successor then finds out at release. Filesystems without hard
+ * links use breakLockByRename().
  */
-export function breakLock(path: string, judged: LockHolder | undefined): void {
+function breakJudged(path: string, judged: LockHolder | undefined): void {
   const copy = `${path}.stale-${randomBytes(6).toString('hex')}`;
   try {
     linkSync(path, copy);
@@ -194,6 +199,67 @@ export function breakLock(path: string, judged: LockHolder | undefined): void {
   } finally {
     rmSync(copy, { force: true });
   }
+}
+
+/**
+ * Takes the mutex that makes breakers take turns: a file beside the lock, made with O_EXCL.
+ * Undefined when another breaker holds it. A mutex older than BREAK_MUTEX_STALE_MS was left by a
+ * breaker that died, and is cleared.
+ */
+function takeBreakerMutex(path: string): (() => void) | undefined {
+  const mutex = `${path}.breaking`;
+  const token = randomBytes(8).toString('hex');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(
+        mutex,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600
+      );
+      try {
+        writeSync(fd, JSON.stringify({ pid: process.pid, token, at: Date.now() }));
+      } finally {
+        closeSync(fd);
+      }
+      return () => {
+        try {
+          if ((JSON.parse(readFileSync(mutex, 'utf8')) as { token?: string }).token === token)
+            rmSync(mutex, { force: true });
+        } catch {
+          // already gone, or somebody else's after a clean-up of a "stale" one
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    let age: number;
+    try {
+      age = Date.now() - statSync(mutex).mtimeMs;
+    } catch {
+      continue; // released meanwhile: take it
+    }
+    if (age <= BREAK_MUTEX_STALE_MS) return undefined;
+    rmSync(mutex, { force: true }); // a breaker died holding it
+  }
+  return undefined;
+}
+
+/**
+ * Clears a lock judged stale, one breaker at a time: 'busy' when another is at it (the caller
+ * waits a moment and looks again), 'done' otherwise (whether or not the lock was still the one
+ * judged: breakJudged leaves a different holder's lock where it is). Without the turn-taking,
+ * waiters that all judged the same dead holder could each move a newer lock aside in turn, and a
+ * process arriving in the gap would take the lock while its owner still ran.
+ */
+export function breakLock(path: string, judged: LockHolder | undefined): 'done' | 'busy' {
+  const release = takeBreakerMutex(path);
+  if (!release) return 'busy';
+  try {
+    breakJudged(path, judged);
+  } finally {
+    release();
+  }
+  return 'done';
 }
 
 /** link() refuses to overwrite, so a lock somebody took meanwhile is never replaced. */
@@ -353,7 +419,8 @@ export async function withLock<T>(
     }
     if (stale) {
       observed = undefined;
-      breakLock(path, holder);
+      // Another waiter is breaking it: give it a moment rather than spin or break it twice.
+      if (breakLock(path, holder) === 'busy') await sleep(10);
       continue;
     }
     // While a remote holder's heartbeat is being watched, the wait is not cut short by waitMs.
