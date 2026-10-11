@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { migrate } from './migrations.js';
+import { retryWhileLocked } from './retry.js';
 
 export { migrate, SCHEMA_VERSION } from './migrations.js';
 
@@ -7,23 +8,6 @@ export type PiPulseDb = DatabaseSync;
 
 /** How long a statement waits for another connection's write lock. */
 const BUSY_TIMEOUT_MS = 5000;
-
-/**
- * Switching to WAL while another connection is opening the same file answers "database is locked"
- * at once, without waiting for the busy timeout: try again for a few seconds.
- */
-function retryWhileLocked(fn: () => void): void {
-  const sleep = new Int32Array(new SharedArrayBuffer(4));
-  for (let attempt = 0; ; attempt++) {
-    try {
-      fn();
-      return;
-    } catch (error) {
-      if (attempt >= 100 || !/locked|busy/i.test((error as Error).message)) throw error;
-      Atomics.wait(sleep, 0, 0, 25);
-    }
-  }
-}
 
 /**
  * Opens (and creates, if needed) the PiPulse SQLite database at `path`,
