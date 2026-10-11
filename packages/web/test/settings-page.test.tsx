@@ -191,7 +191,7 @@ describe('SettingsPage', () => {
     expect(button('Save').disabled).toBe(false);
     await click('Save');
     expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
-      retention: { raw: '1d', '1m': '14d', '1h': '1y', '1d': 'forever' },
+      retention: { raw: '1d' },
       confirmDeletion: true
     });
     expect(root.textContent).toContain('Saved');
@@ -241,5 +241,38 @@ describe('SettingsPage', () => {
     await act(() => (root.querySelector('input[type=checkbox]') as HTMLInputElement).click());
     await click('Save');
     expect(onSessionChange).toHaveBeenCalledWith({ ...signedIn, signedIn: false });
+  });
+
+  describe('only what the operator edited is sent', () => {
+    // Another tab may have changed a level since this page loaded; a draft that still carries that
+    // level's old value would put it back, and a confirmation would delete the data it had kept.
+    it('previews and saves just the edited level, never the stale values of the others', async () => {
+      previewAnswer = {
+        ...preview,
+        deletions: { ...preview.deletions, raw: { deletesRows: 0, from: null, to: null } }
+      };
+      render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
+      await settle();
+      await type('1m', '10d');
+      await click('Review changes');
+      await click('Save');
+      const previewCall = calls.find((c) => c.path === '/api/settings/preview');
+      const saveCall = calls.find((c) => c.method === 'PUT');
+      expect(previewCall?.body).toEqual({ retention: { '1m': '10d' } });
+      expect(saveCall?.body).toEqual({ retention: { '1m': '10d' } });
+    });
+
+    it('confirms only deletions of the levels in the proposal, which are the rows the operator saw', async () => {
+      render(<SettingsPage session={signedIn} onSessionChange={() => {}} />, root);
+      await settle();
+      await type('1m', '10d'); // a change that deletes nothing in the 1m level
+      await click('Review changes');
+      // The server's preview has deletions for raw (a level this page did not touch): not offered,
+      // not confirmed, and the save needs no confirmation.
+      expect(root.querySelector('input[type=checkbox]')).toBeNull();
+      expect(button('Save').disabled).toBe(false);
+      await click('Save');
+      expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ retention: { '1m': '10d' } });
+    });
   });
 });
