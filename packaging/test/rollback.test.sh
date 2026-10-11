@@ -37,7 +37,7 @@ SH
 chmod +x /usr/local/bin/fake-restart /usr/local/bin/fake-stop
 # The health check reads the port from pipulse.env, quoted as systemd allows.
 mkdir -p /etc/pipulse && printf 'PIPULSE_PORT="18889"\nPIPULSE_TLS=off\n' > /etc/pipulse/pipulse.env
-export PIPULSE_RESTART_CMD=fake-restart PIPULSE_STOP_CMD=fake-stop PIPULSE_HEALTH_WAIT=20 PIPULSE_FORCE_RESTART=1
+export PIPULSE_TEST_HOOKS=1 PIPULSE_RESTART_CMD=fake-restart PIPULSE_STOP_CMD=fake-stop PIPULSE_HEALTH_WAIT=20 PIPULSE_FORCE_RESTART=1
 fail=0
 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.1.tar.gz" && echo 'ok - good version installs' || { echo 'not ok - good version installs'; fail=1; }
 # What the failed new version's setup would have left: its timer units and the "enabled once" marker.
@@ -78,4 +78,29 @@ else
 fi
 grep -q '"0.0.1"' /opt/pipulse/app/version.json && echo 'ok - rolled back past the port clash' || { echo 'not ok - rolled back past the port clash'; fail=1; }
 kill "$squatter"
+# An upgrade that cannot copy the database (a full disk) must not leave PiPulse stopped.
+"$repo/packaging/build-tarball.sh" 0.0.5 "$out" >/dev/null
+fake-restart; for _ in $(seq 1 20); do curl -fs http://127.0.0.1:18889/api/health >/dev/null 2>&1 && break; sleep 1; done
+[ -e /var/lib/pipulse/pipulse.sqlite ] || echo data > /var/lib/pipulse/pipulse.sqlite
+: > /tmp/stops; : > /tmp/restarts
+printf '#!/bin/sh\necho stopped >> /tmp/stops\nexec fake-stop\n' > /usr/local/bin/logged-stop
+printf '#!/bin/sh\necho restarted >> /tmp/restarts\nexec fake-restart\n' > /usr/local/bin/logged-restart
+chmod +x /usr/local/bin/logged-stop /usr/local/bin/logged-restart
+if PIPULSE_STOP_CMD=logged-stop PIPULSE_RESTART_CMD=logged-restart PIPULSE_FREE_KB=1 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.5.tar.gz" >/tmp/space.log 2>&1; then
+  echo 'not ok - an upgrade with no room for the database copy went ahead'; fail=1
+else
+  grep -q 'not enough free space' /tmp/space.log && [ ! -s /tmp/stops ] && grep -q '"0.0.1"' /opt/pipulse/app/version.json && [ ! -e /opt/pipulse/app.new ] \
+    && echo 'ok - no room for the copy: refused before the service was stopped, nothing changed' || { echo 'not ok - no-room refusal'; cat /tmp/space.log; fail=1; }
+fi
+mkdir -p /tmp/cpshim
+printf '#!/bin/sh\ncase "$*" in *.pre-upgrade*) echo "cp: write error: No space left on device" >&2; exit 1 ;; esac\nexec /bin/cp "$@"\n' > /tmp/cpshim/cp
+chmod +x /tmp/cpshim/cp
+: > /tmp/stops; : > /tmp/restarts
+if PATH=/tmp/cpshim:$PATH PIPULSE_STOP_CMD=logged-stop PIPULSE_RESTART_CMD=logged-restart sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.5.tar.gz" >/tmp/cpfail.log 2>&1; then
+  echo 'not ok - an upgrade whose database copy failed went ahead'; fail=1
+else
+  grep -q 'could not copy the database' /tmp/cpfail.log && [ -s /tmp/stops ] && [ -s /tmp/restarts ] \
+    && [ -z "$(ls /var/lib/pipulse/*.pre-upgrade 2>/dev/null)" ] && grep -q '"0.0.1"' /opt/pipulse/app/version.json && [ ! -e /opt/pipulse/app.new ] \
+    && echo 'ok - a failed copy: no partial file left, the current version started again, nothing changed' || { echo 'not ok - failed-copy cleanup'; cat /tmp/cpfail.log; fail=1; }
+fi
 exit $fail

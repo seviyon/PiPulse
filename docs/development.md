@@ -51,3 +51,13 @@ Give it one file (or a line range) and the tests that cover it: every mutant run
 A surviving mutant is either a missing test or an _equivalent_ mutant that cannot change behaviour (the text of an error message a caller never reads, a type check that the next check makes redundant). Only the first kind is worth a test.
 
 Stryker's own Vitest runner does not work with Vitest 5 yet (mutants never switch on and everything "survives"), so `scripts/mutate.mjs` uses its command runner, which runs `vitest run <test-files>` for each mutant. It is not part of CI.
+
+## Lock stress test
+
+Breaking a stale `pipulse tls` lock is a run of syscalls, so a race in it can only show between processes. `packages/tls/test/lock-stress.mjs` starts several processes that queue on the lock and mark a critical section with an `O_EXCL` file, while another keeps putting the lock of a dead process on the path (`STALE=1`); it prints how many times two were inside at once. It is opt-in, since it runs for tens of seconds (`LEFTOVERS=1` also plants the mutex files of breakers that died):
+
+```bash
+npm run build
+PIPULSE_LOCK_STRESS=1 npx --prefix packages/tls vitest run --root packages/tls test/lock-stress.test.ts
+node packages/tls/test/lock-stress.mjs 6 20   # the script alone, no stale locks; STALE=1 adds them
+```

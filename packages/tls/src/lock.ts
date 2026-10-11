@@ -7,14 +7,16 @@ import {
   linkSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
-  writeSync
+  writeSync,
+  type Stats
 } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathExists } from './files.js';
 import type { Layout } from './layout.js';
 import { pidAlive, pidNamespace, processIdentity } from './proc.js';
@@ -25,6 +27,8 @@ export const LOCK_WAIT_MS = 30_000;
 export const LOCK_STALE_MS = 15 * 60_000;
 /** A lock file whose content isn't readable yet is being written, for this long. */
 const FRESH_MS = 5_000;
+/** A breaker's turn file that can't be read, or whose owner can't be seen, and is older than this was left by a breaker that died: breaking takes microseconds. */
+export const BREAK_MUTEX_STALE_MS = 10_000;
 /** The holder touches the lock this often; a holder we can't see in /proc is judged by it. */
 export const LOCK_HEARTBEAT_MS = 20_000;
 /** A holder in another PID namespace (another container) looks gone after this long without a heartbeat. */
@@ -161,11 +165,14 @@ function matchesJudgement(aside: string, judged: LockHolder | undefined): boolea
  * when it is the judged lock is it renamed away, and the inode is compared with the linked
  * copy: if the lock was released and retaken in between, the newer lock is put back.
  *
- * What remains is a triple race (the judged holder releases, a new holder takes the path,
- * and yet another process takes it during the put-back); the displaced holder then finds out
- * only at release. Filesystems without hard links use breakLockByRename().
+ * Only one process runs this at a time (breakLock holds the breakers' mutex), so two waiters
+ * that judged the same dead holder can no longer both act, with the second moving the first's
+ * brand-new lock aside while a third takes the empty path. What remains is a judged holder that
+ * is still alive and releases during the break, and only for a holder that could not be verified
+ * (see holderGone): its displaced successor then finds out at release. Filesystems without hard
+ * links use breakLockByRename().
  */
-export function breakLock(path: string, judged: LockHolder | undefined): void {
+function breakJudged(path: string, judged: LockHolder | undefined): void {
   const copy = `${path}.stale-${randomBytes(6).toString('hex')}`;
   try {
     linkSync(path, copy);
@@ -194,6 +201,161 @@ export function breakLock(path: string, judged: LockHolder | undefined): void {
   } finally {
     rmSync(copy, { force: true });
   }
+}
+
+interface BreakerContext {
+  /** What this process is (default: localIdentity()). */
+  identity?: LocalIdentity;
+  /** Overrides the check that an owner in our own PID namespace is still running. */
+  alive?: (holder: LockHolder) => boolean;
+}
+
+/** `<lock>.breaking.<n>` — breaker turn number n. */
+const turnPath = (path: string, n: number) => `${path}.breaking.${n}`;
+
+/** The turn numbers present beside the lock, ascending. */
+function turnsOf(path: string): number[] {
+  const prefix = `${basename(path)}.breaking.`;
+  const turns: number[] = [];
+  for (const name of readdirSync(dirname(path))) {
+    if (name.startsWith(prefix) && /^\d{1,15}$/.test(name.slice(prefix.length)))
+      turns.push(Number(name.slice(prefix.length)));
+  }
+  return turns.sort((a, b) => a - b);
+}
+
+/**
+ * Whether the newest turn can be taken over: its breaker gave it back ("released"), or is gone.
+ * An owner this process can see (same PID namespace) is judged by its pid and start time, never
+ * by age: a breaker that is merely stalled (a stopped process, a slow SD card) keeps its turn.
+ * Only an owner that can't be seen (another container, or a file that can't be read, such as one
+ * whose creator died before writing it) is judged by the file's age, in either direction (a
+ * clock stepped back leaves a leftover dated in the future).
+ */
+function turnFree(file: string, context: BreakerContext): boolean {
+  let seen: Stats;
+  let text: string;
+  try {
+    seen = statSync(file);
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return true; // gone
+  }
+  try {
+    if ((JSON.parse(text) as { released?: unknown }).released === true) return true;
+  } catch {
+    // unreadable: judged below
+  }
+  const me = context.identity ?? localIdentity();
+  const owner = readHolder(file);
+  if (owner) {
+    if (owner.bootId !== null && me.bootId !== null && owner.bootId !== me.bootId) return true;
+    const sameNamespace =
+      owner.pidNs !== null && me.pidNs !== null ? owner.pidNs === me.pidNs : owner.host === me.host;
+    if (sameNamespace) return !(context.alive ?? localHolderAlive)(owner);
+  }
+  return Math.abs(Date.now() - seen.mtimeMs) > BREAK_MUTEX_STALE_MS;
+}
+
+/** Where "false" sits in a turn file ({"released":false,...}): release overwrites it in place with "true ". */
+const RELEASED_AT = '{"released":'.length;
+
+/**
+ * Takes a turn at breaking, so only one breaker acts at a time. A turn is a file numbered one
+ * more than the newest, made with O_EXCL: of any number of breakers that find the newest turn
+ * free, exactly one creates the next, and the others answer 'busy' and look again.
+ *
+ * Nothing is deleted to make room (a leftover of a breaker that died is simply outnumbered), and
+ * the newest turn is never removed, only marked released, so numbers never restart. The one way
+ * a number below the newest can be free to create again is that a higher one was made first (the
+ * winner tidies older turns after taking its own): so after making ours the folder is listed
+ * again, and if a higher number is there our listing was out of date and we step aside. Turn
+ * files are not to be deleted while commands run (purge and uninstall remove the whole folder).
+ *
+ * A turn's age (for an owner we can't see) is the wall clock's: a forward jump can make a live
+ * foreign turn look old for the few microseconds a break takes. The main lock watches a heartbeat
+ * on the monotonic clock for that; here the window is too small to be worth a heartbeat.
+ */
+function takeBreakerMutex(path: string, context: BreakerContext): (() => void) | 'busy' {
+  const newest = turnsOf(path).at(-1) ?? 0;
+  if (newest > 0 && !turnFree(turnPath(path, newest), context)) return 'busy';
+  const number = newest + 1;
+  const mine = turnPath(path, number);
+  let fd: number;
+  try {
+    fd = openSync(
+      mine,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    return 'busy'; // another breaker took this number first
+  }
+  const giveUp = () => {
+    closeSync(fd);
+    rmSync(mine, { force: true });
+  };
+  try {
+    const me = context.identity ?? localIdentity();
+    writeSync(
+      fd,
+      JSON.stringify({
+        released: false,
+        pid: process.pid,
+        ...me,
+        token: randomBytes(8).toString('hex'),
+        startedAt: Date.now()
+      })
+    );
+  } catch (error) {
+    giveUp(); // an empty turn would hold every other breaker off for a while; older ones are still there
+    throw error;
+  }
+  const all = turnsOf(path);
+  if (all.some((n) => n > number)) {
+    giveUp(); // our listing was old: a higher turn exists and its breaker is at work
+    return 'busy';
+  }
+  for (const older of all) if (older < number) rmSync(turnPath(path, older), { force: true });
+  // Nobody else is breaking while we hold a turn, so copies a killed breaker left are garbage.
+  const stale = `${basename(path)}.stale-`;
+  for (const name of readdirSync(dirname(path))) {
+    if (name.startsWith(stale)) rmSync(join(dirname(path), name), { force: true });
+  }
+  return () => {
+    // Say so in the file we made (through its descriptor: by name it may be somebody else's by
+    // now), in place and the same length, so there is nothing to allocate and nothing to fail.
+    try {
+      writeSync(fd, 'true ', RELEASED_AT);
+    } catch {
+      // A turn that can't be released is freed when this process ends, by the owner check.
+    } finally {
+      closeSync(fd);
+    }
+  };
+}
+
+/**
+ * Clears a lock judged stale, one breaker at a time: 'busy' when another is at it (the caller
+ * waits a moment and looks again), 'done' otherwise (whether or not the lock was still the one
+ * judged: breakJudged leaves a different holder's lock where it is). Without the turn-taking,
+ * waiters that all judged the same dead holder could each move a newer lock aside in turn, and a
+ * process arriving in the gap would take the lock while its owner still ran.
+ */
+export function breakLock(
+  path: string,
+  judged: LockHolder | undefined,
+  context: BreakerContext = {}
+): 'done' | 'busy' {
+  const release = takeBreakerMutex(path, context);
+  if (release === 'busy') return 'busy';
+  try {
+    breakJudged(path, judged);
+  } finally {
+    release();
+  }
+  return 'done';
 }
 
 /** link() refuses to overwrite, so a lock somebody took meanwhile is never replaced. */
@@ -353,7 +515,21 @@ export async function withLock<T>(
     }
     if (stale) {
       observed = undefined;
-      breakLock(path, holder);
+      // Another waiter is breaking it: give it a moment rather than spin or break it twice, but
+      // not past waitMs (a leftover from a dead breaker is cleared on the way).
+      if (
+        breakLock(path, holder, {
+          identity: me,
+          ...(options.alive ? { alive: options.alive } : {})
+        }) === 'busy'
+      ) {
+        if (now() >= deadline) {
+          throw new LockError(
+            'another pipulse tls command is clearing a stale lock; try again in a moment'
+          );
+        }
+        await sleep(10);
+      }
       continue;
     }
     // While a remote holder's heartbeat is being watched, the wait is not cut short by waitMs.
