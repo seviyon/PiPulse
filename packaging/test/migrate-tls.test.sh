@@ -94,7 +94,7 @@ while pgrep -f /opt/pipulse/app/packages/api/dist/server.js >/dev/null && [ "$i"
 SH
 chmod +x /usr/local/bin/pipulse-test-restart /usr/local/bin/pipulse-test-stop
 : > /tmp/probe-server.log
-probe() { PIPULSE_FORCE_RESTART=1 PIPULSE_RESTART_CMD=/usr/local/bin/pipulse-test-restart PIPULSE_STOP_CMD=/usr/local/bin/pipulse-test-stop PIPULSE_HEALTH_WAIT=40 sh "$repo/packaging/install.sh" --from "$1" > /tmp/probe.log 2>&1; }
+probe() { PIPULSE_TEST_HOOKS=1 PIPULSE_FORCE_RESTART=1 PIPULSE_RESTART_CMD=/usr/local/bin/pipulse-test-restart PIPULSE_STOP_CMD=/usr/local/bin/pipulse-test-stop PIPULSE_HEALTH_WAIT=40 sh "$repo/packaging/install.sh" --from "$1" > /tmp/probe.log 2>&1; }
 probe "$out/pipulse-0.0.1.tar.gz" || cat /tmp/probe.log
 grep -q 'running 0.0.1' /tmp/probe.log && grep -q 'listening on https://' /tmp/probe-server.log && ok 'the post-install probe passes over verified TLS' || bad 'the post-install probe passes over verified TLS'
 [ -e /var/lib/pipulse/tls-installed ] && ok 'the server marked its data as served over HTTPS' || bad 'the server marked its data as served over HTTPS'

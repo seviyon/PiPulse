@@ -17,4 +17,21 @@ if tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" && [ -z "$(find "$out/pip
 if grep -q 'packaging/test/' "$out/list"; then echo 'not ok - packaging tests included'; fail=1; else echo 'ok - no packaging tests'; fi
 tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" pipulse-0.0.0-test/version.json
 grep -q '"version":"0.0.0-test"' "$out/pipulse-0.0.0-test/version.json" && echo 'ok - version stamped' || { echo 'not ok - version stamped'; fail=1; }
+# Built by a non-root user, as on the release runner (uid 1001): the archive must still say root
+# for every member, or a tarball install keeps those owners until its late chown.
+if [ "$(id -u)" -eq 0 ] && command -v useradd >/dev/null 2>&1; then
+  id builder >/dev/null 2>&1 || useradd -m -u 1001 builder
+  rm -rf /home/builder/repo && mkdir -p /home/builder/repo
+  (cd "$repo" && tar cf - --exclude=.git --exclude=coverage --exclude=out . ) | tar xf - -C /home/builder/repo
+  chown -R builder: /home/builder/repo
+  mkdir -p /home/builder/out && chown builder: /home/builder/out
+  if su builder -c 'cd /home/builder/repo && sh packaging/build-tarball.sh 0.0.0-test /home/builder/out' >/dev/null 2>&1; then
+    others=$(tar --numeric-owner -tvzf /home/builder/out/pipulse-0.0.0-test.tar.gz | awk '$2 != "0/0"' | wc -l)
+    [ "$others" -eq 0 ] && echo 'ok - a tarball built by uid 1001 is owned by root throughout' || { echo "not ok - $others members are not owned by 0/0 when built as uid 1001"; fail=1; }
+  else
+    echo 'not ok - build as a non-root user'; fail=1
+  fi
+else
+  echo 'ok - (skipped: the ownership check needs root and useradd)'
+fi
 exit $fail

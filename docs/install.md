@@ -16,6 +16,8 @@ less install.sh
 sudo sh install.sh
 ```
 
+The installer carries the repository's public signing key inside it (fingerprint `8D7C 444E F948 DB10 BF46 F1D7 DC0C DCCD B605 4E4A`) and trusts that, not a key downloaded from the apt site; a `--tarball` / `--version` install verifies the release's `SHA256SUMS.asc` with it before it unpacks anything. So it matters where `install.sh` comes from: take it from the GitHub release, as above.
+
 Or add the repository by hand:
 
 ```bash

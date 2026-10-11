@@ -17,6 +17,8 @@ gpg --batch --passphrase '' --quick-gen-key 'PiPulse test <test@example.invalid>
 apt_dir=$(mktemp -d)
 sh "$repo/packaging/apt-publish.sh" "$apt_dir" 3 "$out/pipulse_0.0.2_$arch.deb" >/dev/null
 chmod -R a+rX "$apt_dir"
+# The installer trusts only the key inside it; here that is the test repository's, through the test hook.
+export PIPULSE_TEST_HOOKS=1 PIPULSE_APT_KEY_FILE="$apt_dir/pipulse.gpg"
 fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
@@ -36,6 +38,15 @@ tarball_intact() {
     ! dpkg-query -W -f='${Status}' pipulse 2>/dev/null | grep -q 'install ok installed'
 }
 
+# 0. A repository signed by another key (and serving that key as its own) is refused, and nothing changes:
+#    the installer never takes the key from the site it is about to trust.
+other_home=$(mktemp -d); other_repo=$(mktemp -d)
+GNUPGHOME=$other_home gpg --batch --passphrase '' --quick-gen-key 'Impostor <x@example.invalid>' default default never 2>/dev/null
+GNUPGHOME=$other_home sh "$repo/packaging/apt-publish.sh" "$other_repo" 3 "$out/pipulse_0.0.2_$arch.deb" >/dev/null
+chmod -R a+rX "$other_repo"
+if PIPULSE_APT_URL="file://$other_repo" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 'refuses a repository signed by another key'; else
+  tarball_intact && [ ! -e /etc/apt/sources.list.d/pipulse.list ] && ok 'refuses a repository signed by another key, and changes nothing' || bad 'a repository signed by another key left changes'
+fi
 # 1. The repository can't be reached: nothing may change.
 if PIPULSE_APT_URL="file:///nonexistent/apt" sh "$repo/packaging/install.sh" < /dev/null > /tmp/migrate.log 2>&1; then bad 'fails when the repository is unreachable'; else ok 'fails when the repository is unreachable'; fi
 tarball_intact && ok 'unreachable repository: tarball install untouched' || bad 'unreachable repository: tarball install untouched'
