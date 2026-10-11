@@ -47,6 +47,7 @@ import {
   type TlsConfig
 } from '@pipulse/tls';
 import { readAuthConfig, type AuthConfig } from './auth.js';
+import { parseAllowedHosts } from './host.js';
 import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
 import { readGeneratedExtras, tlsView, writeTlsMarker } from './tls-status.js';
@@ -347,6 +348,23 @@ function publishRuntime(): void {
 // Set once the server listens over HTTPS and the data folder's marker could not be written.
 let markerProblem: string | undefined;
 const engine: { alerts?: { check(): void; stop(): void } } = {};
+/**
+ * PIPULSE_ALLOWED_HOSTS: host names this server answers to (DNS-rebinding protection for plain
+ * HTTP installs; HTTPS ones are protected by the certificate's names). Unset: no check. Set: the
+ * host's own name, its .local name and PIPULSE_TLS_NAMES are included automatically.
+ */
+const ALLOWED_HOSTS = (() => {
+  try {
+    return parseAllowedHosts(process.env['PIPULSE_ALLOWED_HOSTS'], [
+      hostName(),
+      `${hostName()}.local`,
+      ...TLS.names
+    ]);
+  } catch (error) {
+    return fail(error);
+  }
+})();
+
 const app = buildServer(db, {
   live,
   // readDeviceInfo reads the process's own name; the host's (mounted) one wins, as for the certificate.
@@ -355,6 +373,7 @@ const app = buildServer(db, {
     hostname: hostName()
   },
   allowedOrigins: ALLOWED_ORIGINS,
+  allowedHosts: ALLOWED_HOSTS,
   ...(existsSync(WEB_DIR) ? { webRoot: WEB_DIR } : {}),
   plugins: builtinPlugins.map(({ id, label, unit, intervalMs }) => ({
     id,

@@ -23,6 +23,7 @@ import { createHealth, type Health } from './health.js';
 import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { nodeSupport, type NodeSupport } from './version.js';
+import { isAllowedHost } from './host.js';
 import { isAllowedOrigin } from './origin.js';
 import { answerPlainHttp } from './plain-http.js';
 import { registerSettingsRoutes, type SettingsOptions } from './settings-routes.js';
@@ -112,6 +113,12 @@ export interface ServerOptions {
    * policy to WebSockets, so without this check any page could read the feed.
    */
   allowedOrigins?: string[];
+  /**
+   * Host names this server answers to (PIPULSE_ALLOWED_HOSTS). Set: a request for any other
+   * name gets 421, which stops DNS rebinding (a page on an attacker's name pointed at this
+   * address). Addresses and localhost are always served. Unset or empty: no check.
+   */
+  allowedHosts?: string[];
   /** Retention the housekeeping job applies; /series never picks a resolution it has pruned. */
   retention?: RetentionPolicy;
   /** Directory holding the built dashboard (packages/web/dist); omitted = API only. */
@@ -206,6 +213,19 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     });
   }
   const allowedOrigins = options.allowedOrigins ?? [];
+  const allowedHosts = options.allowedHosts ?? [];
+  if (allowedHosts.length > 0) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (!isAllowedHost(request.headers.host, allowedHosts)) {
+        // A refused WebSocket upgrade must close its socket itself: @fastify/websocket does that
+        // from its own onRequest hook, which has not run yet when this one answers.
+        if (request.headers.upgrade) {
+          reply.raw.once('finish', () => reply.raw.socket?.destroy());
+        }
+        return reply.status(421).send({ error: 'host not allowed' });
+      }
+    });
+  }
   const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const notices = createFeed<Notice>();
   const plugins = options.plugins ?? [];
