@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { staleDashboard, WEB_VERSION } from '../src/build.js';
 
 describe('staleDashboard', () => {
@@ -17,7 +17,24 @@ describe('staleDashboard', () => {
 });
 
 describe('WEB_VERSION', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
   it('is dev when the build did not stamp one (tests, npm run dev)', () => {
     expect(WEB_VERSION).toBe('dev');
+  });
+
+  it('is the version the build stamped (the define Vite replaces at build time)', async () => {
+    vi.stubGlobal('__PIPULSE_WEB_VERSION__', '0.7.1');
+    vi.resetModules();
+    expect((await import('../src/build.js')).WEB_VERSION).toBe('0.7.1');
+  });
+
+  it('is dev when the stamp is empty', async () => {
+    vi.stubGlobal('__PIPULSE_WEB_VERSION__', '');
+    vi.resetModules();
+    expect((await import('../src/build.js')).WEB_VERSION).toBe('dev');
   });
 });
