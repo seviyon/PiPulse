@@ -14,6 +14,7 @@ import {
 } from './api.js';
 import { SignIn } from './sign-in.js';
 import { applyAlertEvent, unacknowledged, worstAlert } from './alerts.js';
+import { WEB_VERSION, staleDashboard } from './build.js';
 import { formatUptime } from './format.js';
 import { meterMax } from './status.js';
 import { HistoryPage } from './history-page.js';
@@ -310,6 +311,13 @@ export function App() {
           </button>
         )}
       </header>
+      {staleDashboard(WEB_VERSION, config.version) && (
+        <p role="status" class="stale-dashboard alert-severity">
+          <StatusIcon level="warning" />
+          This page is running dashboard {WEB_VERSION}, but the server is {config.version}. Reload
+          the page; if it stays, do a hard reload (Ctrl/Cmd+Shift+R).
+        </p>
+      )}
       <nav class="pages" aria-label="Pages">
         <a
           href={routeHash({ page: 'now' })}

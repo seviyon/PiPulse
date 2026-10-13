@@ -17,6 +17,16 @@ if tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" && [ -z "$(find "$out/pip
 if grep -q 'packaging/test/' "$out/list"; then echo 'not ok - packaging tests included'; fail=1; else echo 'ok - no packaging tests'; fi
 tar -xzf "$out/pipulse-0.0.0-test.tar.gz" -C "$out" pipulse-0.0.0-test/version.json
 grep -q '"version":"0.0.0-test"' "$out/pipulse-0.0.0-test/version.json" && echo 'ok - version stamped' || { echo 'not ok - version stamped'; fail=1; }
+# A release (PIPULSE_REQUIRE_WEB_VERSION=1) packs only a dashboard stamped with its own version.
+stamp=$repo/packages/web/dist/web-version.txt
+saved=$(cat "$stamp" 2>/dev/null || true)
+printf 'dev\n' > "$stamp"
+if PIPULSE_REQUIRE_WEB_VERSION=1 "$repo/packaging/build-tarball.sh" 0.0.0-test "$out/guard" >"$out/guard.log" 2>&1; then echo 'not ok - an unstamped dashboard was packed for a release'; fail=1; else
+  grep -q 'build with PIPULSE_WEB_VERSION=0.0.0-test' "$out/guard.log" && echo 'ok - a release refuses an unstamped dashboard, naming the fix' || { echo 'not ok - the refusal does not name PIPULSE_WEB_VERSION'; fail=1; }
+fi
+printf '0.0.0-test\n' > "$stamp"
+if PIPULSE_REQUIRE_WEB_VERSION=1 "$repo/packaging/build-tarball.sh" 0.0.0-test "$out/guard" >/dev/null 2>&1; then echo 'ok - a release packs a dashboard stamped with its version'; else echo 'not ok - a stamped dashboard was refused'; fail=1; fi
+printf '%s\n' "$saved" > "$stamp"
 # Built by a non-root user, as on the release runner (uid 1001): the archive must still say root
 # for every member, or a tarball install keeps those owners until its late chown.
 if [ "$(id -u)" -eq 0 ] && command -v useradd >/dev/null 2>&1; then

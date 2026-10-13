@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson } from './api.js';
 import { StatusIcon } from './tile.js';
+import { WEB_VERSION } from './build.js';
 import type { Config } from './types.js';
 
 /** "2027-04-30" → "30 Apr 2027", fixed (not locale-dependent) so it reads the same everywhere. */
@@ -39,6 +40,7 @@ export function AboutSection() {
       {typeof config === 'object' && (
         <>
           <p>PiPulse {config.version ?? 'dev'}</p>
+          <p>Dashboard {WEB_VERSION}</p>
           {config.node && (
             <p>
               Node {config.node.version}

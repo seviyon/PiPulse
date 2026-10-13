@@ -3,9 +3,18 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { AboutSection } from '../src/about.js';
 
+vi.mock('../src/build.js', async (original) => ({
+  ...(await original<typeof import('../src/build.js')>()),
+  get WEB_VERSION() {
+    return mockedWeb.value;
+  }
+}));
+
+const mockedWeb = vi.hoisted(() => ({ value: 'dev' }));
 let root: HTMLElement;
 let config: object;
 beforeEach(() => {
+  mockedWeb.value = 'dev';
   config = {
     version: '0.6.0',
     node: { version: '22.23.3', line: 22, supportEnds: '2027-04-30', ended: false }
@@ -55,5 +64,26 @@ describe('AboutSection', () => {
     await show();
     expect(root.textContent).toContain('PiPulse dev');
     expect(root.textContent).not.toContain('security fixes');
+  });
+});
+
+describe('AboutSection: which dashboard this tab runs', () => {
+  it('shows the dashboard version beside the server’s', async () => {
+    mockedWeb.value = '0.6.0';
+    await show();
+    expect(root.textContent).toContain('PiPulse 0.6.0');
+    expect(root.textContent).toContain('Dashboard 0.6.0');
+  });
+
+  it('shows both versions when they differ, so a stale page is visible here too', async () => {
+    mockedWeb.value = '0.5.0';
+    await show();
+    expect(root.textContent).toContain('PiPulse 0.6.0');
+    expect(root.textContent).toContain('Dashboard 0.5.0');
+  });
+
+  it('shows a development build as dev, with no warning', async () => {
+    await show();
+    expect(root.textContent).toContain('Dashboard dev');
   });
 });

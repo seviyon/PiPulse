@@ -19,6 +19,12 @@ for pkg in "$repo"/packages/*/; do
   cp "$pkg/package.json" "$root/packages/$p/"
   cp -R "$pkg/dist" "$root/packages/$p/"
 done
+# A release must pack a dashboard that knows its own version (the page warns when it no longer
+# matches the server): the release builds with PIPULSE_WEB_VERSION and sets this.
+if [ "${PIPULSE_REQUIRE_WEB_VERSION:-}" = 1 ]; then
+  stamped=$(cat "$repo/packages/web/dist/web-version.txt" 2>/dev/null || true)
+  [ "$stamped" = "$version" ] || die "the dashboard in packages/web/dist is stamped '${stamped:-nothing}', not $version: build with PIPULSE_WEB_VERSION=$version"
+fi
 (cd "$root" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund >/dev/null)
 # npm leaves empty scope folders behind for the development packages it skipped.
 find "$root/node_modules" -type d -empty -delete
