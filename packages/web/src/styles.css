@@ -722,3 +722,23 @@ button:hover {
   overflow-wrap: anywhere;
   font-size: 0.85em;
 }
+
+.updates-page {
+  display: grid;
+  gap: 16px;
+}
+
+.updates-page table {
+  border-collapse: collapse;
+}
+
+.updates-page th,
+.updates-page td {
+  padding: 4px 16px 4px 0;
+  text-align: left;
+}
+
+.command code {
+  user-select: all;
+  overflow-wrap: anywhere;
+}

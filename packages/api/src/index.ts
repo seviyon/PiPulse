@@ -22,6 +22,8 @@ import { registerAuth, type AuthOptions } from './auth-routes.js';
 import { createHealth, type Health } from './health.js';
 import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
+import { registerUpdatesRoutes } from './updates-routes.js';
+import type { Updates } from './updates.js';
 import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedHost } from './host.js';
 import { isAllowedOrigin } from './origin.js';
@@ -153,6 +155,8 @@ export interface ServerOptions {
   tls?: () => TlsView;
   /** Webhook delivery status, served read-only at /api/notify. */
   notify?: { status(): WebhookStatus[] };
+  /** What `apt-get upgrade` would do (GET /api/updates); omitted = "not available here". */
+  updates?: Updates;
 }
 
 /** The largest frame a /api/live client may send; the dashboard sends none. */
@@ -357,6 +361,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     publish: notices.publish
   });
   registerNotifyRoutes(app, options.notify);
+  registerUpdatesRoutes(app, options.updates);
 
   if (options.settings) registerSettingsRoutes(app, db, options.settings);
 

@@ -188,3 +188,25 @@ export type TlsView =
       metadata?: 'ok' | 'transitional' | 'unreadable';
       metadataProblems?: { file: 'ca-meta.json' | 'renew-status.json'; message: string }[];
     };
+
+/** GET /api/updates: what `apt-get upgrade` would do (see packages/api/src/updates.ts). */
+export type UpdatesView =
+  | { state: 'unsupported'; reason: 'container' | 'no-apt' }
+  | { state: 'pending' }
+  | { state: 'failed'; checkedAt: number; problem: string }
+  | {
+      state: 'ok';
+      checkedAt: number;
+      listsRefreshedAt: number | null;
+      pipulse: {
+        source: 'apt' | 'other';
+        installed: string | null;
+        candidate: string | null;
+        available: boolean;
+      };
+      os: {
+        total: number;
+        packages: { name: string; from: string; to: string }[];
+        keptBack: string[];
+      };
+    };
