@@ -93,10 +93,15 @@ if [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ] && marker_present "$ser
 elif [ "$first" != yes ] && [ ! -e "$tls_dir/state.json" ]; then
   warn "HTTPS could not be prepared (see above): PiPulse stays on plain HTTP until you run: sudo pipulse tls init"
   install -d -o root -g pipulse -m 2750 "$tls_dir" 2>/dev/null || true
-  if printf '{"version":1,"mode":"legacy-http"}\n' > "$tls_dir/state.json" 2>/dev/null; then
-    chown root:pipulse "$tls_dir/state.json" 2>/dev/null || true
-    chmod 640 "$tls_dir/state.json" 2>/dev/null || true
+  # Written beside the target and moved into place, so a full disk never leaves a truncated
+  # state.json (which every `pipulse tls` command and the server would then refuse).
+  state_tmp="$tls_dir/.state.json.$$"
+  if printf '{"version":1,"mode":"legacy-http"}\n' > "$state_tmp" 2>/dev/null &&
+    chown root:pipulse "$state_tmp" 2>/dev/null && chmod 640 "$state_tmp" 2>/dev/null &&
+    mv -f "$state_tmp" "$tls_dir/state.json" 2>/dev/null; then
+    :
   else
+    rm -f "$state_tmp" 2>/dev/null || true
     warn "could not write $tls_dir/state.json: the service may refuse to start; set PIPULSE_TLS=off in /etc/pipulse/pipulse.env"
   fi
 fi

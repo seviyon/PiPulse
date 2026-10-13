@@ -19,15 +19,14 @@ export interface ClockReading {
  * systemd-timesyncd (Pi OS) keeps `<timesyncDir>/synchronized` while the clock
  * is synced; no directory means no timesyncd (chrony, ntpd, a container
  * without the host's mount) → 'unknown'. systemd's After=time-sync.target is
- * ordering only, never proof. `notBefore` is passed for generated leaves only:
- * PiPulse never issues one dated in the future, so being before it means the
- * clock is behind.
+ * ordering only, never proof. A leaf dated in the future is not read as "the clock is
+ * behind": a clock that ran ahead once and came back leaves exactly that, and renew must
+ * be able to replace it (see renewDue).
  */
 export function readClock(options: {
   timesyncDir: string;
   now: number;
   trust: boolean;
-  notBefore?: number;
   exists?: (path: string) => boolean;
 }): ClockReading {
   const exists = options.exists ?? pathExists;
@@ -42,11 +41,6 @@ export function readClock(options: {
     // An unreadable directory is not "no timesyncd": it may be there and not synced.
     state = 'unsynced';
   }
-  if (
-    options.now < CLOCK_FLOOR_MS ||
-    (options.notBefore !== undefined && options.now < options.notBefore)
-  ) {
-    state = 'unsynced';
-  }
+  if (options.now < CLOCK_FLOOR_MS) state = 'unsynced';
   return { state, synced: state === 'synced' || (state === 'unknown' && options.trust) };
 }

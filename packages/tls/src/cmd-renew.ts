@@ -49,6 +49,10 @@ export function renewDue(input: {
   const { leaf } = input;
   if (leaf.kind === 'missing') return 'there is no certificate';
   if (leaf.kind === 'refused') return `the certificate is not usable: ${leaf.problem}`;
+  // Made while the clock ran ahead (a bad NTP answer), then the clock came back: browsers
+  // refuse it until its start date, which may be months away.
+  if (leaf.notBefore > input.now)
+    return `it is dated in the future (from ${isoDate(leaf.notBefore)}; the clock was ahead when it was made)`;
   if (input.caNotAfter !== undefined && input.now >= input.caNotAfter)
     return `the CA expired on ${isoDate(input.caNotAfter)}`;
   // A leaf already ending where the CA ends can't be extended: renewing it hourly would
@@ -166,7 +170,7 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
     prepareWork(layout, ctx.hook);
     repairPublic(ctx, ca);
     const leaf = checkLeaf(paths(layout).bundle, ca, pub(layout));
-    const clock = ctx.clock(leaf.kind === 'ok' ? leaf.notBefore : undefined);
+    const clock = ctx.clock();
     if (!clock.synced) {
       record('waiting-clock', `clock ${clock.state}`);
       ctx.out('waiting for clock synchronization');

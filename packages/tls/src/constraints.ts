@@ -404,6 +404,18 @@ export function subnetWarning(cidrText: string, interfaces: Interfaces): string 
 }
 
 /**
+ * The names the CA allows beyond the host's own: the dotted ones (an alias added with
+ * `new-ca --name`), leaving out `<host>.local` pairs, which follow the current host name.
+ */
+function caNames(constraints: Constraints): string[] {
+  return constraints.dns.filter(
+    (name) =>
+      name.includes('.') &&
+      !(name.endsWith('.local') && constraints.dns.includes(name.slice(0, -6)))
+  );
+}
+
+/**
  * The names a new leaf carries: the host, host.local, localhost and
  * PIPULSE_TLS_NAMES that the CA covers, loopback, and the default-route
  * addresses inside accepted subnets. `outside` lists what was left out: names
@@ -435,7 +447,15 @@ export function leafNames(input: {
       if (!ip.includes(canonical)) ip.push(canonical);
     } else if (report && !outside.includes(canonical)) outside.push(canonical);
   };
-  for (const raw of [input.hostname, `${input.hostname}.local`, 'localhost', ...input.names]) {
+  // The CA's own names are the ones this install was told to answer to (new-ca --name): they
+  // belong in the certificate whether or not PIPULSE_TLS_NAMES repeats them.
+  for (const raw of [
+    input.hostname,
+    `${input.hostname}.local`,
+    'localhost',
+    ...input.names,
+    ...caNames(input.constraints)
+  ]) {
     if (isIP(raw.trim()) !== 0) {
       addAddress(raw.trim(), true);
       continue;
