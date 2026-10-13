@@ -8,7 +8,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkHealth, healthTarget } from '../src/health-check.js';
+import {
+  checkHealth,
+  healthTarget,
+  pendingReload,
+  servedFingerprintOf
+} from '../src/health-check.js';
 import { issueCa, issueLeaf } from '../src/issue.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
@@ -151,7 +156,7 @@ describe('F6: a CA replaced on disk before the server reloads', () => {
   /** A generated layout: the server serves a leaf of the OLD CA; ca.crt and leaf.pem are the NEW ones. */
   async function rotation(
     leafAgeMs: number,
-    servedElsewhere: boolean | 'status-file' = true
+    servedElsewhere: boolean | 'status-file' | 'default-dir' = true
   ): Promise<number> {
     const scope = {
       dns: ['localhost'],
@@ -200,9 +205,11 @@ describe('F6: a CA replaced on disk before the server reloads', () => {
       {
         PIPULSE_TLS_DIR: tls,
         PIPULSE_PORT: String(port),
-        PIPULSE_RUNTIME_DIR: join(dir, 'no-status-here')
+        ...(servedElsewhere === 'status-file'
+          ? { PIPULSE_RUNTIME_DIR: join(dir, 'no-status-here') }
+          : {})
       },
-      servedElsewhere === 'status-file'
+      servedElsewhere === 'status-file' || servedElsewhere === 'default-dir'
         ? {}
         : {
             // what the running server's status file says it serves
@@ -230,6 +237,10 @@ describe('F6: a CA replaced on disk before the server reloads', () => {
     expect(await rotation(30_000, 'status-file')).toBe(2);
   });
 
+  it('...nor at the default runtime folder, which holds none here either', async () => {
+    expect(await rotation(30_000, 'default-dir')).toBe(2);
+  });
+
   it('is a verification failure (2) once the leaf on disk is old: the server should have reloaded', async () => {
     expect(await rotation(30 * 60_000)).toBe(2);
   });
@@ -244,5 +255,32 @@ describe('the plain-HTTP check has a deadline', () => {
     );
     expect(result.code).toBe(1);
     expect(result.message).toContain('timed out');
+  });
+});
+
+describe('what the running server says it serves', () => {
+  const fingerprint = new X509Certificate(fixture('leaf.crt')).fingerprint256;
+  const status = (certificate: object | null) =>
+    ({
+      state: 'running',
+      status: {
+        version: 1,
+        transport: 'https',
+        certificate,
+        pid: 1,
+        startTime: 's',
+        bootId: 'b',
+        writtenAt: 1
+      }
+    }) as never;
+
+  it('is the served certificate’s fingerprint, or nothing', () => {
+    expect(servedFingerprintOf(status({ fingerprint }))).toBe(fingerprint);
+    expect(servedFingerprintOf(status(null))).toBeUndefined();
+    expect(servedFingerprintOf({ state: 'not-running', reason: 'missing' })).toBeUndefined();
+  });
+
+  it('pendingReload says nothing when leaf.pem cannot be examined', () => {
+    expect(pendingReload(join(dir, 'missing.pem'), fixture('leaf.crt'), {}, {})).toBeUndefined();
   });
 });

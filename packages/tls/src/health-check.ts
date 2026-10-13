@@ -9,7 +9,7 @@ import { RELEASE_DEFAULT, listenPort, readTlsConfig } from './config.js';
 import { parseSans } from './inspect.js';
 import { userId } from './layout.js';
 import { parseBundle, parseCertificateFile } from './pem.js';
-import { DEFAULT_RUNTIME_DIR, readRuntimeStatus } from './runtime-status.js';
+import { DEFAULT_RUNTIME_DIR, readRuntimeStatus, type RuntimeView } from './runtime-status.js';
 
 export interface CheckResult {
   /** 0 healthy, 1 unhealthy or not answering, 2 TLS verification failed. */
@@ -71,7 +71,7 @@ export const RELOAD_PENDING_MS = 10 * 60_000;
  * leaf on disk is recent AND the running server says it serves a different certificate than
  * leaf.pem holds. Anything else stays a verification failure.
  */
-function pendingReload(
+export function pendingReload(
   bundlePath: string,
   leafPem: string,
   env: NodeJS.ProcessEnv,
@@ -89,11 +89,17 @@ function pendingReload(
   }
 }
 
-function servedByStatusFile(env: NodeJS.ProcessEnv): string | undefined {
-  const view = readRuntimeStatus(env['PIPULSE_RUNTIME_DIR']?.trim() || DEFAULT_RUNTIME_DIR, {
-    expectUid: userId('pipulse')
-  });
+/** The certificate a running server says it serves; undefined when the status file doesn't say. */
+export function servedFingerprintOf(view: RuntimeView): string | undefined {
   return view.state === 'running' ? view.status.certificate?.fingerprint : undefined;
+}
+
+function servedByStatusFile(env: NodeJS.ProcessEnv): string | undefined {
+  return servedFingerprintOf(
+    readRuntimeStatus(env['PIPULSE_RUNTIME_DIR']?.trim() || DEFAULT_RUNTIME_DIR, {
+      expectUid: userId('pipulse')
+    })
+  );
 }
 
 const WILDCARDS = new Set(['0.0.0.0', '::', '[::]']);
@@ -167,7 +173,7 @@ function httpGet(
           } catch {
             body = undefined;
           }
-          resolve({ status: res.statusCode ?? 0, body });
+          resolve({ status: res.statusCode!, body }); // always set on a client response
         });
       }
     );
@@ -314,7 +320,7 @@ export async function checkHealth(
                   message:
                     res.statusCode === 421
                       ? `unhealthy (HTTP 421): the server refused the host name ${identity}; set PIPULSE_TLS_NAMES to a name the certificate covers (it is added to PIPULSE_ALLOWED_HOSTS)`
-                      : `unhealthy (HTTP ${res.statusCode ?? '?'})`
+                      : `unhealthy (HTTP ${res.statusCode})`
                 }
           );
         });

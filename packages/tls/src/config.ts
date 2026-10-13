@@ -141,7 +141,7 @@ export function readTlsConfig(
     try {
       stateMode = parseState(stateText).mode;
     } catch (error) {
-      const message = `${statePath} (PIPULSE_TLS_DIR): ${error instanceof Error ? error.message : String(error)}`;
+      const message = `${statePath} (PIPULSE_TLS_DIR): ${(error as Error).message}`; // parseState throws TlsConfigError
       // PIPULSE_TLS=on/off overrides everything, a damaged state.json included (the way out the
       // error messages point to); without it the server must not guess a mode.
       if (flag !== 'on' && flag !== 'off') throw new TlsConfigError(message);
