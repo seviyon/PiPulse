@@ -30,6 +30,23 @@ python3 -m http.server 8889 >/dev/null 2>&1 & srv=$!
 sleep 1
 sh "$here/setup.sh" --no-start 2>&1 | grep -q 'warning: port 8889 is already in use' && ok 'warns about a taken port' || bad 'warns about a taken port'
 kill $srv
+# PiPulse itself holds the port after the service starts, under whatever name its process has
+# (Node 24 names it MainThread): that is not a taken port. Only another process is.
+shim=$(mktemp -d)
+cat > "$shim/ss" <<'SS'
+#!/bin/sh
+printf 'LISTEN 0 511 0.0.0.0:8889 0.0.0.0:* users:(("MainThread",pid=%s,fd=36))\n' "${FAKE_HOLDER_PID:-4242}"
+SS
+cat > "$shim/systemctl" <<'CTL'
+#!/bin/sh
+[ "$1 $2 $3 $4" = "show -p MainPID --value" ] && echo 4242 && exit 0
+exit 1
+CTL
+chmod +x "$shim/ss" "$shim/systemctl"
+PATH="$shim:$PATH" FAKE_HOLDER_PID=4242 sh "$here/setup.sh" --no-start > /tmp/own-port.log 2>&1
+! grep -q 'is already in use' /tmp/own-port.log && ok 'the service holding its own port is not a warning' || bad 'the service holding its own port is not a warning'
+PATH="$shim:$PATH" FAKE_HOLDER_PID=9999 sh "$here/setup.sh" --no-start > /tmp/other-port.log 2>&1
+grep -q 'warning: port 8889 is already in use by MainThread' /tmp/other-port.log && ok 'another process of the same name still is' || bad 'another process of the same name still is'
 # ufw active without a rule for the port: a warning with the exact command, nothing changed.
 fake=$(mktemp -d)
 printf '#!/bin/sh\nprintf "Status: active\\n\\nTo Action From\\n22/tcp ALLOW Anywhere\\n"\n' > "$fake/ufw" && chmod +x "$fake/ufw"
