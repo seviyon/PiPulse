@@ -161,3 +161,34 @@ describe('the Host check on every request', () => {
     expect(await raw(['pi.example'], upgrade('pi.example'))).toMatch(/ 101 /);
   });
 });
+
+describe('mutation review: single-character labels and the allowed-hosts list', () => {
+  it('reads host names whose labels are one character long', () => {
+    expect(hostOf('a')).toBe('a');
+    expect(hostOf('a.b')).toBe('a.b');
+    expect(hostOf('x.io:8889')).toBe('x.io');
+    expect(hostOf('io.l')).toBe('io.l');
+  });
+
+  it('skips an address in the list (it is allowed anyway) instead of refusing the setting', () => {
+    expect(parseAllowedHosts('192.168.1.5,io.lan', ['io'])).toEqual(['io.lan', 'io']);
+    expect(parseAllowedHosts('::1', ['io'])).toEqual([]);
+  });
+
+  it('an empty list stays empty (no check) even when the host adds names of its own', () => {
+    expect(parseAllowedHosts('', ['io', 'io.local'])).toEqual([]);
+    expect(parseAllowedHosts(undefined, ['io'])).toEqual([]);
+  });
+
+  it('names a refused entry, cut to 64 characters', () => {
+    const long = `${'a'.repeat(100)}!`;
+    let message = '';
+    try {
+      parseAllowedHosts(long);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain(`"${'a'.repeat(64)}"`);
+    expect(message).not.toContain('a'.repeat(65));
+  });
+});
