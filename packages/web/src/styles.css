@@ -738,6 +738,16 @@ button:hover {
   text-align: left;
 }
 
+.upgrade-log {
+  max-height: 20rem;
+  overflow: auto;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85em;
+  border: 1px solid var(--hairline);
+}
+
 .command code {
   user-select: all;
   overflow-wrap: anywhere;

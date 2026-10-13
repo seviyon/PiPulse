@@ -2,7 +2,7 @@
 # run.sh [NAME...] — runs packaging/test/NAME.test.sh (default: all, in dependency order).
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
-[ "$#" -gt 0 ] || set -- fetch-node tarball setup service install release migrate-tls tls rollback deb next-version apt migrate
+[ "$#" -gt 0 ] || set -- fetch-node tarball setup service install release migrate-tls tls rollback deb next-version apt migrate upgrade
 status=0
 for name in "$@"; do
   t="$dir/$name.test.sh"

@@ -19,6 +19,12 @@ lint "$out/pipulse_0.0.1_$arch.deb" && ok 'lintian clean' || bad 'lintian clean'
 # Members compressed with xz, which dpkg on Raspberry Pi OS 11 can read (it has no zstd).
 members=$(ar t "$out/pipulse_0.0.1_$arch.deb" | tr '\n' ' ')
 [ "$members" = 'debian-binary control.tar.xz data.tar.xz ' ] && ok 'xz members, readable by older dpkg' || bad "xz members, readable by older dpkg (got: $members)"
+# The Updates tab's upgrade helper ships with the package: units, script, and a log folder removed on purge.
+contents=$(dpkg-deb -c "$out/pipulse_0.0.1_$arch.deb")
+for f in lib/systemd/system/pipulse-upgrade.service lib/systemd/system/pipulse-upgrade.path opt/pipulse/app/packaging/pipulse-upgrade.sh; do
+  echo "$contents" | grep -q "$f" && ok "the package contains $f" || bad "the package contains $f"
+done
+echo "$contents" | grep 'pipulse-upgrade.sh' | grep -q 'root/root' && ok 'the helper script is owned by root' || bad 'the helper script is owned by root'
 # A hyphenated version (a pre-release, the CI dry run) is a non-native package to Debian.
 "$repo/packaging/build-tarball.sh" 0.0.3-rc.1 "$out" >/dev/null
 "$repo/packaging/build-deb.sh" 0.0.3-rc.1 "$arch" "$out/pipulse-0.0.3-rc.1.tar.gz" "$out" >/dev/null
@@ -33,6 +39,7 @@ if apt-get install -y "$out/pipulse_0.0.1_$arch.deb" >/dev/null 2>&1; then bad '
 mv /usr/bin/uname.real /usr/bin/uname
 dpkg --purge pipulse >/dev/null 2>&1 || true
 apt-get install -y "$out/pipulse_0.0.1_$arch.deb" >/dev/null && ok 'installs' || bad 'installs'
+[ -z "$(find /opt/pipulse ! -type l -perm /022 | head -n 1)" ] && ok 'nothing under /opt/pipulse is writable by group or others (root runs the upgrade helper from there)' || bad 'nothing under /opt/pipulse is writable by group or others'
 [ -x /opt/pipulse/node/bin/node ] && id pipulse >/dev/null && ok 'node and user' || bad 'node and user'
 echo 'PIPULSE_PORT=8889' >> /etc/pipulse/pipulse.env
 DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold "$out/pipulse_0.0.2_$arch.deb" >/dev/null && ok 'upgrades' || bad 'upgrades'
@@ -44,6 +51,8 @@ touch /etc/pipulse/.renew-timer-enabled # setup.sh writes it on systemd hosts
 apt-get remove -y pipulse >/dev/null
 [ ! -e /etc/pipulse/.renew-timer-enabled ] && ok 'remove forgets the timer marker, so a reinstall enables the timer' || bad 'remove forgets the timer marker, so a reinstall enables the timer'
 [ ! -e /opt/pipulse ] && [ -f /etc/pipulse/pipulse.env ] && [ -d /var/lib/pipulse ] && ok 'remove keeps data and settings' || bad 'remove keeps data and settings'
+mkdir -p /var/lib/pipulse-updates && : > /var/lib/pipulse-updates/upgrade.log
 apt-get purge -y pipulse >/dev/null
+[ ! -e /var/lib/pipulse-updates ] && ok 'purge removes the upgrade log' || bad 'purge removes the upgrade log'
 [ ! -e /etc/pipulse ] && [ ! -e /var/lib/pipulse ] && ! getent passwd pipulse >/dev/null && ok 'purge removes everything' || bad 'purge removes everything'
 exit $fail

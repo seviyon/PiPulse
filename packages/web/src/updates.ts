@@ -5,6 +5,8 @@ export const UPGRADE_COMMAND = 'sudo apt-get update && sudo apt-get upgrade';
 export const PIPULSE_APT_COMMAND =
   'sudo apt-get update && sudo apt-get install --only-upgrade pipulse';
 export const DOCKER_COMMAND = 'docker compose pull && docker compose up -d';
+export const UPGRADE_CONFIRM_WORD = 'upgrade';
+export const UPGRADE_POLL_MS = 3000;
 /** Lists older than this are said to be stale: apt-daily refreshes them every day. */
 export const STALE_LISTS_MS = 2 * 86_400_000;
 

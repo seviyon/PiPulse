@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { sendJson, type Session } from './api.js';
+import { getJson, sendJson, type Session } from './api.js';
 import { formatAge, formatDateTime } from './format.js';
 import { StatusIcon } from './tile.js';
-import type { UpdatesView } from './types.js';
+import type { UpdatesView, UpgradeView } from './types.js';
 import {
   DOCKER_COMMAND,
   PIPULSE_APT_COMMAND,
   STALE_LISTS_MS,
   UPGRADE_COMMAND,
+  UPGRADE_CONFIRM_WORD,
+  UPGRADE_POLL_MS,
   waitingCount
 } from './updates.js';
 
@@ -61,6 +63,150 @@ function When({ view, now }: { view: Extract<UpdatesView, { state: 'ok' }>; now:
           The package lists are more than two days old, so newer updates may not show here. Refresh
           them with <code>sudo apt-get update</code>.
         </p>
+      )}
+    </section>
+  );
+}
+
+const STEP_WORDS = { update: 'refreshing the package lists', upgrade: 'installing the upgrades' };
+
+/**
+ * The opt-in "install from here" button. A root helper does the work after the operator turned
+ * it on in pipulse.env; this only asks, and shows what the helper reports. PiPulse itself may be
+ * restarted by the upgrade, so a failed poll is expected and simply tried again.
+ */
+function InstallUpdates({
+  upgrade,
+  session,
+  now,
+  onView
+}: {
+  upgrade: UpgradeView;
+  session: Session;
+  now: number;
+  onView: (patch: (view: UpdatesView) => UpdatesView) => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [problem, setProblem] = useState<string>();
+  const busy = upgrade.available && (upgrade.state === 'requested' || upgrade.state === 'running');
+  useEffect(() => {
+    if (!busy) return undefined;
+    const timer = setInterval(() => {
+      getJson<UpdatesView>('/api/updates').then(
+        (view) => onView(() => view),
+        () => undefined
+      );
+    }, UPGRADE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  if (!upgrade.available) {
+    if (upgrade.reason === 'container') return null;
+    return (
+      <p class="waiting">
+        {upgrade.reason === 'off' &&
+          'Installing from this page is off. To allow it, set PIPULSE_ALLOW_UPGRADE=true in /etc/pipulse/pipulse.env (it also needs a sign-in password) and restart PiPulse.'}
+        {upgrade.reason === 'no-sign-in' &&
+          'Installing from this page needs a sign-in password: set one first (see Settings).'}
+        {upgrade.reason === 'not-installed' &&
+          "This install doesn't have the upgrade helper: update PiPulse, then try again."}
+      </p>
+    );
+  }
+
+  const ask = async () => {
+    setAsking(true);
+    setProblem(undefined);
+    try {
+      const res = await sendJson<{ upgrade: UpgradeView }>('POST', '/api/updates/upgrade', {
+        confirm: UPGRADE_CONFIRM_WORD
+      });
+      onView((view) => ({ ...view, upgrade: res.upgrade }));
+      setTyped('');
+    } catch (error) {
+      setProblem((error as Error).message || 'The request could not be sent.');
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="updates-install">
+      <h2 id="updates-install">Install from here</h2>
+      <p class="waiting">
+        This runs <code>apt-get update</code> and then <code>apt-get upgrade</code> as root. It can
+        restart services (PiPulse itself, Pi-hole), so this page may go quiet for a while, and some
+        upgrades need a reboot. Nothing is removed. If you would rather watch it happen, use the
+        command above over SSH.
+      </p>
+      {session.signedIn ? (
+        <p>
+          <label>
+            Type <code>{UPGRADE_CONFIRM_WORD}</code> to confirm{' '}
+            <input
+              type="text"
+              value={typed}
+              autocomplete="off"
+              spellcheck={false}
+              onInput={(e) => setTyped((e.target as HTMLInputElement).value)}
+            />
+          </label>{' '}
+          <button
+            type="button"
+            onClick={ask}
+            disabled={typed.trim() !== UPGRADE_CONFIRM_WORD || asking || busy}
+          >
+            {asking ? 'Asking…' : 'Install updates'}
+          </button>
+          {problem && <span class="alert-severity"> {problem}</span>}
+        </p>
+      ) : (
+        <p class="waiting">Sign in (Settings) to install from here.</p>
+      )}
+      <div role="status">
+        {upgrade.state === 'requested' && <p>Asked. Waiting for the helper to start…</p>}
+        {upgrade.state === 'running' && (
+          <p>
+            <StatusIcon level="warning" />
+            Running: {upgrade.step ? STEP_WORDS[upgrade.step] : 'starting'}
+            {upgrade.startedAt !== null && ` (started ${formatAge(now - upgrade.startedAt)})`}.
+          </p>
+        )}
+        {upgrade.state === 'done' && (
+          <p>
+            Finished {upgrade.finishedAt !== null && formatDateTime(upgrade.finishedAt)}: the
+            upgrade completed.
+          </p>
+        )}
+        {upgrade.state === 'failed' && (
+          <p class="alert-severity">
+            <StatusIcon level="critical" />
+            Failed {upgrade.finishedAt !== null && formatDateTime(upgrade.finishedAt)} while{' '}
+            {upgrade.step ? STEP_WORDS[upgrade.step] : 'running'}
+            {upgrade.exitCode !== null && ` (exit code ${upgrade.exitCode})`}. The log below says
+            why.
+          </p>
+        )}
+        {upgrade.state === 'interrupted' && (
+          <p class="alert-severity">
+            <StatusIcon level="warning" />
+            The last upgrade was cut short by a restart. Run <code>
+              sudo dpkg --configure -a
+            </code>{' '}
+            over SSH to finish anything half-installed.
+          </p>
+        )}
+        {upgrade.rebootRequired && (
+          <p>
+            <StatusIcon level="warning" />A reboot is needed to finish the upgrade.
+          </p>
+        )}
+      </div>
+      {upgrade.log.length > 0 && (
+        <pre class="upgrade-log" tabindex={0} aria-label="Upgrade log">
+          {upgrade.log.join('\n')}
+        </pre>
       )}
     </section>
   );
@@ -202,6 +348,14 @@ export function UpdatesPage({
           </section>
           <When view={view} now={now} />
         </>
+      )}
+      {view?.upgrade && view.state !== 'unsupported' && (
+        <InstallUpdates
+          upgrade={view.upgrade}
+          session={session}
+          now={now}
+          onView={(patch) => onView(patch(view))}
+        />
       )}
       {view !== undefined && view.state !== 'unsupported' && (
         <p>

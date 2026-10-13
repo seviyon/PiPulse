@@ -146,10 +146,11 @@ set_aside_tarball() {
     systemctl disable --now pipulse >/dev/null 2>&1 || true
     systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
   fi
+  stop_upgrade_units
   echo "$was_enabled $was_active" > "$ASIDE/state"
   if [ -d /opt/pipulse ]; then mv /opt/pipulse "$ASIDE/opt"; fi
   if [ -e /usr/bin/pipulse ]; then mv /usr/bin/pipulse "$ASIDE/pipulse"; fi
-  for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+  for unit in $UNITS; do
     if [ -e "/etc/systemd/system/$unit" ]; then mv "/etc/systemd/system/$unit" "$ASIDE/$unit"; fi
   done
   # The timer is off now, so the package's setup must enable it again: left in place, this
@@ -164,7 +165,8 @@ restore_tarball() {
   if [ -e "$ASIDE/pipulse" ]; then mv "$ASIDE/pipulse" /usr/bin/pipulse; fi
   # The failed new version's units go first; the old version may have had none of the renewal ones.
   if [ -d /run/systemd/system ]; then systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true; fi
-  for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+  stop_upgrade_units
+  for unit in $UNITS; do
     rm -f "/etc/systemd/system/$unit"
     if [ -e "$ASIDE/$unit" ]; then mv "$ASIDE/$unit" "/etc/systemd/system/$unit"; fi
   done
@@ -263,6 +265,15 @@ env_value() {
 }
 
 restart() { sh -c "$(hook_value PIPULSE_RESTART_CMD 'systemctl restart pipulse')"; }
+
+# Every unit PiPulse installs by hand. The upgrade pair is the Updates tab's opt-in helper.
+UNITS='pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer pipulse-upgrade.service pipulse-upgrade.path'
+remove_units() {
+  for unit in $UNITS; do rm -f "/etc/systemd/system/$unit"; done
+}
+stop_upgrade_units() {
+  if [ -d /run/systemd/system ]; then systemctl stop pipulse-upgrade.path pipulse-upgrade.service >/dev/null 2>&1 || true; fi
+}
 
 # The installed release, e.g. 0.6.0.
 installed() { sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /opt/pipulse/app/version.json; }
@@ -434,6 +445,12 @@ install_tarball() { # install_tarball FILE NO_START
     rm -f /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer /etc/pipulse/.renew-timer-enabled
     if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
   fi
+  # Likewise the upgrade helper's units, absent before the Updates tab's button.
+  if [ ! -e /opt/pipulse/app/packaging/pipulse-upgrade.path ]; then
+    stop_upgrade_units
+    rm -f /etc/systemd/system/pipulse-upgrade.service /etc/systemd/system/pipulse-upgrade.path
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+  fi
   # The previous version's own setup puts its unit file back too.
   start_service no
   if health_ok; then die "$failed did not become healthy$reason; rolled back to $(installed), which is running"; fi
@@ -451,13 +468,14 @@ uninstall() { # uninstall PURGE
   if [ -d /run/systemd/system ]; then
     systemctl disable --now pipulse >/dev/null 2>&1 || true
     systemctl disable --now pipulse-tls-renew.timer >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/pipulse.service /etc/systemd/system/pipulse-tls-renew.service /etc/systemd/system/pipulse-tls-renew.timer
+    stop_upgrade_units
+    remove_units
     systemctl daemon-reload
   fi
   # The timer is gone, so a reinstall over the kept /etc/pipulse must enable it again (setup.sh
   # reads this marker as "the operator already decided").
   rm -f /etc/pipulse/.renew-timer-enabled
-  rm -rf /opt/pipulse /usr/bin/pipulse
+  rm -rf /opt/pipulse /usr/bin/pipulse /var/lib/pipulse-updates
   if [ "$1" = yes ]; then
     # Read before /etc/pipulse goes: a database somewhere else is the operator's, not ours to delete.
     custom=$(db_path)
