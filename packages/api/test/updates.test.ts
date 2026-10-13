@@ -9,6 +9,8 @@ import { buildServer } from '../src/index.js';
 import {
   APT_CACHE,
   APT_GET,
+  CHECK_INTERVAL_MS,
+  FIRST_CHECK_MS,
   MANUAL_GAP_MS,
   MAX_LISTED,
   createUpdates,
@@ -282,6 +284,11 @@ describe('createUpdates', () => {
     expect(run.calls).toHaveLength(4);
   });
 
+  it('in a container nothing is ever run, even with the real runner', async () => {
+    const updates = createUpdates({ inContainer: true });
+    expect(await updates.check()).toEqual({ state: 'unsupported', reason: 'container' });
+  });
+
   it('a manual check before any check runs one', async () => {
     const run = runner();
     const view = await make(run).check({ manual: true });
@@ -306,6 +313,21 @@ describe('createUpdates', () => {
       updates.stop();
       await vi.advanceTimersByTimeAsync(20_000);
       expect(run.calls).toHaveLength(4);
+    });
+
+    it('with no options given, waits 2 minutes, then checks every 6 hours', async () => {
+      const run = runner();
+      const updates = createUpdates({ inContainer: false, run, aptPresent: () => true });
+      updates.start();
+      await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS - 1);
+      expect(run.calls).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(run.calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS);
+      expect(run.calls).toHaveLength(4);
+      updates.stop();
+      // the real clock and the real monotonic clock stamp the result
+      expect(updates.view()).toMatchObject({ state: 'ok', checkedAt: expect.any(Number) });
     });
 
     it('stop before the first check cancels it', async () => {

@@ -235,6 +235,21 @@ describe('Copy', () => {
   });
 });
 
+describe('Check now, when the failure has no message', () => {
+  it('falls back to a plain sentence', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('');
+      })
+    );
+    await show(ok(), { session: signedIn });
+    const button = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Check now')!;
+    await act(async () => button.click());
+    await vi.waitFor(() => expect(text()).toContain('The check could not be run.'));
+  });
+});
+
 describe('Check now', () => {
   it('is for a signed-in visitor: it posts, shows the new view, and is disabled meanwhile', async () => {
     let resolve!: (body: UpdatesView) => void;
