@@ -104,6 +104,27 @@ function routes() {
   return defaultRouteInterfaces(read('/proc/net/route'), read('/proc/net/ipv6_route'));
 }
 
+/**
+ * A yes/no question. The end of input (Ctrl-D, a closed pipe) is "no": a readline question
+ * that is never answered would leave the process waiting until Node gives up with exit code 13.
+ */
+export async function askYesNo(
+  question: string,
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream
+): Promise<boolean> {
+  const rl = createInterface({ input, output });
+  try {
+    const answer = await Promise.race([
+      rl.question(`${question} [y/N] `),
+      new Promise<string>((resolve) => rl.once('close', () => resolve('')))
+    ]);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 export function defaultContext(): Context {
   const env = settingsEnv(process.env);
   const run = (command: string, args: string[]) =>
@@ -124,27 +145,20 @@ export function defaultContext(): Context {
     },
     openssl: OPENSSL,
     now: Date.now,
+    monotonic: () => performance.now(),
     hostname: () => hostName(env),
     addresses: () => defaultRouteAddresses(routes(), networkInterfaces()),
     candidate: () => candidateSubnet(routes(), networkInterfaces()),
     interfaces: networkInterfaces,
-    clock: (notBefore) =>
+    clock: () =>
       readClock({
         timesyncDir: env['PIPULSE_TLS_TIMESYNC_DIR']?.trim() || DEFAULT_TIMESYNC_DIR,
         now: Date.now(),
-        trust: env['PIPULSE_TLS_CLOCK']?.trim() === 'trust',
-        ...(notBefore !== undefined ? { notBefore } : {})
+        trust: env['PIPULSE_TLS_CLOCK']?.trim() === 'trust'
       }),
     isRoot: process.getuid?.() === 0,
     tty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-    ask: async (question) => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
-      } finally {
-        rl.close();
-      }
-    },
+    ask: (question) => askYesNo(question, process.stdin, process.stdout),
     out: (line) => {
       process.stdout.write(`${line}\n`);
     },
@@ -170,11 +184,21 @@ export function defaultContext(): Context {
  */
 export function lockFor(
   command: string | undefined,
-  ctx: Context
+  ctx: Context,
+  args: string[] = []
 ): { create: boolean } | undefined {
   if (command === undefined || !Object.hasOwn(LOCKED, command)) return undefined;
   const modeSwitch = command === 'enable' || command === 'disable';
-  if (!modeSwitch && (operatorConfigured(ctx.env) || nativeLayoutProblem(ctx) !== undefined))
+  // `init --mode auto` writes state.json even over an operator certificate; with a refused
+  // folder and no operator certificate it writes nothing, not even a lock file there.
+  const initState = command === 'init' && args.includes('--mode');
+  if (initState && !operatorConfigured(ctx.env) && nativeLayoutProblem(ctx) !== undefined)
+    return undefined;
+  if (
+    !modeSwitch &&
+    !initState &&
+    (operatorConfigured(ctx.env) || nativeLayoutProblem(ctx) !== undefined)
+  )
     return undefined;
   return { create: LOCKED[command] === true };
 }
@@ -192,7 +216,7 @@ export async function main(argv: string[], ctx: Context): Promise<number> {
     }
     const run = () => dispatch(command, args, ctx);
     // One command at a time (the hourly timer, a manual new-ca, setup).
-    const lock = lockFor(command, ctx);
+    const lock = lockFor(command, ctx, args);
     if (lock) {
       return await withLock(ctx.layout, run, {
         create: lock.create,

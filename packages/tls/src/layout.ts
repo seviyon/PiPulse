@@ -283,8 +283,18 @@ export function listBackups(layout: Layout): BackupInfo[] {
 }
 
 export function readState(layout: Layout): StateMode | undefined {
-  const content = readOptional(paths(layout).state);
-  return content === undefined ? undefined : parseState(content).mode;
+  const path = paths(layout).state;
+  const content = readOptional(path);
+  if (content === undefined) return undefined;
+  try {
+    return parseState(content).mode;
+  } catch (error) {
+    // A half-written or hand-edited file: say where it is and how to get out.
+    throw new Error(
+      `${path} is damaged (${(error as Error).message.replace(/^state\.json:? ?/, '')}); delete it, or run sudo pipulse tls enable / disable, which replace it`,
+      { cause: error }
+    );
+  }
 }
 
 /** state.json is data, never sourced: written only by setup (through the CLI), the CLI and the sidecar. */

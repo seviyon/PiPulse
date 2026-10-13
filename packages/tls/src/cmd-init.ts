@@ -25,6 +25,7 @@ import { recover } from './journal.js';
 import {
   confirm,
   isoDate,
+  ensureStateDirs,
   ensureTlsDirs,
   nativeLayoutProblem,
   operatorConfigured,
@@ -77,7 +78,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
   if (tlsOff(ctx.env)) {
     ctx.out('PIPULSE_TLS=off: plain HTTP; no CA made');
     if (readState(ctx.layout) === undefined) {
-      ensureTlsDirs(ctx.layout, ctx.hook);
+      ensureStateDirs(ctx);
       writeState(ctx.layout, 'legacy-http', ctx.hook);
     }
     return 0;
@@ -123,6 +124,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
         })`
       );
     }
+    ensureStateDirs(ctx); // an operator certificate leaves material() before any folder exists
     writeState(ctx.layout, 'https', ctx.hook);
     return 0;
   }
@@ -131,6 +133,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
       'warning: HTTPS is not prepared (see above); PiPulse stays on plain HTTP. Try again later with: sudo pipulse tls init'
     );
   }
+  ensureStateDirs(ctx);
   writeState(ctx.layout, 'legacy-http', ctx.hook);
   // With an operator certificate configured the environment decides the transport, so
   // "not switched on" would be wrong (a 6b-1 install with PIPULSE_TLS=on keeps serving HTTPS).
@@ -238,14 +241,18 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
     }
     for (const file of repairPublic(ctx, ca)) ctx.out(`repaired ${file}`);
     const leaf = checkLeaf(paths(layout).bundle, ca, pub(layout));
-    if (leaf.kind === 'ok' && leaf.notAfter > ctx.now()) {
+    if (leaf.kind === 'ok' && leaf.notAfter > ctx.now() && leaf.notBefore <= ctx.now()) {
       ctx.out(
         `the CA and certificate are in place (the certificate is valid until ${isoDate(leaf.notAfter)}); nothing to do`
       );
       return 0;
     }
     if (leaf.kind === 'ok')
-      ctx.err(`replacing the certificate: it expired on ${isoDate(leaf.notAfter)}`);
+      ctx.err(
+        leaf.notAfter <= ctx.now()
+          ? `replacing the certificate: it expired on ${isoDate(leaf.notAfter)}`
+          : `replacing the certificate: it is dated in the future (from ${isoDate(leaf.notBefore)})`
+      );
     if (leaf.kind === 'refused') ctx.err(`replacing the certificate: ${leaf.problem}`);
     await opensslVersion(ctx.openssl);
     const gate = await issuanceClock(ctx, { lenient: true, waitMs: CLOCK_WAIT_MS });

@@ -551,7 +551,7 @@ describe('leafNames, edge cases', () => {
     expect(
       leafNames({ constraints: lan, hostname: 'io', names: ['a b'], addresses: ['garbage'] })
     ).toEqual({
-      dns: ['io', 'io.local', 'localhost'],
+      dns: ['io', 'io.local', 'localhost', 'io.lan'], // io.lan: the CA allows it, so the leaf carries it
       ip: ['127.0.0.1', '::1'],
       outside: ['a b', 'garbage']
     });
@@ -566,7 +566,7 @@ describe('leafNames, edge cases', () => {
         addresses: ['192.168.1.35', '127.0.0.1', '10.0.0.7', '10.0.0.7']
       })
     ).toEqual({
-      dns: ['io', 'io.local', 'localhost'],
+      dns: ['io', 'io.local', 'localhost', 'io.lan'],
       ip: ['127.0.0.1', '::1', '192.168.1.35'],
       outside: ['10.0.0.7']
     });

@@ -3,7 +3,6 @@ import {
   closeSync,
   constants,
   fchmodSync,
-  fchownSync,
   openSync,
   readFileSync,
   rmSync,
@@ -27,6 +26,49 @@ export const TRUST_STEPS = [
   'Before importing, check the fingerprint on that device: openssl x509 -in pipulse-ca.crt -noout -fingerprint -sha256'
 ];
 
+/** The slice of `process` that changes identity (tests pass a fake). */
+export interface Identity {
+  geteuid?: () => number;
+  getgroups?: () => number[];
+  setgroups?: (groups: number[]) => void;
+  seteuid?: (uid: number) => void;
+  setegid?: (gid: number) => void;
+}
+
+/**
+ * Runs `fn` as the user who typed `sudo` (SUDO_UID/SUDO_GID), when this process is root: a
+ * file written for them must be made with their rights, or `--out /etc/ld.so.preload` through
+ * a narrow sudoers rule would let them create root-trusted files. The supplementary groups
+ * are replaced too (root's would still open things the caller can't). Root again afterwards,
+ * also when `fn` throws. Not root, or no SUDO_UID: `fn` runs as it is.
+ */
+export function asCaller<T>(env: NodeJS.ProcessEnv, fn: () => T, proc: Identity = process): T {
+  const uid = Number(env['SUDO_UID']);
+  const gid = Number(env['SUDO_GID']);
+  if (
+    proc.geteuid?.() !== 0 ||
+    !Number.isInteger(uid) ||
+    !Number.isInteger(gid) ||
+    uid <= 0 ||
+    gid < 0 ||
+    !proc.seteuid ||
+    !proc.setegid ||
+    !proc.setgroups
+  )
+    return fn();
+  const groups = proc.getgroups?.() ?? [0];
+  proc.setgroups([gid]);
+  proc.setegid(gid);
+  proc.seteuid(uid);
+  try {
+    return fn();
+  } finally {
+    proc.seteuid(0);
+    proc.setegid(0);
+    proc.setgroups(groups);
+  }
+}
+
 export function exportCa(ctx: Context, args: string[]): number {
   const { values } = usage(() =>
     parseArgs({ args, options: { out: { type: 'string' } }, strict: true })
@@ -43,31 +85,33 @@ export function exportCa(ctx: Context, args: string[]): number {
   }
   const fingerprint = new X509Certificate(pem).fingerprint256;
   if (values.out) {
-    // The file is made O_EXCL|O_NOFOLLOW and everything else goes through its descriptor:
-    // the CLI runs under umask 077, so the mode must be set explicitly (the CA certificate
-    // is public and meant to be copied to other devices), and a chown by path could follow
-    // a symlink swapped in meanwhile.
-    let fd: number | undefined;
-    try {
-      fd = openSync(
-        values.out,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o644
-      );
-      fchmodSync(fd, 0o644);
-      // Written as root through sudo: hand the file to the user who asked for it.
-      const uid = Number(ctx.env['SUDO_UID']);
-      const gid = Number(ctx.env['SUDO_GID']);
-      if (Number.isInteger(uid) && Number.isInteger(gid) && uid > 0) fchownSync(fd, uid, gid);
-      writeFileSync(fd, pem);
-    } catch (error) {
-      if (fd !== undefined) rmSync(values.out, { force: true });
-      ctx.err(
-        `can't write ${values.out}: ${(error as NodeJS.ErrnoException).code === 'EEXIST' ? 'it already exists' : (error as Error).message}`
-      );
+    // The file is made O_EXCL|O_NOFOLLOW, as the user who asked (asCaller), and the mode goes
+    // through its descriptor: the CLI runs under umask 077, so it must be set explicitly (the CA
+    // certificate is public and meant to be copied to other devices).
+    const out = values.out;
+    const failure = asCaller(ctx.env, () => {
+      let fd: number | undefined;
+      try {
+        fd = openSync(
+          out,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+          0o644
+        );
+        fchmodSync(fd, 0o644);
+        writeFileSync(fd, pem);
+        return undefined;
+      } catch (error) {
+        if (fd !== undefined) rmSync(out, { force: true });
+        return (error as NodeJS.ErrnoException).code === 'EEXIST'
+          ? 'it already exists'
+          : (error as Error).message;
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
+    });
+    if (failure !== undefined) {
+      ctx.err(`can't write ${out}: ${failure}`);
       return 1;
-    } finally {
-      if (fd !== undefined) closeSync(fd);
     }
     ctx.err(`wrote ${values.out}`);
   } else {

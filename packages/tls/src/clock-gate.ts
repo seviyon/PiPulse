@@ -1,4 +1,4 @@
-import type { Context } from './cli-common.js';
+import { waitClock, type Context } from './cli-common.js';
 import { CLOCK_FLOOR_MS } from './clock.js';
 
 export const CLOCK_WAIT_MS = 60_000;
@@ -11,10 +11,10 @@ export const CLOCK_WAIT_MS = 60_000;
  * waited for up to waitMs, and never issued on.
  */
 export async function issuanceClock(
-  ctx: Pick<Context, 'clock' | 'now' | 'sleep' | 'err'>,
+  ctx: Pick<Context, 'clock' | 'now' | 'monotonic' | 'sleep' | 'err'>,
   options: { lenient: boolean; waitMs: number }
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const deadline = ctx.now() + options.waitMs;
+  const deadline = waitClock(ctx) + options.waitMs;
   for (;;) {
     const clock = ctx.clock();
     if (clock.synced) return { ok: true };
@@ -31,7 +31,7 @@ export async function issuanceClock(
           'no clock synchronization signal: set PIPULSE_TLS_CLOCK=trust in pipulse.env if chrony or ntpd keeps this clock right'
       };
     }
-    if (ctx.now() >= deadline) {
+    if (waitClock(ctx) >= deadline) {
       return {
         ok: false,
         reason:

@@ -1,7 +1,8 @@
 import type { NetworkInterfaceInfo } from 'node:os';
 import type { ClockReading } from './clock.js';
 import { consequenceText } from './constraints.js';
-import { ensureDir, type FsHook } from './files.js';
+import { mkdirSync } from 'node:fs';
+import { ensureDir, pathExists, type FsHook } from './files.js';
 import type { CheckResult } from './health-check.js';
 import { MODES, priv, pub, readMeta, type Layout } from './layout.js';
 import type { LockHolder } from './lock.js';
@@ -17,13 +18,15 @@ export interface Context {
   layout: Layout;
   openssl: string;
   now: () => number;
+  /** Monotonic milliseconds for wait deadlines (an NTP step must not end or stretch a wait); tests may leave it out. */
+  monotonic?: (() => number) | undefined;
   hostname: () => string;
   /** Addresses on the default-route interface(s), canonical. */
   addresses: () => string[];
   /** The installer's candidate subnet (the default-route interface's IPv4 network). */
   candidate: () => { iface: string; cidr: string } | undefined;
   interfaces: () => NodeJS.Dict<NetworkInterfaceInfo[]>;
-  clock: (notBefore?: number) => ClockReading;
+  clock: () => ClockReading;
   isRoot: boolean;
   /** stdin and stdout are a terminal, so a question can be asked. */
   tty: boolean;
@@ -78,6 +81,25 @@ export function ensureTlsDirs(layout: Layout, hook?: FsHook | undefined): void {
   if (layout.caRoot !== layout.tlsDir)
     ensureDir(layout.caRoot, { mode: MODES.caRoot, owner: priv(layout), hook });
 }
+
+/**
+ * The folders state.json and the lock live in. Our own (the default folder, or Docker's) get
+ * their modes and owner enforced; a folder the operator pointed PIPULSE_TLS_DIR at for an
+ * operator certificate is theirs (it may be /etc/ssl): made if missing, never re-owned.
+ */
+export function ensureStateDirs(ctx: Context): void {
+  if (nativeLayoutProblem(ctx) === undefined) {
+    ensureTlsDirs(ctx.layout, ctx.hook);
+    return;
+  }
+  for (const dir of new Set([ctx.layout.tlsDir, ctx.layout.caRoot])) {
+    if (!pathExists(dir)) mkdirSync(dir, { mode: 0o750 });
+  }
+}
+
+/** The clock for wait deadlines: monotonic where the context has one. */
+export const waitClock = (ctx: Pick<Context, 'now' | 'monotonic'>): number =>
+  (ctx.monotonic ?? ctx.now)();
 
 export const isoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const isoMinute = (ms: number) =>

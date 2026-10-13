@@ -67,16 +67,16 @@ describe('readClock', () => {
     });
   });
 
-  it('is unsynced before a given notBefore (a generated leaf is never future-dated)', () => {
+  it('does not read a clock that timesyncd calls synced as unsynced because of a leaf dated ahead', () => {
+    // Such a leaf is what a clock that ran ahead and came back leaves; renew replaces it (renewDue).
     expect(
       readClock({
         timesyncDir: DIR,
         now: NOW,
         trust: false,
-        notBefore: NOW + 1,
         exists: files(DIR, `${DIR}/synchronized`)
       }).state
-    ).toBe('unsynced');
+    ).toBe('synced');
   });
 
   it('counts exactly the floor as a real time', () => {

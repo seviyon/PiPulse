@@ -129,11 +129,28 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
         `Keeping the current IP scope (${subnets.join(', ')}); --subnet none drops it, --subnet CIDR changes it.`
       );
   } else subnets = [];
+  // Names: like subnets, a rotation keeps the dotted ones the current CA allows (a name added
+  // with --name once) unless `--name none` drops them. The host's own names are always added.
+  const requestedNames = values.name ?? [];
+  if (requestedNames.includes('none') && requestedNames.length > 1)
+    throw new UsageError('--name none cannot be combined with other names');
+  const dropNames = requestedNames[0] === 'none';
+  const keptNames =
+    current.kind === 'ok' && !dropNames
+      ? current.ca.constraints.dns.filter(
+          (name) => name.includes('.') && name !== `${ctx.hostname().toLowerCase()}.local`
+        )
+      : [];
+  const newNames = dropNames ? [] : requestedNames.filter((name) => !keptNames.includes(name));
+  if (keptNames.length > 0 && newNames.length === 0)
+    ctx.out(
+      `Keeping the current names (${keptNames.join(', ')}); --name none drops them, --name NAME adds one.`
+    );
   let constraints: Constraints;
   try {
     const built = buildConstraints({
       hostname: ctx.hostname(),
-      names: [...namesSetting(ctx.env), ...(values.name ?? [])],
+      names: [...namesSetting(ctx.env), ...keptNames, ...newNames],
       subnets
     });
     for (const warning of built.warnings) ctx.err(`warning: ${warning}`);
@@ -180,12 +197,20 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
       }
     });
     if (prune.length > 0) {
-      for (const name of prune) removeTree(join(layout.caRoot, name), ctx.hook);
-      const now = checkCa(paths(layout).caDir);
-      if (now.kind === 'ok') repairPublic(ctx, now.ca);
-      ctx.out(
-        `deleted the oldest ${prune.length === 1 ? 'backup' : 'backups'}: ${prune.join(', ')}`
-      );
+      // The new CA is already in place: a failure here must not look like a failed rotation
+      // (the operator would run new-ca again and rotate twice).
+      try {
+        for (const name of prune) removeTree(join(layout.caRoot, name), ctx.hook);
+        const now = checkCa(paths(layout).caDir);
+        if (now.kind === 'ok') repairPublic(ctx, now.ca);
+        ctx.out(
+          `deleted the oldest ${prune.length === 1 ? 'backup' : 'backups'}: ${prune.join(', ')}`
+        );
+      } catch (error) {
+        ctx.err(
+          `warning: the new CA is in place, but removing the old backup failed (${(error as Error).message}); delete ${prune.join(', ')} by hand`
+        );
+      }
     }
     reportOutside(ctx, outside);
     printCa(ctx);

@@ -8,12 +8,13 @@ import { paths, pub, readState, writeState, type Layout } from './layout.js';
 import { checkCa, checkLeaf, repairPublic, type CaFiles } from './material.js';
 import {
   confirm,
-  ensureTlsDirs,
+  ensureStateDirs,
   isoDate,
   nativeLayoutProblem,
   operatorConfigured,
   portOf,
   usage,
+  waitClock,
   type Context
 } from './cli-common.js';
 
@@ -21,11 +22,21 @@ export const HEALTH_WAIT_MS = 30_000;
 
 /** The shared check until it passes, fails on TLS (exit 2), or HEALTH_WAIT_MS pass. */
 async function waitHealthy(ctx: Context): Promise<CheckResult> {
-  const deadline = ctx.now() + HEALTH_WAIT_MS;
+  const deadline = waitClock(ctx) + HEALTH_WAIT_MS;
   for (;;) {
     const result = await ctx.health(ctx.env);
-    if (result.code === 0 || result.code === 2 || ctx.now() >= deadline) return result;
+    if (result.code === 0 || result.code === 2 || waitClock(ctx) >= deadline) return result;
     await ctx.sleep(1000);
+  }
+}
+
+/** The recorded mode; a damaged state.json is reported and counts as none (enable/disable replace it). */
+function previousMode(ctx: Context): StateMode | undefined {
+  try {
+    return readState(ctx.layout);
+  } catch (error) {
+    ctx.err(`warning: ${(error as Error).message}`);
+    return undefined;
   }
 }
 
@@ -52,7 +63,7 @@ async function switchMode(
   previous: StateMode | undefined
 ): Promise<boolean> {
   // After a 6b-1 install with an operator certificate there is no TLS folder yet.
-  ensureTlsDirs(ctx.layout, ctx.hook);
+  ensureStateDirs(ctx);
   writeState(ctx.layout, to, ctx.hook);
   try {
     const mode = readTlsConfig(ctx.env, { releaseDefault: RELEASE_DEFAULT }).mode;
@@ -78,6 +89,14 @@ async function switchMode(
     result = { code: 1, message: `restart failed: ${(error as Error).message}` };
   }
   if (result.code === 0) return true;
+  if (result.code === 2 && to === 'https' && operatorConfigured(ctx.env)) {
+    // Up and serving, but this machine can't verify the certificate (a private CA that
+    // PIPULSE_TLS_CA doesn't name): the installer keeps such an install too, with a warning.
+    ctx.err(
+      `warning: HTTPS is on, but the health check could not verify the certificate (${result.message}); set PIPULSE_TLS_CA to the CA that signed it`
+    );
+    return true;
+  }
   ctx.err(
     `PiPulse did not come up healthy as ${to} (${result.message}); putting ${previous ?? 'the previous mode'} back`
   );
@@ -184,7 +203,7 @@ export async function enable(ctx: Context, args: string[]): Promise<number> {
       `CA SHA-256: ${caFingerprint}`
     );
   }
-  const previous = readState(layout);
+  const previous = previousMode(ctx);
   if (previous === 'https') {
     // Already on: a restart would only cause an outage for nothing.
     let mode: string | undefined;
@@ -246,7 +265,7 @@ export async function disable(ctx: Context, args: string[]): Promise<number> {
     ctx.err('nothing changed');
     return 1;
   }
-  if (!(await switchMode(ctx, 'legacy-http', readState(ctx.layout)))) return 1;
+  if (!(await switchMode(ctx, 'legacy-http', previousMode(ctx)))) return 1;
   if (!ctx.inContainer)
     ctx.out(`HTTPS is off: http://${ctx.hostname().toLowerCase()}:${portOf(ctx.env)}`);
   return 0;
