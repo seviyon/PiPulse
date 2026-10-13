@@ -10,13 +10,13 @@ read (the message says why). The certificate is verified against the system's tr
 store; export the PiPulse CA (`sudo pipulse tls export-ca`) and trust it on this machine.
 """
 import argparse
+import http.client
 import json
 import ssl
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 TOLERANCE_MS = 3 * 60_000  # a 1m bucket lags ~1-2 min behind now, so tail tolerance is 3 min
 
@@ -28,12 +28,27 @@ parser.add_argument("--start", dest="start_opt", help="same as the positional st
 args = parser.parse_args()
 start = args.start_opt or args.start
 base = (args.base or f"https://{args.host}:8889").rstrip("/")
+target = urlsplit(base)
+if target.scheme not in ("http", "https") or not target.hostname:
+    print(f"--base must be an http:// or https:// URL, not {base!r}", file=sys.stderr)
+    sys.exit(2)
 context = ssl.create_default_context()
 
 
 def get(path):
-    with urllib.request.urlopen(base + path, context=context, timeout=20) as response:
+    # http.client speaks only HTTP(S): no file: or custom scheme can be opened by mistake.
+    if target.scheme == "https":
+        connection = http.client.HTTPSConnection(target.hostname, target.port, timeout=20, context=context)
+    else:
+        connection = http.client.HTTPConnection(target.hostname, target.port, timeout=20)
+    try:
+        connection.request("GET", target.path.rstrip("/") + path)
+        response = connection.getresponse()
+        if response.status != 200:
+            raise OSError(f"HTTP {response.status} for {path}")
         return json.load(response)
+    finally:
+        connection.close()
 
 
 def stamp(ms):
@@ -66,6 +81,6 @@ try:
         for a, b in holes[:10]:
             print(f"    no data {stamp(a)} -> {stamp(b)} UTC ({(b - a) / 60_000:.0f} min)")
     sys.exit(1 if bad else 0)
-except (urllib.error.URLError, ssl.SSLError, OSError, KeyError, ValueError) as error:
+except (http.client.HTTPException, ssl.SSLError, OSError, KeyError, ValueError) as error:
     print(f"can't read PiPulse at {base}: {error}", file=sys.stderr)
     sys.exit(2)
