@@ -100,6 +100,9 @@ export function readGeneratedExtras(
   return extras;
 }
 
+/** The CLI renews a generated certificate this long before it expires (RENEW_BEFORE_MS in @pipulse/tls). */
+const RENEW_DUE_MS = 30 * 86_400_000;
+
 /** What /api/config serves as `tls` (subject to read protection). */
 export type TlsView =
   | { mode: 'http'; reason: ModeReason; stateMode?: StateMode; inContainer: boolean }
@@ -188,7 +191,11 @@ export function tlsView(
       : extras.renewal.result === 'failed'
         ? ('failing' as const)
         : extras.renewal.result === 'waiting-clock'
-          ? ('waiting-clock' as const)
+          ? // The clock keeping renewals waiting is a note while the leaf has time; once the
+            // renewal is due (the CLI renews 30 days ahead) it is a renewal that is not happening.
+            cert.notAfter - now <= RENEW_DUE_MS
+            ? ('failing' as const)
+            : ('waiting-clock' as const)
           : ('ok' as const),
     lastAttempt: extras.renewal?.lastAttempt ?? null,
     result: extras.renewal?.result ?? null,
@@ -204,8 +211,7 @@ export function tlsView(
   const clock = readClock({
     timesyncDir: config.timesyncDir,
     now,
-    trust: config.clockTrust,
-    ...(cert.source === 'generated' ? { notBefore: cert.notBefore } : {})
+    trust: config.clockTrust
   });
   return {
     mode: 'https',

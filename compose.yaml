@@ -2,7 +2,8 @@
 # sidecar holds the CA key and renews the certificate, and the server only
 # ever reads the certificate. Settings go in ./pipulse.env (see packaging/pipulse.env).
 # As written it suits a Linux host: it mounts the host's /etc/hostname. On Docker Desktop or
-# Colima (no such file) remove those two mounts and set PIPULSE_HOSTNAME in pipulse.env.
+# Colima (no such file) remove those two mounts and set PIPULSE_HOSTNAME in pipulse.env, and
+# the timesync mounts too (no /run/systemd/timesync there; see PIPULSE_TLS_CLOCK=trust below).
 # First start: `docker compose logs pipulse-tls` shows the CA fingerprint to check
 # before you trust the CA (docker compose exec pipulse pipulse tls export-ca).
 x-timesync: &timesync

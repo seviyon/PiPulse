@@ -10,7 +10,7 @@ import {
   type TlsConfig
 } from '@pipulse/tls';
 import { buildServer } from '../src/index.js';
-import { readGeneratedExtras, tlsView } from '../src/tls-status.js';
+import { healthBody, readGeneratedExtras, tlsView, type TlsView } from '../src/tls-status.js';
 import { fixture, tempDir } from '../../tls/test/helpers.js';
 
 // root-ca is the CA being replaced, other-ca the new one (other-leaf is its leaf).
@@ -251,5 +251,72 @@ describe('the public responses', () => {
     expect(health.reasons).toContain('renewal-failing');
     expect(tls.renewal).toMatchObject({ state: 'failing', reason: 'openssl req failed' });
     await server.close();
+  });
+});
+
+describe('review fixes: a renewal that cannot happen, and a certificate dated ahead', () => {
+  const provider = (cert: LoadedCertificate) =>
+    startReloader({
+      initial: cert,
+      load: () => cert,
+      signature: () => 's',
+      apply: () => {},
+      timer: false
+    });
+  const view = (cert: LoadedCertificate, now: number) =>
+    tlsView(config(), provider(cert), now, { extras: readGeneratedExtras(dir) }) as Extract<
+      TlsView,
+      { mode: 'https' }
+    >;
+  const DAY = 86_400_000;
+
+  it('waiting for the clock is only a note until the renewal is due, then it counts as failing', () => {
+    write('ca-meta.json', meta(OLD_CA));
+    write(
+      'renew-status.json',
+      JSON.stringify({
+        version: 1,
+        lastAttempt: 1,
+        result: 'waiting-clock',
+        reason: 'clock unknown'
+      })
+    );
+    const cert = served('root-ca.crt');
+    expect(view(cert, cert.notAfter - 60 * DAY).renewal?.state).toBe('waiting-clock');
+    expect(view(cert, cert.notAfter - 29 * DAY).renewal?.state).toBe('failing');
+  });
+
+  it('shows renewal-failing in /api/health once the leaf is due and the clock keeps the renewal waiting', () => {
+    write('ca-meta.json', meta(OLD_CA));
+    write(
+      'renew-status.json',
+      JSON.stringify({
+        version: 1,
+        lastAttempt: 1,
+        result: 'waiting-clock',
+        reason: 'clock unknown'
+      })
+    );
+    const cert = served('root-ca.crt');
+    const body = healthBody(
+      { ok: true, problems: [] },
+      view(cert, cert.notAfter - 10 * DAY),
+      false
+    );
+    expect(body.reasons).toContain('renewal-failing');
+  });
+
+  it('does not call a clock unsynced because the certificate starts in the future', () => {
+    write('ca-meta.json', meta(OLD_CA));
+    const ahead = inspectMaterial({
+      source: 'generated',
+      keyPem: fixture('future.key'),
+      certPems: [fixture('future.crt')],
+      trust: { anchors: [], system: false },
+      names: []
+    });
+    const early = view(ahead, Date.now()); // a real clock, past the floor, before the leaf starts
+    expect(early.clockSynced).toBe(true);
+    expect(early.clock).not.toBe('unsynced');
   });
 });
