@@ -77,7 +77,13 @@ export async function sidecarStart(ctx: Context, readyFile = READY_FILE): Promis
     code = 1;
   }
   let degraded = false;
-  if (code !== 0) {
+  if (code !== 0 && off) {
+    // Plain HTTP needs nothing from this container: a failed init (a lock held by `docker
+    // compose run … new-ca`, a read-only volume) must not keep the server from starting.
+    ctx.err(
+      'warning: PIPULSE_TLS=off, so the server starts although the HTTPS material was not prepared (see above)'
+    );
+  } else if (code !== 0) {
     if (!servable(ctx)) return code;
     degraded = true;
     ctx.err(
