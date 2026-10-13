@@ -94,6 +94,8 @@ test('a rule added in the editor raises without a restart and leaves Open when d
     .filter({ hasText: 'E2E CPU high' })
     .getByRole('button', { name: 'Disable' })
     .click();
+  // One click only asks; the rule keeps running until the question is answered.
+  await rules.getByRole('button', { name: 'Confirm disable' }).click();
   await expect(open).toContainText('No open alerts', ENGINE);
   // The engine closes it because its rule is no longer in force.
   await expect(page.getByRole('region', { name: 'Recent', exact: true })).toContainText(

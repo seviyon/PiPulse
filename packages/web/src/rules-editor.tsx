@@ -61,6 +61,9 @@ export function RulesSection({
   /** A failed Disable/Enable/Revert/Delete: shown above the list, not inside any form. */
   const [rowError, setRowError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  /** The rule whose Disable is waiting for a second click: one click can silence a rule, so it asks first. */
+  const [confirming, setConfirming] = useState<string>();
+  const cancelButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const canEdit = session.editable && session.signedIn;
 
@@ -74,6 +77,11 @@ export function RulesSection({
       cancelled = true;
     };
   }, [rules]);
+
+  // Focus lands on the safe choice, so Enter or Space right after the click can't disable anything.
+  useEffect(() => {
+    if (confirming !== undefined) cancelButton.current?.focus();
+  }, [confirming]);
 
   useEffect(() => {
     form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
@@ -147,6 +155,10 @@ export function RulesSection({
       setBusy(false);
     }
   };
+
+  /** Sends what toggleRequest chose: a PUT with a body, or a DELETE that drops the override. */
+  const sendToggle = (id: string, toggle: ReturnType<typeof toggleRequest>) =>
+    sendRow(toggle.method, id, toggle.method === 'PUT' ? toggle.body : undefined);
 
   const save = async () => {
     if (!editing) return;
@@ -396,59 +408,91 @@ export function RulesSection({
                 </span>
               )}
               {canEdit && (
-                <span class="rule-actions">
-                  {!bareWritten(entry.written) && (
-                    <button
-                      type="button"
-                      class="link-button"
-                      disabled={busy}
-                      onClick={() => {
-                        setErrors({});
-                        setEditing({
-                          id: entry.id,
-                          draft: draftOf(entry.written!),
-                          ...(entry.disabled ? { disabled: true } : {})
-                        });
-                      }}
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {(!bareWritten(entry.written) || entry.rule) && (
-                    <button
-                      type="button"
-                      class="link-button"
-                      disabled={busy}
-                      onClick={() =>
-                        void sendRow(
-                          toggle.method,
-                          entry.id,
-                          toggle.method === 'PUT' ? toggle.body : undefined
-                        )
-                      }
-                    >
-                      {entry.disabled ? 'Enable' : 'Disable'}
-                    </button>
-                  )}
-                  {entry.kind === 'edited' && (
-                    <button
-                      type="button"
-                      class="link-button"
-                      disabled={busy}
-                      onClick={() => void sendRow('DELETE', entry.id)}
-                    >
-                      Revert
-                    </button>
-                  )}
-                  {entry.kind === 'added' && (
-                    <button
-                      type="button"
-                      class="link-button"
-                      disabled={busy}
-                      onClick={() => void sendRow('DELETE', entry.id)}
-                    >
-                      Delete
-                    </button>
+                <span
+                  class="rule-actions"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape' && confirming === entry.id) setConfirming(undefined);
+                  }}
+                >
+                  {confirming === entry.id ? (
+                    <>
+                      <span>
+                        Disable this rule? Its alerts stop, and any alert it has open closes.
+                      </span>
+                      <button
+                        type="button"
+                        class="link-button"
+                        disabled={busy}
+                        onClick={async () => {
+                          await sendToggle(entry.id, toggle);
+                          setConfirming(undefined);
+                        }}
+                      >
+                        Confirm disable
+                      </button>
+                      <button
+                        type="button"
+                        class="link-button"
+                        ref={cancelButton}
+                        onClick={() => setConfirming(undefined)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {!bareWritten(entry.written) && (
+                        <button
+                          type="button"
+                          class="link-button"
+                          disabled={busy}
+                          onClick={() => {
+                            setErrors({});
+                            setEditing({
+                              id: entry.id,
+                              draft: draftOf(entry.written!),
+                              ...(entry.disabled ? { disabled: true } : {})
+                            });
+                          }}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {(!bareWritten(entry.written) || entry.rule) && (
+                        <button
+                          type="button"
+                          class="link-button"
+                          disabled={busy}
+                          onClick={() =>
+                            entry.disabled
+                              ? void sendToggle(entry.id, toggle)
+                              : setConfirming(entry.id)
+                          }
+                        >
+                          {entry.disabled ? 'Enable' : 'Disable'}
+                        </button>
+                      )}
+                      {entry.kind === 'edited' && (
+                        <button
+                          type="button"
+                          class="link-button"
+                          disabled={busy}
+                          onClick={() => void sendRow('DELETE', entry.id)}
+                        >
+                          Revert
+                        </button>
+                      )}
+                      {entry.kind === 'added' && (
+                        <button
+                          type="button"
+                          class="link-button"
+                          disabled={busy}
+                          onClick={() => void sendRow('DELETE', entry.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </>
                   )}
                 </span>
               )}
