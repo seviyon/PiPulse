@@ -76,6 +76,11 @@ const show = async (session = signedIn) => {
 };
 const button = (name: string) =>
   [...root.querySelectorAll('button')].find((b) => b.textContent === name)!;
+/** Disable asks first: the click, then the confirmation. */
+const disable = async () => {
+  await act(() => button('Disable').click());
+  await act(() => button('Confirm disable').click());
+};
 const calls = () => vi.mocked(fetch).mock.calls.map(([url, init]) => [init?.method ?? 'GET', url]);
 const input = (id: string, value: string) =>
   act(() => {
@@ -102,11 +107,70 @@ describe('<RulesSection>', () => {
     await show();
     answer = (_url, init) =>
       init?.method ? new Response('{}', { status: 500 }) : Response.json({ rules: entries });
-    await act(() => button('Disable').click());
+    await disable();
     await settle();
     const alert = root.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('500');
     expect(alert?.closest('form')).toBeNull();
+  });
+
+  it('Disable asks first and sends nothing until confirmed', async () => {
+    await show();
+    await act(() => button('Disable').click());
+    expect(root.textContent).toContain('Disable this rule? Its alerts stop');
+    expect(calls().filter(([method]) => method !== 'GET')).toEqual([]);
+    // focus lands on the safe choice
+    expect(document.activeElement).toBe(button('Cancel'));
+    await act(() => button('Cancel').click());
+    expect(root.textContent).not.toContain('Disable this rule?');
+    expect(button('Disable')).toBeDefined();
+    expect(calls().filter(([method]) => method !== 'GET')).toEqual([]);
+  });
+
+  it('Escape cancels the question', async () => {
+    await show();
+    await act(() => button('Disable').click());
+    await act(() => {
+      button('Cancel').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+    expect(root.textContent).not.toContain('Disable this rule?');
+    expect(calls().filter(([method]) => method !== 'GET')).toEqual([]);
+  });
+
+  it('another key does not cancel it', async () => {
+    await show();
+    await act(() => button('Disable').click());
+    await act(() => {
+      button('Cancel').dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    });
+    expect(root.textContent).toContain('Disable this rule?');
+  });
+
+  it('Enable (turning a rule back on) needs no confirmation', async () => {
+    entries = [entry({ disabled: true })];
+    await show();
+    await act(() => button('Enable').click());
+    await settle();
+    expect(calls().at(-1)?.[0]).toBe('DELETE');
+    expect(root.textContent).not.toContain('Disable this rule?');
+  });
+
+  it('Enable on an added rule puts it back with its written settings', async () => {
+    entries = [entry({ kind: 'added', saved: true, disabled: true, overrides: hot })];
+    await show();
+    await act(() => button('Enable').click());
+    await settle();
+    expect(calls().at(-1)).toEqual(['PUT', '/api/alerts/rules/cpu_hot']);
+  });
+
+  it('Delete removes an added rule with no question asked', async () => {
+    entries = [entry({ kind: 'added', saved: true, overrides: hot })];
+    await show();
+    await act(() => button('Delete').click());
+    await settle();
+    expect(calls().at(-1)).toEqual(['DELETE', '/api/alerts/rules/cpu_hot']);
   });
 
   it('is read-only when signed out, pointing at sign-in', async () => {
@@ -117,7 +181,7 @@ describe('<RulesSection>', () => {
 
   it('disables and reverts with the right requests', async () => {
     await show();
-    await act(() => button('Disable').click());
+    await disable();
     await settle();
     expect(calls().at(-1)).toEqual(['PUT', '/api/alerts/rules/cpu_hot']);
     entries = [entry({ kind: 'edited', saved: true, overrides: hot })];
@@ -232,7 +296,7 @@ describe('<RulesSection>', () => {
     await show();
     expect(button('Edit')).toBeDefined();
     expect(button('Disable')).toBeDefined();
-    await act(() => button('Disable').click());
+    await disable();
     await settle();
     const [url, init] = vi.mocked(fetch).mock.calls.find(([, i]) => i?.method === 'PUT')!;
     expect(url).toBe('/api/alerts/rules/ghost_metric');
@@ -364,7 +428,7 @@ describe('<RulesSection>', () => {
     await settle();
     answer = (_url, init) =>
       init?.method ? new Response('{}', { status: 401 }) : Response.json({ rules: entries });
-    await act(() => button('Disable').click());
+    await disable();
     await settle();
     expect(onSignedOut).toHaveBeenCalled();
   });
