@@ -71,5 +71,10 @@ rm -f /etc/pipulse/.renew-timer-enabled
 if UNIT_DIR=$units run disabled ''; then ok 'a masked timer file does not fail the upgrade'; else bad 'a masked timer file does not fail the upgrade'; fi
 [ "$(readlink "$units/pipulse-tls-renew.timer")" = /dev/null ] && [ -f "$units/pipulse-tls-renew.service" ] && ok 'the mask is left in place and the other units are installed' || bad 'the mask is left in place and the other units are installed'
 
+# The Updates tab's upgrade helper: its two units are installed with the rest, and pipulse.service pulls the path unit in.
+[ -f "$units/pipulse-upgrade.service" ] && [ -f "$units/pipulse-upgrade.path" ] && ok 'the upgrade helper units are installed' || bad 'the upgrade helper units are installed'
+grep -qx 'Wants=pipulse-upgrade.path' "$units/pipulse.service" && ok 'pipulse.service wants the upgrade path unit' || bad 'pipulse.service wants the upgrade path unit'
+grep -q 'ExecStart=/bin/sh /opt/pipulse/app/packaging/pipulse-upgrade.sh' "$units/pipulse-upgrade.service" && ok 'the helper unit runs the shipped script' || bad 'the helper unit runs the shipped script'
+
 rm -rf /run/systemd/system /opt/pipulse
 exit $fail

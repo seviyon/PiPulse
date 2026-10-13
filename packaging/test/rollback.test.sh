@@ -8,7 +8,7 @@ out=$(mktemp -d)
 "$repo/packaging/build-tarball.sh" 0.0.2 "$out" >/dev/null
 # 0.0.1 stands for a release from before the renewal timer: it ships no timer unit.
 work1=$(mktemp -d); tar -xzf "$out/pipulse-0.0.1.tar.gz" -C "$work1"
-rm -f "$work1"/pipulse-0.0.1/packaging/pipulse-tls-renew.*
+rm -f "$work1"/pipulse-0.0.1/packaging/pipulse-tls-renew.* "$work1"/pipulse-0.0.1/packaging/pipulse-upgrade.*
 tar -czf "$out/pipulse-0.0.1.tar.gz" -C "$work1" pipulse-0.0.1
 # Break 0.0.2: it starts, but /api/health answers 503.
 work=$(mktemp -d); tar -xzf "$out/pipulse-0.0.2.tar.gz" -C "$work"
@@ -42,9 +42,11 @@ fail=0
 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.1.tar.gz" && echo 'ok - good version installs' || { echo 'not ok - good version installs'; fail=1; }
 # What the failed new version's setup would have left: its timer units and the "enabled once" marker.
 mkdir -p /etc/systemd/system && : > /etc/systemd/system/pipulse-tls-renew.timer && : > /etc/systemd/system/pipulse-tls-renew.service && : > /etc/pipulse/.renew-timer-enabled
+: > /etc/systemd/system/pipulse-upgrade.service && : > /etc/systemd/system/pipulse-upgrade.path
 if sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.2.tar.gz"; then echo 'not ok - broken version reported success'; fail=1; else echo 'ok - broken version refused'; fi
 grep -q '"0.0.1"' /opt/pipulse/app/version.json && echo 'ok - rolled back to 0.0.1' || { echo 'not ok - rolled back to 0.0.1'; fail=1; }
 [ ! -e /etc/systemd/system/pipulse-tls-renew.timer ] && [ ! -e /etc/systemd/system/pipulse-tls-renew.service ] && [ ! -e /etc/pipulse/.renew-timer-enabled ] && echo 'ok - a rollback to a version without the timer removes its units and marker' || { echo 'not ok - a rollback to a version without the timer removes its units and marker'; fail=1; }
+[ ! -e /etc/systemd/system/pipulse-upgrade.service ] && [ ! -e /etc/systemd/system/pipulse-upgrade.path ] && echo 'ok - a rollback to a version without the upgrade helper removes its units' || { echo 'not ok - a rollback to a version without the upgrade helper removes its units'; fail=1; }
 up=no; for _ in $(seq 1 20); do curl -fs http://127.0.0.1:18889/api/health >/dev/null 2>&1 && { up=yes; break; }; sleep 1; done
 [ "$up" = yes ] && echo 'ok - 0.0.1 running again' || { echo 'not ok - 0.0.1 running again'; fail=1; }
 # A version that accepts connections but never answers must not hang the installer.

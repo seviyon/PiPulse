@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a package upgrade request from PiPulse's Updates tab
+Documentation=https://github.com/seviyon/PiPulse/blob/main/docs/api.md
+
+[Path]
+# A doorbell the (unprivileged) server writes in its own data folder. The helper ignores it
+# unless root-owned configuration allows upgrades.
+PathExists=/var/lib/pipulse/upgrade-request
+Unit=pipulse-upgrade.service

@@ -2,6 +2,8 @@
 Description=PiPulse system monitor
 After=network-online.target
 Wants=network-online.target
+# The Updates tab's opt-in upgrade helper: inert unless PIPULSE_ALLOW_UPGRADE=true (see pipulse-upgrade.sh).
+Wants=pipulse-upgrade.path
 
 [Service]
 User=pipulse

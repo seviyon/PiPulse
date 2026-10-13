@@ -1,0 +1,16 @@
+[Unit]
+Description=Install system package upgrades when PiPulse's Updates tab asks (only if PIPULSE_ALLOW_UPGRADE=true)
+Documentation=https://github.com/seviyon/PiPulse/blob/main/docs/api.md
+# Five rings in five minutes is a loop, not a person.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/sh /opt/pipulse/app/packaging/pipulse-upgrade.sh
+# An upgrade can take a long time on a Pi, and killing dpkg half way is worse than waiting.
+TimeoutStartSec=infinity
+Nice=10
+# Deliberately not sandboxed: dpkg's maintainer scripts need the whole system. That is why this
+# is opt-in, parameterless, and gated on root-owned configuration (see the script).

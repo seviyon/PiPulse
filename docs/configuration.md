@@ -17,6 +17,7 @@ Settings are environment variables. An installed PiPulse reads them from `/etc/p
 | `PIPULSE_ALERTS_FILE`              | _(none)_            | JSON file of alert rules merged over the built-ins (see [Alerts](alerts.md))                                                                             |
 | `PIPULSE_ADMIN_PASSWORD_HASH_FILE` | _(none)_            | File with the admin password hash (make one with `hash-password`); unset = read-only (see [Sign-in and settings](configuration.md#sign-in-and-settings)) |
 | `PIPULSE_PROTECT_READS`            | `false`             | `true`: every page, API read and the live feed need sign-in                                                                                              |
+| `PIPULSE_ALLOW_UPGRADE`            | `false`             | `true`: the Updates tab can install package upgrades (needs sign-in; apt installs and tarball installs only; see below)                                  |
 | `PIPULSE_NOTIFY_FILE`              | _(none)_            | JSON file of webhooks to notify when an alert opens or clears (see [Notifications](alerts.md#notifications))                                             |
 
 `PIPULSE_ALLOWED_HOSTS` guards against DNS rebinding on a plain-HTTP install: a web page on a name an attacker controls, pointed at the Pi's address, could otherwise read its public pages from your browser. Set it to the names you reach the Pi by (`io.lan,pi.example`, no ports, schemes or wildcards); a request for any other name gets `421`. Addresses (`http://192.168.1.35:8889`) and `localhost` are always served, and the Pi's own host name, `<host>.local` and `PIPULSE_TLS_NAMES` are added for you. Add the DNS name in your certificate too if it is not one of those, or the health check, which asks for that name, fails. An HTTPS install is already protected by its certificate's names, and a sign-in session cookie is never sent to a rebound name, so changes stay safe either way. An unset or empty value keeps the old behaviour (no check).
@@ -40,6 +41,24 @@ Only the scrypt hash is stored; to change the password, make a new file and rest
 The Settings page shows each retention level, where its value comes from (default, saved, or locked by a `PIPULSE_RETENTION_*` variable), how much is stored, and the database and disk size. **Review changes** shows what a shorter retention will delete and an estimated database size; deleting anything needs an explicit tick before **Save**. Changes apply within a minute, no restart.
 
 Set `PIPULSE_PROTECT_READS=true` to require sign-in for everything, including the live feed.
+
+## Installing updates from the Updates tab
+
+The Updates tab lists what `apt-get upgrade` would install and shows the command to run over SSH. It can also run it for you, but only if you turn that on:
+
+1. Sign-in must be set up (above).
+2. Add `PIPULSE_ALLOW_UPGRADE=true` to `/etc/pipulse/pipulse.env` and `sudo systemctl restart pipulse`.
+
+The tab then shows **Install updates** (signed in, and you type `upgrade` to confirm). PiPulse itself stays unprivileged and cannot run apt. It drops a small request file in its own data folder, and a systemd path unit (`pipulse-upgrade.path`) starts a short root script (`/opt/pipulse/app/packaging/pipulse-upgrade.sh`). The script takes nothing from the request: it reads `PIPULSE_ALLOW_UPGRADE` and the sign-in setting from the root-owned `/etc/pipulse/pipulse.env` itself, ignores the request unless both are set, then runs `apt-get update` and `apt-get -y -o Dpkg::Options::=--force-confold upgrade` (your edited configuration files are kept; nothing is removed; never `full-upgrade`). One upgrade runs at a time. The output is kept (last 200 KB) in `/var/lib/pipulse-updates/upgrade.log`, the result in `upgrade-status.json`, and the tab shows both.
+
+What to know before you use it:
+
+- Sign-in guards the button in the browser. The real gate is `PIPULSE_ALLOW_UPGRADE` in the root-owned `pipulse.env`: if PiPulse's own process were ever taken over, that setting (and `PIPULSE_ADMIN_PASSWORD_HASH_FILE` naming a root-owned file) is all that stands between it and starting an upgrade. The script also waits 10 minutes after one finishes before it accepts another.
+- The script runs as root and is not sandboxed (dpkg's package scripts need the whole system), which is why it is off by default. Anyone who can sign in to PiPulse can start a package upgrade; they cannot choose what runs.
+- A full upgrade can restart services, including PiPulse and, on a Pi-hole box, `pihole-FTL` (DNS drops for a moment). The tab goes quiet and picks up the result when PiPulse is back. If the machine restarts half way the tab says so; run `sudo dpkg --configure -a` to finish.
+- A new kernel or firmware needs a reboot; the tab says when `/run/reboot-required` exists.
+- Not available in Docker (the container's apt is not the host's) and not offered when the helper isn't installed.
+- The package list and the log are public like the rest of the dashboard unless `PIPULSE_PROTECT_READS=true`.
 
 Over plain HTTP the password crosses the network once at sign-in, so turn on [HTTPS](https.md) or keep it on your LAN; a TLS reverse proxy in front is also possible (see [PLAN.md](PLAN.md), "Future: behind a reverse proxy").
 

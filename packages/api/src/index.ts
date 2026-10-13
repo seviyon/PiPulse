@@ -24,6 +24,7 @@ import { healthBody, type TlsView } from './tls-status.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { registerUpdatesRoutes } from './updates-routes.js';
 import type { Updates } from './updates.js';
+import type { Upgrade } from './upgrade.js';
 import { nodeSupport, type NodeSupport } from './version.js';
 import { isAllowedHost } from './host.js';
 import { isAllowedOrigin } from './origin.js';
@@ -157,6 +158,8 @@ export interface ServerOptions {
   notify?: { status(): WebhookStatus[] };
   /** What `apt-get upgrade` would do (GET /api/updates); omitted = "not available here". */
   updates?: Updates;
+  /** The opt-in "Install updates" button (POST /api/updates/upgrade); omitted = not turned on. */
+  upgrade?: Upgrade;
 }
 
 /** The largest frame a /api/live client may send; the dashboard sends none. */
@@ -361,7 +364,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     publish: notices.publish
   });
   registerNotifyRoutes(app, options.notify);
-  registerUpdatesRoutes(app, options.updates);
+  registerUpdatesRoutes(app, options.updates, options.upgrade);
 
   if (options.settings) registerSettingsRoutes(app, db, options.settings);
 

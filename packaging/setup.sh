@@ -113,7 +113,7 @@ if [ "$start" = yes ] && [ -d /run/systemd/system ]; then
   if [ "$unit_dir" != none ]; then
     # A masked unit (a symlink to /dev/null) is the operator's: install would replace
     # it or fail under set -e, so leave it and say so.
-    for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer; do
+    for unit in pipulse.service pipulse-tls-renew.service pipulse-tls-renew.timer pipulse-upgrade.service pipulse-upgrade.path; do
       if unit_masked "$unit"; then
         warn "$unit is masked: its unit file was left as it is"
       else

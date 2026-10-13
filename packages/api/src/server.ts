@@ -54,6 +54,7 @@ import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
 import { readGeneratedExtras, tlsView, writeTlsMarker } from './tls-status.js';
 import { createUpdates } from './updates.js';
+import { createUpgrade } from './upgrade.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
@@ -364,6 +365,13 @@ const updates = createUpdates({
   onError: (error) =>
     console.error(`updates check failed: ${(error as Error).message.split('\n')[0]}`)
 });
+// The Updates tab's install button: PIPULSE_ALLOW_UPGRADE=true and a sign-in password. The root
+// helper (pipulse-upgrade.path) checks both again from root-owned files; this only shows the button.
+const upgrade = createUpgrade({
+  allowed: process.env['PIPULSE_ALLOW_UPGRADE'] === 'true',
+  signInConfigured: PASSWORD_HASH !== undefined,
+  inContainer: IN_CONTAINER
+});
 /**
  * PIPULSE_ALLOWED_HOSTS: host names this server answers to (DNS-rebinding protection for plain
  * HTTP installs; HTTPS ones are protected by the certificate's names). Unset: no check. Set: the
@@ -404,6 +412,7 @@ const app = buildServer(db, {
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
   notify: notifications,
   updates,
+  upgrade,
   health,
   ...(CERT ? { https: { key: CERT.key, cert: CERT.cert } } : {}),
   ...(HSTS_SECONDS !== undefined ? { hstsSeconds: HSTS_SECONDS } : {}),

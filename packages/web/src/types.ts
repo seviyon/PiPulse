@@ -190,7 +190,23 @@ export type TlsView =
     };
 
 /** GET /api/updates: what `apt-get upgrade` would do (see packages/api/src/updates.ts). */
-export type UpdatesView =
+export type UpgradeView =
+  | { available: false; reason: 'container' | 'off' | 'no-sign-in' | 'not-installed' }
+  | {
+      available: true;
+      state: 'idle' | 'requested' | 'running' | 'done' | 'failed' | 'interrupted';
+      step: 'update' | 'upgrade' | null;
+      startedAt: number | null;
+      finishedAt: number | null;
+      exitCode: number | null;
+      rebootRequired: boolean;
+      log: string[];
+    };
+
+/** GET /api/updates: the check's view, plus the opt-in upgrade button's state when the server has it. */
+export type UpdatesView = UpdatesState & { upgrade?: UpgradeView };
+
+type UpdatesState =
   | { state: 'unsupported'; reason: 'container' | 'no-apt' }
   | { state: 'pending' }
   | { state: 'failed'; checkedAt: number; problem: string }

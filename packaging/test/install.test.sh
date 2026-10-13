@@ -9,6 +9,7 @@ fail=0
 ok() { echo "ok - $1"; }
 bad() { echo "not ok - $1"; fail=1; }
 sh "$repo/packaging/install.sh" --from "$out/pipulse-0.0.0-test.tar.gz" --no-start || bad 'install ran'
+[ -z "$(find /opt/pipulse ! -type l -perm /022 | head -n 1)" ] && ok 'nothing under /opt/pipulse is writable by group or others (root runs the upgrade helper from there)' || bad 'nothing under /opt/pipulse is writable by group or others'
 [ -x /opt/pipulse/node/bin/node ] && ok 'private node' || bad 'private node'
 [ -f /opt/pipulse/app/version.json ] && ok 'app installed' || bad 'app installed'
 [ -x /usr/bin/pipulse ] && ok 'pipulse command' || bad 'pipulse command'
@@ -69,7 +70,13 @@ curl -fs --cacert /etc/pipulse/tls/ca.crt https://localhost:18888/api/config | g
 kill $pid; wait $pid 2>/dev/null || true
 # The renewal timer's "enabled once" marker (setup.sh writes it on systemd hosts).
 touch /etc/pipulse/.renew-timer-enabled
-sh "$repo/packaging/install.sh" --uninstall
+mkdir -p /etc/systemd/system /var/lib/pipulse-updates /run/systemd/system /tmp/fake-systemctl
+printf '#!/bin/sh\nexit 0\n' > /tmp/fake-systemctl/systemctl && chmod +x /tmp/fake-systemctl/systemctl
+: > /etc/systemd/system/pipulse-upgrade.service
+: > /etc/systemd/system/pipulse-upgrade.path
+PATH="/tmp/fake-systemctl:$PATH" sh "$repo/packaging/install.sh" --uninstall
+[ ! -e /etc/systemd/system/pipulse-upgrade.service ] && [ ! -e /etc/systemd/system/pipulse-upgrade.path ] && [ ! -e /var/lib/pipulse-updates ] && ok 'uninstall removes the upgrade helper units and its log' || bad 'uninstall removes the upgrade helper units and its log'
+rm -rf /run/systemd/system
 [ ! -e /etc/pipulse/.renew-timer-enabled ] && ok 'uninstall forgets the timer marker, so a reinstall enables the timer' || bad 'uninstall forgets the timer marker, so a reinstall enables the timer'
 [ ! -e /opt/pipulse ] && [ -d /var/lib/pipulse ] && [ -f /etc/pipulse/pipulse.env ] && ok 'uninstall keeps data and settings' || bad 'uninstall keeps data and settings'
 # A database the operator put somewhere else is not deleted by a purge, and the purge says so.
