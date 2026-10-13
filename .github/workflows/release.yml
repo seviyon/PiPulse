@@ -69,10 +69,16 @@ jobs:
           cache: npm
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq gpgv lintian >/dev/null
       - run: npm ci --ignore-scripts
-      - run: npm test
+      - name: Build and test
+        env:
+          # The dashboard stamps itself with the release it ships in (the page warns when it
+          # no longer matches the server); build-tarball.sh refuses an unstamped one.
+          PIPULSE_WEB_VERSION: ${{ needs.version.outputs.version }}
+        run: npm test
       - name: Tarball and .debs
         env:
           V: ${{ needs.version.outputs.version }}
+          PIPULSE_REQUIRE_WEB_VERSION: '1'
         run: |
           sh packaging/build-tarball.sh "$V" out
           for arch in armhf arm64 amd64; do

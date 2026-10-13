@@ -3,8 +3,9 @@ FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:d6aa754f16b319730107
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
-RUN npm ci --ignore-scripts && npm run build
 ARG VERSION=dev
+# The dashboard stamps itself with the version it ships in (the page warns when it no longer matches the server).
+RUN npm ci --ignore-scripts && PIPULSE_WEB_VERSION=$VERSION npm run build
 RUN mkdir /app && cp package.json package-lock.json /app/ \
  && for p in packages/*/; do mkdir -p /app/$p && cp $p/package.json /app/$p && cp -R $p/dist /app/$p; done \
  && cd /app && npm ci --omit=dev --ignore-scripts --no-audit --no-fund && find node_modules -type d -empty -delete \
