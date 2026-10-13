@@ -742,3 +742,8 @@ button:hover {
   user-select: all;
   overflow-wrap: anywhere;
 }
+
+/* The page no longer matches its server: sits between the device header and the pages nav. */
+.stale-dashboard {
+  margin: 0.75rem 0 1rem;
+}

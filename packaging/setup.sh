@@ -191,7 +191,13 @@ fi
 command -v openssl >/dev/null 2>&1 || warn 'openssl is not installed; generated HTTPS certificates need it: sudo apt install openssl'
 if command -v ss >/dev/null 2>&1; then
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -n 1)
-  if [ -n "$holder" ] && [ "$holder" != node ]; then
+  # The service started above holds its own port, under whatever name its process has (Node 24
+  # names it MainThread): compare by PID, not by name.
+  holder_pid=$(ss -Hltnp "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+  service_pid=$(systemctl show -p MainPID --value pipulse 2>/dev/null || true)
+  if [ -n "$holder_pid" ] && [ "$holder_pid" = "$service_pid" ]; then
+    :
+  elif [ -n "$holder" ] && [ "$holder" != node ]; then
     printf '[pipulse] warning: port %s is already in use by %s; set PIPULSE_PORT in /etc/pipulse/pipulse.env\n' "$port" "$holder" >&2
   elif [ -z "$holder" ] && ss -Hltn "sport = :$port" | grep -q .; then
     printf '[pipulse] warning: port %s is already in use; set PIPULSE_PORT in /etc/pipulse/pipulse.env\n' "$port" >&2
