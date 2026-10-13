@@ -14,6 +14,7 @@ import type { Layout } from '../src/layout.js';
 import {
   LOCK_FILE,
   LOCK_HEARTBEAT_MS,
+  LOCK_WAIT_MS,
   LOCK_OBSERVE_MS,
   LockError,
   breakLock,
@@ -235,6 +236,25 @@ describe('withLock', () => {
       });
       expect(await waiter).toBe('ran');
       expect(sleeps).toBeGreaterThanOrEqual(3);
+      await holder.held;
+    });
+
+    it('without waitMs it gives up after the default wait', async () => {
+      const holder = hold();
+      await pause(10);
+      let mono = 0;
+      await expect(
+        withLock(layout, async () => 'no', {
+          create: true,
+          alive: () => true,
+          monotonic: () => mono,
+          sleep: async () => {
+            mono += LOCK_WAIT_MS / 2;
+          }
+        })
+      ).rejects.toThrow(LockError);
+      expect(mono).toBeGreaterThanOrEqual(LOCK_WAIT_MS);
+      holder.release();
       await holder.held;
     });
 
