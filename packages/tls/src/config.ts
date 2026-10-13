@@ -141,9 +141,11 @@ export function readTlsConfig(
     try {
       stateMode = parseState(stateText).mode;
     } catch (error) {
-      throw new TlsConfigError(
-        `${statePath} (PIPULSE_TLS_DIR): ${error instanceof Error ? error.message : String(error)}`
-      );
+      const message = `${statePath} (PIPULSE_TLS_DIR): ${error instanceof Error ? error.message : String(error)}`;
+      // PIPULSE_TLS=on/off overrides everything, a damaged state.json included (the way out the
+      // error messages point to); without it the server must not guess a mode.
+      if (flag !== 'on' && flag !== 'off') throw new TlsConfigError(message);
+      warnings.push(`${message}; ignoring it because PIPULSE_TLS=${flag}`);
     }
   }
 

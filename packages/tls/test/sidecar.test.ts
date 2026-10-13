@@ -358,3 +358,53 @@ describe('a renewal round that cannot take the lock', () => {
     await held;
   });
 });
+
+describe('review fixes: a stop signal and PIPULSE_TLS=off with a failing init', () => {
+  it('SIGTERM stops the sidecar command cleanly (PID 1 has no default handler)', async () => {
+    const ctx = docker();
+    const started = printed(ctx, /clock:/);
+    const running = main(['sidecar'], ctx);
+    await started;
+    process.emit('SIGTERM');
+    expect(await running).toBe(0);
+    rmSync('/tmp/pipulse-sidecar-ready', { force: true });
+    expect(process.listenerCount('SIGTERM')).toBe(0);
+  });
+
+  it('SIGINT stops it too', async () => {
+    const ctx = docker();
+    const started = printed(ctx, /clock:/);
+    const running = main(['sidecar'], ctx);
+    await started;
+    process.emit('SIGINT');
+    expect(await running).toBe(0);
+    rmSync('/tmp/pipulse-sidecar-ready', { force: true });
+  });
+
+  it('with PIPULSE_TLS=off the server still starts when init cannot take the lock', async () => {
+    let release!: () => void;
+    let acquired!: () => void;
+    const got = new Promise<void>((resolve) => (acquired = resolve));
+    const holder = docker();
+    const held = withLock(
+      holder.layout,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          acquired();
+        }),
+      { create: true, waitMs: 0, now: holder.now, sleep: holder.sleep, alive: () => true }
+    );
+    await got;
+    try {
+      const ctx = docker({ lockAlive: () => true });
+      ctx.env['PIPULSE_TLS'] = 'off';
+      expect(await sidecarStart(ctx, ready)).toBe(0);
+      expect(existsSync(ready)).toBe(true);
+      expect(ctx.errors.join('\n')).toContain('another pipulse tls command is running');
+    } finally {
+      release();
+      await held;
+    }
+  });
+});

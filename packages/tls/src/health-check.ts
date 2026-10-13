@@ -1,12 +1,15 @@
 import { X509Certificate } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { request } from 'node:https';
+import { readFileSync, statSync } from 'node:fs';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
+import { Agent as HttpsAgent, request } from 'node:https';
 import { isIP } from 'node:net';
-import { checkServerIdentity } from 'node:tls';
+import { checkServerIdentity, rootCertificates } from 'node:tls';
 import { pathToFileURL } from 'node:url';
 import { RELEASE_DEFAULT, listenPort, readTlsConfig } from './config.js';
 import { parseSans } from './inspect.js';
+import { userId } from './layout.js';
 import { parseBundle, parseCertificateFile } from './pem.js';
+import { DEFAULT_RUNTIME_DIR, readRuntimeStatus } from './runtime-status.js';
 
 export interface CheckResult {
   /** 0 healthy, 1 unhealthy or not answering, 2 TLS verification failed. */
@@ -50,6 +53,49 @@ export function healthy(body: unknown): boolean {
   return monitoring === 'ok' || (monitoring === undefined && status === 'ok');
 }
 
+/** The served certificate was not issued by the CA in ca.crt. */
+const ISSUER_MISMATCH = new Set([
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'CERT_SIGNATURE_FAILURE'
+]);
+/** How long after leaf.pem was written the server may still be serving the one before it. */
+export const RELOAD_PENDING_MS = 10 * 60_000;
+
+/**
+ * `new-ca` and `restore-ca` put the new CA's ca.crt and leaf.pem on disk before the server's
+ * reloader (two stable 60 s polls) switches to them; until then the served certificate does not
+ * verify against ca.crt. That window is not a broken server: a message when (and only when) the
+ * leaf on disk is recent AND the running server says it serves a different certificate than
+ * leaf.pem holds. Anything else stays a verification failure.
+ */
+function pendingReload(
+  bundlePath: string,
+  leafPem: string,
+  env: NodeJS.ProcessEnv,
+  options: { servedFingerprint?: () => string | undefined; now?: () => number }
+): string | undefined {
+  try {
+    const age = (options.now ?? Date.now)() - statSync(bundlePath).mtimeMs;
+    if (age < 0 || age > RELOAD_PENDING_MS) return undefined;
+    const served = options.servedFingerprint?.() ?? servedByStatusFile(env);
+    if (served === undefined || served === new X509Certificate(leafPem).fingerprint256)
+      return undefined;
+    return `healthy: certificate replacement pending reload (leaf.pem was written ${Math.round(age / 1000)} s ago and the server still serves the previous one); not verified`;
+  } catch {
+    return undefined;
+  }
+}
+
+function servedByStatusFile(env: NodeJS.ProcessEnv): string | undefined {
+  const view = readRuntimeStatus(env['PIPULSE_RUNTIME_DIR']?.trim() || DEFAULT_RUNTIME_DIR, {
+    expectUid: userId('pipulse')
+  });
+  return view.state === 'running' ? view.status.certificate?.fingerprint : undefined;
+}
+
 const WILDCARDS = new Set(['0.0.0.0', '::', '[::]']);
 
 /**
@@ -70,37 +116,67 @@ export function healthTarget(
     const host = configured.replace(/^\[(.*)\]$/, '$1');
     return { connect: host, identity: host };
   }
+  // A wildcard (`*.example.com`) is no host name: probing it would send `Host: *.example.com`,
+  // which the server's allowed-hosts list can't hold. Use a plain name, else a name the wildcard covers.
+  const plain = sans.dns.find((name) => !name.startsWith('*'));
+  const wildcard = sans.dns.find((name) => name.startsWith('*.'));
   const identity =
     names[0] ??
     (sans.dns.includes('localhost')
       ? 'localhost'
       : sans.ip.includes('127.0.0.1')
         ? '127.0.0.1'
-        : (sans.ip[0] ?? sans.dns[0] ?? '127.0.0.1'));
+        : (sans.ip[0] ??
+          plain ??
+          (wildcard ? `pipulse.${wildcard.slice(2)}` : undefined) ??
+          '127.0.0.1'));
   return { connect: '127.0.0.1', identity };
 }
 
-/** The response body as JSON, read in full only up to MAX_HEALTH_BODY_BYTES (else it throws). */
-async function readSmallJson(res: Response): Promise<unknown> {
-  const reader = res.body?.getReader();
-  if (!reader) return undefined;
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > MAX_HEALTH_BODY_BYTES) {
-      await reader.cancel();
-      throw new Error('health response is too large');
-    }
-    chunks.push(value);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    return undefined;
-  }
+/**
+ * GET over plain HTTP: no redirect followed, no proxy (a fresh Agent never reads
+ * NODE_USE_ENV_PROXY / HTTP_PROXY, which Node 24 applies to `fetch` and to the default agent,
+ * loopback included), the body read only up to MAX_HEALTH_BODY_BYTES, the whole answer within
+ * `timeoutMs`.
+ */
+function httpGet(
+  host: string,
+  port: number,
+  timeoutMs: number
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => req.destroy(new Error('timed out')), timeoutMs);
+    const req = httpRequest(
+      { host, port, path: '/api/health', agent: new HttpAgent({ keepAlive: false }) },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        res.on('data', (chunk: Buffer) => {
+          bytes += chunk.byteLength;
+          if (bytes > MAX_HEALTH_BODY_BYTES) {
+            req.destroy(new Error('health response is too large'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => {
+          clearTimeout(deadline);
+          let body: unknown;
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            body = undefined;
+          }
+          resolve({ status: res.statusCode ?? 0, body });
+        });
+      }
+    );
+    req.on('error', (error) => {
+      clearTimeout(deadline);
+      reject(error);
+    });
+    req.end();
+  });
 }
 
 /**
@@ -113,7 +189,13 @@ async function readSmallJson(res: Response): Promise<unknown> {
  */
 export async function checkHealth(
   env: NodeJS.ProcessEnv,
-  options: { timeoutMs?: number; readState?: (path: string) => string | undefined } = {}
+  options: {
+    timeoutMs?: number;
+    readState?: (path: string) => string | undefined;
+    /** SHA-256 of the certificate the running server serves (tests; else its status file). */
+    servedFingerprint?: () => string | undefined;
+    now?: () => number;
+  } = {}
 ): Promise<CheckResult> {
   let config;
   try {
@@ -134,12 +216,10 @@ export async function checkHealth(
 
   if (config.mode === 'http' || !config.source) {
     const { connect: host } = healthTarget(env, { dns: [], ip: [] }, []);
-    const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}/api/health`;
     try {
       // A redirect is not an answer from PiPulse, and only a small JSON body is expected.
-      const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
-      const body = await readSmallJson(res);
-      return res.status === 200 && healthy(body)
+      const res = await httpGet(host, port, timeoutMs);
+      return res.status === 200 && healthy(res.body)
         ? { code: 0, message: 'healthy' }
         : { code: 1, message: `unhealthy (HTTP ${res.status})` };
     } catch (error) {
@@ -200,7 +280,12 @@ export async function checkHealth(
         // Never inherited from NODE_TLS_REJECT_UNAUTHORIZED: the Docker HEALTHCHECK and a root
         // shell see the operator's environment, and "0" there would turn every check off.
         rejectUnauthorized: true,
-        ...(ca !== undefined ? { ca } : {})
+        // A fresh agent: Node 24 sends the default agent's requests through HTTP(S)_PROXY when
+        // NODE_USE_ENV_PROXY is set, loopback included.
+        agent: new HttpsAgent({ keepAlive: false }),
+        // Exactly what the server judges an operator certificate by: PIPULSE_TLS_CA, else Node's
+        // bundled roots. Without this, NODE_EXTRA_CA_CERTS (set for webhooks) would be trusted too.
+        ca: ca ?? [...rootCertificates]
       },
       (res) => {
         let data = '';
@@ -224,7 +309,13 @@ export async function checkHealth(
           finish(
             res.statusCode === 200 && healthy(body)
               ? { code: 0, message: 'healthy' }
-              : { code: 1, message: `unhealthy (HTTP ${res.statusCode ?? '?'})` }
+              : {
+                  code: 1,
+                  message:
+                    res.statusCode === 421
+                      ? `unhealthy (HTTP 421): the server refused the host name ${identity}; set PIPULSE_TLS_NAMES to a name the certificate covers (it is added to PIPULSE_ALLOWED_HOSTS)`
+                      : `unhealthy (HTTP ${res.statusCode ?? '?'})`
+                }
           );
         });
       }
@@ -235,6 +326,11 @@ export async function checkHealth(
     req.on('timeout', () => req.destroy(new Error('timed out')));
     req.on('error', (error) => {
       const code = (error as NodeJS.ErrnoException).code ?? '';
+      const pending =
+        source.kind === 'generated' && ISSUER_MISMATCH.has(code)
+          ? pendingReload(source.bundlePath, certs[0]!, env, options)
+          : undefined;
+      if (pending) return finish({ code: 0, message: pending });
       finish(
         verificationFailure({ code, message: messageOf(error) })
           ? {

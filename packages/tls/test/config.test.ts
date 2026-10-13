@@ -134,12 +134,15 @@ describe('readTlsConfig mode resolution', () => {
     ).toThrow('PIPULSE_TLS must be "on" or "off", not "yes"');
   });
 
-  it('refuses a bad state.json even when PIPULSE_TLS decides the mode', () => {
+  it('warns about a bad state.json when PIPULSE_TLS decides the mode, and refuses without it', () => {
+    const config = readTlsConfig(
+      { PIPULSE_TLS: 'on' },
+      { releaseDefault: 'http', readState: state('{"mode":"x"}') }
+    );
+    expect(config.mode).toBe('https');
+    expect(config.warnings.join('\n')).toContain('ignoring it because PIPULSE_TLS=on');
     expect(() =>
-      readTlsConfig(
-        { PIPULSE_TLS: 'on' },
-        { releaseDefault: 'http', readState: state('{"mode":"x"}') }
-      )
+      readTlsConfig({}, { releaseDefault: 'http', readState: state('{"mode":"x"}') })
     ).toThrow(TlsConfigError);
   });
 
@@ -198,12 +201,25 @@ describe('readTlsConfig state.json read errors', () => {
     }
   });
 
-  it('a readable but invalid state.json still refuses when PIPULSE_TLS is set, naming the file', () => {
-    expect(() =>
-      readTlsConfig(
-        { PIPULSE_TLS: 'off', PIPULSE_TLS_DIR: '/t' },
+  it('a readable but invalid state.json is ignored with a warning when PIPULSE_TLS is set', () => {
+    for (const flag of ['on', 'off'] as const) {
+      const config = readTlsConfig(
+        { PIPULSE_TLS: flag, PIPULSE_TLS_DIR: '/t' },
         { releaseDefault: 'http', readState: state('{') }
-      )
+      );
+      expect(config.mode).toBe(flag === 'on' ? 'https' : 'http');
+      expect(config.stateMode).toBeUndefined();
+      expect(config.warnings.join('\n')).toMatch(
+        new RegExp(
+          `/t/state\\.json \\(PIPULSE_TLS_DIR\\): state\\.json is not valid JSON; ignoring it because PIPULSE_TLS=${flag}`
+        )
+      );
+    }
+  });
+
+  it('and still refuses without PIPULSE_TLS, naming the file', () => {
+    expect(() =>
+      readTlsConfig({ PIPULSE_TLS_DIR: '/t' }, { releaseDefault: 'http', readState: state('{') })
     ).toThrow(/\/t\/state\.json \(PIPULSE_TLS_DIR\): state\.json is not valid JSON/);
   });
 

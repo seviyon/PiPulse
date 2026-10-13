@@ -82,8 +82,21 @@ async function dispatch(
       return await disable(ctx, args);
     case 'sidecar-init':
       return sidecarInit(ctx);
-    case 'sidecar':
-      return await sidecar(ctx, args);
+    case 'sidecar': {
+      // PID 1 in a container has no default signal action: without a handler `docker stop` waits
+      // out its timeout and SIGKILLs the sidecar, possibly mid-renewal. A renewal in progress
+      // finishes (the loop looks at the signal only between rounds).
+      const stop = new AbortController();
+      const onSignal = () => stop.abort();
+      process.once('SIGTERM', onSignal);
+      process.once('SIGINT', onSignal);
+      try {
+        return await sidecar(ctx, args, { stop: stop.signal });
+      } finally {
+        process.off('SIGTERM', onSignal);
+        process.off('SIGINT', onSignal);
+      }
+    }
     case 'sidecar-health':
       return sidecarHealth(ctx);
     default:
