@@ -26,6 +26,8 @@ const base = {
   value: 82
 };
 
+const NOW = 10_000_000;
+
 describe('latestRollup', () => {
   it('returns the newest bucket at the finest level that has one', () => {
     const add = (ts: number, resolution: string, avg: number) =>
@@ -34,14 +36,26 @@ describe('latestRollup', () => {
           'INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max) VALUES (?, ?, ?, ?, ?, ?)'
         )
         .run(ts, 'disk_used', resolution, avg, avg, avg);
-    expect(latestRollup(db, 'disk_used')).toBeNull();
+    expect(latestRollup(db, 'disk_used', NOW)).toBeNull();
     add(0, '1d', 40);
     add(3_600_000, '1h', 41);
-    expect(latestRollup(db, 'disk_used')).toEqual({ ts: 3_600_000, value: 41 });
+    expect(latestRollup(db, 'disk_used', NOW)).toEqual({ ts: 3_600_000, value: 41 });
     add(3_600_000, '1m', 42);
     add(3_660_000, '1m', 43);
-    expect(latestRollup(db, 'disk_used')).toEqual({ ts: 3_660_000, value: 43 });
-    expect(latestRollup(db, 'cpu_load')).toBeNull();
+    expect(latestRollup(db, 'disk_used', NOW)).toEqual({ ts: 3_660_000, value: 43 });
+    expect(latestRollup(db, 'cpu_load', NOW)).toBeNull();
+  });
+
+  it('ignores buckets that start after now (a clock that ran ahead)', () => {
+    const add = (ts: number, resolution: string, avg: number) =>
+      db
+        .prepare(
+          'INSERT INTO metrics_rollup (ts, metric, resolution, avg, min, max) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .run(ts, 'disk_used', resolution, avg, avg, avg);
+    add(3_600_000, '1h', 41);
+    add(NOW + 86_400_000, '1m', 99);
+    expect(latestRollup(db, 'disk_used', NOW)).toEqual({ ts: 3_600_000, value: 41 });
   });
 });
 
@@ -92,8 +106,16 @@ describe('latestReading', () => {
   it('returns the newest reading, or null for a metric never stored', () => {
     insertSample(db, { ts: 1000, metric: 'disk_used', value: 40 });
     insertSample(db, { ts: 5000, metric: 'disk_used', value: 41 });
-    expect({ ...latestReading(db, 'disk_used') }).toEqual({ ts: 5000, value: 41 });
-    expect(latestReading(db, 'throttled')).toBeNull();
+    expect({ ...latestReading(db, 'disk_used', 10_000) }).toEqual({ ts: 5000, value: 41 });
+    expect(latestReading(db, 'throttled', 10_000)).toBeNull();
+  });
+
+  it('ignores readings stamped after now (a clock that ran ahead), beyond a small tolerance', () => {
+    insertSample(db, { ts: 5000, metric: 'disk_used', value: 41 });
+    insertSample(db, { ts: 5000 + 60_000, metric: 'disk_used', value: 99 }); // within tolerance
+    insertSample(db, { ts: 5000 + 86_400_000, metric: 'disk_used', value: 77 });
+    expect(latestReading(db, 'disk_used', 5000)).toEqual({ ts: 65_000, value: 99 });
+    expect(latestReading(db, 'disk_used', 5000 - 400_000)).toBeNull();
   });
 });
 
@@ -178,5 +200,10 @@ describe('raiseAlert', () => {
   it('can be closed as rule_changed', () => {
     const alert = raiseAlert(db, { ...base, raisedAt: 1000 });
     expect(clearAlert(db, alert.id, 2000, 'rule_changed').clearedBy).toBe('rule_changed');
+  });
+
+  it('never stamps a clear earlier than the raise (the clock stepped back)', () => {
+    const alert = raiseAlert(db, { ...base, raisedAt: 5000 });
+    expect(clearAlert(db, alert.id, 1000, 'condition').clearedAt).toBe(5000);
   });
 });

@@ -180,7 +180,7 @@ describe('resolveRules', () => {
     ],
     [
       [{ id: 'x', metric: 'throttled', bitsSet: 1.5, severity: 'warning', message: 'm' }],
-      /bitsSet must be a positive integer/
+      /bitsSet must be an integer mask/
     ],
     [
       [
@@ -276,6 +276,40 @@ describe('ruleProblem', () => {
     expect(ruleProblem(rule, ['cpu_load'], 2 * DAY)?.field).toBe('metric');
     expect(ruleProblem(rule, ['cpu_temperature'], 5 * MIN)?.field).toBe('for');
     expect(ruleProblem(rule, ['cpu_temperature'], 2 * DAY)).toBeUndefined();
+  });
+
+  it('refuses a for or clearAfter shorter than the metric polls, which could never decide', () => {
+    const metrics = [{ id: 'disk_used', intervalMs: 60_000 }];
+    const base = { ...rule, metric: 'disk_used', forMs: 60_000, clearAfterMs: 60_000 };
+    expect(ruleProblem(base, ['disk_used'], DAY, metrics)).toBeUndefined();
+    expect(ruleProblem({ ...base, forMs: 10_000 }, ['disk_used'], DAY, metrics)?.field).toBe('for');
+    expect(ruleProblem({ ...base, clearAfterMs: 10_000 }, ['disk_used'], DAY, metrics)?.field).toBe(
+      'clearAfter'
+    );
+    // zero means "the latest reading", which always decides
+    expect(
+      ruleProblem({ ...base, forMs: 0, clearAfterMs: 0 }, ['disk_used'], DAY, metrics)
+    ).toBeUndefined();
+    // a '*' rule must fit its slowest metric
+    const slow = [...metrics, { id: 'cpu_load', intervalMs: 5000 }];
+    expect(
+      ruleProblem({ ...base, metric: '*', forMs: 30_000 }, ['disk_used'], DAY, slow)?.field
+    ).toBe('for');
+  });
+});
+
+describe('bitsSet masks', () => {
+  const entry = (bitsSet: number) => ({
+    id: 'x',
+    metric: 'throttled',
+    bitsSet,
+    severity: 'warning',
+    message: 'm'
+  });
+  it('must fit 32 bits, where the two ways of masking agree', () => {
+    expect(parseRuleEntry(entry(0xffffffff), 'rule', 'file').rule?.bitsSet).toBe(0xffffffff);
+    for (const bad of [0, -1, 1.5, 2 ** 32, 2 ** 40])
+      expect(() => parseRuleEntry(entry(bad), 'rule', 'file')).toThrow(/bitsSet/);
   });
 });
 
