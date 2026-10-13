@@ -77,7 +77,7 @@ trim_log() {
   tail -c "$LOG_KEEP" "$LOG" > "$LOG.tmp" && mv -f "$LOG.tmp" "$LOG"
 }
 
-# shellcheck disable=SC2329 # runs as the EXIT trap
+# shellcheck disable=SC2317,SC2329 # runs as the EXIT trap
 on_exit() {
   rc=$?
   # Killed or crashed between "running" and the result: say so instead of leaving it running.
