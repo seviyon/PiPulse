@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, uptime } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli-common.js';
@@ -18,6 +18,7 @@ import { settingsEnv } from './envfile.js';
 import { OPENSSL } from './issue.js';
 import { LOCK_WAIT_MS, LockError, withLock } from './lock.js';
 import { layoutFrom, type Layout } from './layout.js';
+import { processIdentity } from './proc.js';
 import { sidecar, sidecarHealth, sidecarInit } from './sidecar.js';
 
 export const USAGE = `usage: pipulse tls <command>
@@ -169,6 +170,8 @@ export function defaultContext(): Context {
         now: Date.now(),
         trust: env['PIPULSE_TLS_CLOCK']?.trim() === 'trust'
       }),
+    uptime: () => uptime() * 1000,
+    bootId: () => processIdentity(process.pid)?.bootId,
     isRoot: process.getuid?.() === 0,
     tty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     ask: (question) => askYesNo(question, process.stdin, process.stdout),

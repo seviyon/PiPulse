@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { ANCHOR_HOLD_MS, aheadText, judgeClock, readAnchor, writeAnchor } from './clock-anchor.js';
 import { opensslVersion } from './issue.js';
 import { leafNames } from './constraints.js';
 import { pathExists, removeTree } from './files.js';
@@ -176,6 +177,27 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
       ctx.out('waiting for clock synchronization');
       return 0;
     }
+    // A forward step of the wall clock is not believed until it has held (clock-anchor.ts).
+    let doubt: string | undefined;
+    const bootId = ctx.bootId?.();
+    if (ctx.uptime && bootId) {
+      const uptimeMs = ctx.uptime();
+      const verdict = judgeClock(readAnchor(layout), {
+        bootId,
+        offsetMs: now - uptimeMs,
+        uptimeMs
+      });
+      if (verdict.next) {
+        try {
+          writeAnchor(layout, verdict.next);
+        } catch (error) {
+          ctx.err(`warning: could not write clock-anchor.json: ${(error as Error).message}`);
+        }
+      }
+      if (!verdict.ok) {
+        doubt = `the clock stepped ahead by ${aheadText(verdict.aheadMs)} since the last check; waiting until it has held for ${aheadText(ANCHOR_HOLD_MS)}`;
+      }
+    }
     const wanted = leafNames({
       constraints: ca.constraints,
       hostname: ctx.hostname(),
@@ -195,6 +217,11 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
           : '';
       record('not-due', note);
       ctx.out(`not due${note ? `: ${note}` : ''}`);
+      return 0;
+    }
+    if (doubt !== undefined && !values.force) {
+      record('waiting-clock', doubt);
+      ctx.out(`waiting: ${doubt}`);
       return 0;
     }
     await opensslVersion(ctx.openssl);

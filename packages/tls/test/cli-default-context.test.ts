@@ -59,6 +59,16 @@ describe('defaultContext', () => {
     expect(() => ctx.candidate?.()).not.toThrow();
   });
 
+  it('reads the boot clock and boot id the renew clock check compares against', () => {
+    const ctx = defaultContext();
+    const first = ctx.uptime!();
+    expect(first).toBeGreaterThan(0);
+    expect(ctx.uptime!()).toBeGreaterThanOrEqual(first);
+    // Linux has a boot id; elsewhere (a Mac) there is none and the check stays off.
+    const boot = ctx.bootId!();
+    expect(boot === undefined || boot.length > 8).toBe(true);
+  });
+
   it('judges the clock from the timesync folder it is given, or trusts it on request', () => {
     vi.stubEnv('PIPULSE_TLS_TIMESYNC_DIR', '/nonexistent/timesync');
     vi.stubEnv('PIPULSE_TLS_CLOCK', 'trust');
