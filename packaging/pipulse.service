@@ -11,6 +11,8 @@ Group=pipulse
 Environment=PIPULSE_DB_PATH=/var/lib/pipulse/pipulse.sqlite
 Environment=PIPULSE_WEB_DIR=/opt/pipulse/app/packages/web/dist
 Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+# Defaults a fresh install wrote (defaults.env); pipulse.env comes second, so whatever it sets wins.
+EnvironmentFile=-/etc/pipulse/defaults.env
 EnvironmentFile=/etc/pipulse/pipulse.env
 ExecStart=/opt/pipulse/node/bin/node /opt/pipulse/app/packages/api/dist/server.js
 WorkingDirectory=/var/lib/pipulse
