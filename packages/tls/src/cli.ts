@@ -188,12 +188,17 @@ export function lockFor(
   args: string[] = []
 ): { create: boolean } | undefined {
   if (command === undefined || !Object.hasOwn(LOCKED, command)) return undefined;
-  // `init --mode auto` writes state.json even over an operator certificate.
-  const modeSwitch =
-    command === 'enable' ||
-    command === 'disable' ||
-    (command === 'init' && args.includes('--mode'));
-  if (!modeSwitch && (operatorConfigured(ctx.env) || nativeLayoutProblem(ctx) !== undefined))
+  const modeSwitch = command === 'enable' || command === 'disable';
+  // `init --mode auto` writes state.json even over an operator certificate; with a refused
+  // folder and no operator certificate it writes nothing, not even a lock file there.
+  const initState = command === 'init' && args.includes('--mode');
+  if (initState && !operatorConfigured(ctx.env) && nativeLayoutProblem(ctx) !== undefined)
+    return undefined;
+  if (
+    !modeSwitch &&
+    !initState &&
+    (operatorConfigured(ctx.env) || nativeLayoutProblem(ctx) !== undefined)
+  )
     return undefined;
   return { create: LOCKED[command] === true };
 }

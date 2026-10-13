@@ -11,7 +11,7 @@ import {
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { askYesNo, main } from '../src/cli.js';
+import { askYesNo, defaultContext, lockFor, main } from '../src/cli.js';
 import { asCaller } from '../src/cmd-export.js';
 import { readClock } from '../src/clock.js';
 import { collectStatus, formatStatus } from '../src/cmd-status.js';
@@ -316,5 +316,78 @@ describe('F5: export-ca --out is written with the caller’s rights', () => {
       asCaller(env, () => calls.push('work'), { ...proc, geteuid: () => euid });
       expect(calls).toEqual(['work']);
     }
+  });
+});
+
+describe('lockFor with init --mode', () => {
+  it('locks over an operator certificate (it writes state.json)', () => {
+    expect(lockFor('init', operator(join(dir, 'tls')), ['--mode', 'auto'])).toEqual({
+      create: true
+    });
+    expect(lockFor('init', operator(join(dir, 'tls')), [])).toBeUndefined();
+  });
+
+  it('does not lock, or make the folder, when the TLS folder is refused', () => {
+    const refused = testContext(dir, { defaultTlsDir: join(dir, 'elsewhere') });
+    expect(lockFor('init', refused, ['--mode', 'auto'])).toBeUndefined();
+  });
+
+  it('locks in the default folder', () => {
+    expect(lockFor('init', ctx, ['--mode', 'auto'])).toEqual({ create: true });
+  });
+});
+
+describe('remaining branches of the review fixes', () => {
+  it('an operator folder that does not exist yet is made (and only made)', async () => {
+    const foreign = join(dir, 'made-for-state');
+    const run = operator(foreign, { defaultTlsDir: join(dir, 'not-this-one') });
+    expect(await main(['disable', '--yes'], run)).toBe(0);
+    expect(statSync(foreign).isDirectory()).toBe(true);
+    expect(readState(run.layout)).toBe('legacy-http');
+  });
+
+  it('asCaller keeps root’s groups as [0] when the platform cannot list them', () => {
+    const calls: string[] = [];
+    asCaller({ SUDO_UID: '1000', SUDO_GID: '1000' }, () => undefined, {
+      geteuid: () => 0,
+      setgroups: (g) => calls.push(`groups ${g.join(',')}`),
+      setegid: () => undefined,
+      seteuid: () => undefined
+    });
+    expect(calls.at(-1)).toBe('groups 0');
+  });
+
+  it('export-ca --out says when the file exists, or the folder is missing', async () => {
+    await main(['init'], ctx);
+    const taken = join(dir, 'taken.crt');
+    writeFileSync(taken, 'x');
+    const exists = testContext(dir);
+    expect(await main(['export-ca', '--out', taken], exists)).toBe(1);
+    expect(exists.errors.join('\n')).toContain('it already exists');
+    const missing = testContext(dir);
+    expect(await main(['export-ca', '--out', join(dir, 'no', 'such', 'a.crt')], missing)).toBe(1);
+    expect(missing.errors.join('\n')).toMatch(/can't write .*ENOENT/);
+  });
+
+  it('status reports a journal it may not read as "can’t check", not as pending', async () => {
+    await main(['init'], ctx);
+    const txn = paths(ctx.layout).txn;
+    writeFileSync(txn, '{}', { mode: 0o000 });
+    chmodSync(txn, 0o000);
+    try {
+      const report = collectStatus(ctx);
+      if (process.getuid?.() === 0) return; // root reads it anyway
+      expect(report.configured.journal).toBe('unreadable');
+      expect(formatStatus(report, ctx).join('\n')).toContain("can't check");
+    } finally {
+      chmodSync(txn, 0o600);
+    }
+  });
+
+  it('the real context has a monotonic clock and asks on the terminal', async () => {
+    const real = defaultContext();
+    const a = real.monotonic!();
+    expect(real.monotonic!()).toBeGreaterThanOrEqual(a);
+    expect(typeof real.ask).toBe('function');
   });
 });
