@@ -232,4 +232,14 @@ sleep 1
 check 'a terminated helper leaves failed, not running' sh -c "[ \"\$(sed -n 's/^{\"state\":\"\\([a-z]*\\)\".*/\\1/p' $OUT/upgrade-status.json)\" = failed ]"
 dpkg --configure -a >/dev/null 2>&1 || true
 
+# Leave the container as found: later tests (and the TLS unit tests CI runs afterwards as root)
+# expect no pipulse user or group, and the real package sources.
+dpkg --purge pipulse-fakepkg >/dev/null 2>&1 || true
+rm -rf /etc/pipulse /var/lib/pipulse /var/lib/pipulse-updates /run/pipulse-upgrade.lock /repo-apt /etc/pipulse-fakepkg.conf /tmp/victim
+rm -f /etc/apt/sources.list.d/test.list
+if [ -e /etc/apt/disabled-sources/sources.list ]; then mv /etc/apt/disabled-sources/sources.list /etc/apt/sources.list; fi
+mv /etc/apt/disabled-sources/* /etc/apt/sources.list.d/ 2>/dev/null || true
+rmdir /etc/apt/disabled-sources 2>/dev/null || true
+userdel pipulse 2>/dev/null || true
+groupdel pipulse 2>/dev/null || true
 exit $fail
