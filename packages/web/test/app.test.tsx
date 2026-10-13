@@ -271,6 +271,7 @@ describe('<App>', () => {
       ['Now', '#/'],
       ['History', '#/history?range=24h'],
       ['Alerts', '#/alerts'],
+      ['Updates', '#/updates'],
       ['Settings', '#/settings']
     ]);
     expect(links[0]?.getAttribute('aria-current')).toBe('page');

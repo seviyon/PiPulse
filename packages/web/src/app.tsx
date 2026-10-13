@@ -3,6 +3,8 @@ import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from
 import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
 import { AlertsPage } from './alerts-page.js';
 import { SettingsPage } from './settings-page.js';
+import { UpdatesPage } from './updates-page.js';
+import { waitingCount } from './updates.js';
 import {
   authEvents,
   getJson,
@@ -21,7 +23,7 @@ import { HistoryPage } from './history-page.js';
 import { historyOnly } from './history.js';
 import { routeHash, useRoute } from './router.js';
 import { StatusIcon, Tile } from './tile.js';
-import type { Alert, Config, DeviceInfo, Rule, Sample } from './types.js';
+import type { Alert, Config, DeviceInfo, Rule, Sample, UpdatesView } from './types.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {
@@ -99,6 +101,8 @@ function ConnectionLine({
 
 export function App() {
   const [config, setConfig] = useState<Config>();
+  /** What `apt-get upgrade` would do (GET /api/updates); undefined until loaded or on an older server. */
+  const [updates, setUpdates] = useState<UpdatesView>();
   const [session, setSession] = useState<Session>(NO_SESSION);
   /** Reads need a sign-in and there is no session: show only the form. */
   const [needSignIn, setNeedSignIn] = useState(false);
@@ -205,6 +209,16 @@ export function App() {
     if (config) document.title = `${config.device.hostname} – PiPulse`;
   }, [config]);
 
+  // Updates waiting: read once the config is in, then every 10 minutes (the server checks every 6 hours).
+  // An older server has no /api/updates and simply shows no tab content.
+  useEffect(() => {
+    if (!config) return;
+    const load = () => getJson<UpdatesView>('/api/updates').then(setUpdates, () => undefined);
+    load();
+    const timer = setInterval(load, 10 * 60_000);
+    return () => clearInterval(timer);
+  }, [config]);
+
   useEffect(() => {
     if (!config) return;
     // Loaded up front, not on the first 'live', so tiles fill even when the
@@ -290,6 +304,7 @@ export function App() {
   const rules = liveRules ?? config.rules ?? [];
   const loud = unacknowledged(openAlerts);
   const worstOpen = worstAlert(loud);
+  const waiting = waitingCount(updates);
 
   return (
     <main class="page">
@@ -348,6 +363,14 @@ export function App() {
           )}
         </a>
         <a
+          href={routeHash({ page: 'updates' })}
+          aria-current={route.page === 'updates' ? 'page' : undefined}
+          aria-label={waiting > 0 ? `Updates, ${waiting} waiting` : undefined}
+        >
+          Updates
+          {waiting > 0 && <span class="badge">{waiting}</span>}
+        </a>
+        <a
           href={routeHash({ page: 'settings' })}
           aria-current={route.page === 'settings' ? 'page' : undefined}
         >
@@ -367,6 +390,14 @@ export function App() {
             setSession(next);
             if (next.protectReads && !next.signedIn) setNeedSignIn(true);
           }}
+        />
+      ) : route.page === 'updates' ? (
+        <UpdatesPage
+          view={updates}
+          session={session}
+          version={config.version}
+          now={Date.now() + clockOffset.current}
+          onView={setUpdates}
         />
       ) : route.page === 'alerts' ? (
         <AlertsPage

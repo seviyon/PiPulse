@@ -53,6 +53,7 @@ import { parseAllowedHosts } from './host.js';
 import { CONTAINER_UNAVAILABLE, splitForContainer } from './container.js';
 import { createHealth } from './health.js';
 import { readGeneratedExtras, tlsView, writeTlsMarker } from './tls-status.js';
+import { createUpdates } from './updates.js';
 import { nodeSupport, readVersion } from './version.js';
 import {
   buildServer,
@@ -357,6 +358,12 @@ function publishRuntime(): void {
 // Set once the server listens over HTTPS and the data folder's marker could not be written.
 let markerProblem: string | undefined;
 const engine: { alerts?: { check(): void; stop(): void } } = {};
+// What `apt-get upgrade` would do, checked 2 minutes after start and every 6 hours (nothing in a container).
+const updates = createUpdates({
+  inContainer: IN_CONTAINER,
+  onError: (error) =>
+    console.error(`updates check failed: ${(error as Error).message.split('\n')[0]}`)
+});
 /**
  * PIPULSE_ALLOWED_HOSTS: host names this server answers to (DNS-rebinding protection for plain
  * HTTP installs; HTTPS ones are protected by the certificate's names). Unset: no check. Set: the
@@ -396,6 +403,7 @@ const app = buildServer(db, {
   auth: { protectReads: PROTECT_READS, ...(PASSWORD_HASH ? { passwordHash: PASSWORD_HASH } : {}) },
   settings: { getRetention, metrics: METRICS, rawAtLeast: () => longestLookBack(rulesInForce()) },
   notify: notifications,
+  updates,
   health,
   ...(CERT ? { https: { key: CERT.key, cert: CERT.cert } } : {}),
   ...(HSTS_SECONDS !== undefined ? { hstsSeconds: HSTS_SECONDS } : {}),
@@ -524,6 +532,7 @@ app
       console.warn(
         `[pipulse] Node ${NODE.line} no longer gets security fixes (since ${NODE.supportEnds})`
       );
+    updates.start();
   })
   .catch((error: unknown) => {
     console.error(error);
@@ -543,6 +552,7 @@ async function shutdown(): Promise<void> {
   tls.provider?.stop();
   housekeeping.stop();
   engine.alerts?.stop();
+  updates.stop();
   const [, drained] = await Promise.all([
     app.close(),
     scheduler.stop(SHUTDOWN_TIMEOUT_MS),

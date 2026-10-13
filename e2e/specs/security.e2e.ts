@@ -20,7 +20,7 @@ test.describe('the browser defenses', () => {
     expect(response?.headers()['x-frame-options']).toBe('DENY');
     await expect(page.getByRole('status')).toContainText('Live'); // the WebSocket is allowed by connect-src
 
-    for (const route of ['#/history?range=24h', '#/alerts', '#/settings', '#/']) {
+    for (const route of ['#/history?range=24h', '#/alerts', '#/updates', '#/settings', '#/']) {
       await page.goto(`/${route}`);
       await page.waitForLoadState('networkidle');
     }
