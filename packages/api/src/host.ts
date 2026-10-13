@@ -41,14 +41,21 @@ export function isAllowedHost(header: string | undefined, allowed: string[]): bo
 
 /**
  * PIPULSE_ALLOWED_HOSTS: comma-separated host names (no ports, schemes or wildcards). Empty or
- * unset means no check, as before; a bad entry throws one line. `extra` (the host's own name and
- * the certificate names the operator declared) join a list that is set, never an empty one.
+ * unset means no check, as before; a bad entry throws one line. `auto` alone turns the check on
+ * with no names of the operator's own: only `extra` (the host's own name and the certificate names
+ * the operator declared) are served, besides addresses and `localhost`. `extra` joins a list that
+ * is set, never an empty one.
  */
 export function parseAllowedHosts(text: string | undefined, extra: string[] = []): string[] {
   const names: string[] = [];
+  let auto = false;
   for (const raw of (text ?? '').split(',')) {
     const entry = raw.trim();
     if (entry === '' || isIP(entry) !== 0) continue; // an address is allowed anyway
+    if (entry.toLowerCase() === 'auto') {
+      auto = true;
+      continue;
+    }
     try {
       names.push(canonicalName(entry));
     } catch {
@@ -57,7 +64,7 @@ export function parseAllowedHosts(text: string | undefined, extra: string[] = []
       );
     }
   }
-  if (names.length === 0) return [];
+  if (names.length === 0 && !auto) return [];
   for (const name of extra) {
     try {
       names.push(canonicalName(name));

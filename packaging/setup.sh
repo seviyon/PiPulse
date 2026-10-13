@@ -45,6 +45,24 @@ fi
 chown root:pipulse /etc/pipulse/pipulse.env
 chmod 640 /etc/pipulse/pipulse.env
 
+# 3a. Defaults for a FRESH install only (an upgrade changes nothing about who may reach it):
+#     the server answers only to this host's own names, <host>.local and addresses, which keeps a
+#     page on an attacker's name from reading it through DNS rebinding. pipulse.env is loaded
+#     after this file, so an entry there (even an empty PIPULSE_ALLOWED_HOSTS=) wins.
+if [ "$first" = yes ] && [ ! -e /etc/pipulse/defaults.env ] && [ -z "$(env_value PIPULSE_ALLOWED_HOSTS)" ]; then
+  defaults_tmp=/etc/pipulse/.defaults.env.$$
+  printf '%s\n' \
+    '# Written by a fresh install; delete a line, or set the same name in pipulse.env, to change it.' \
+    '# auto: answer only to this host'"'"'s own name, <host>.local, PIPULSE_TLS_NAMES, addresses and localhost.' \
+    '# Reaching the Pi through another name (a router alias such as io.lan)? Add it in pipulse.env:' \
+    '#   PIPULSE_ALLOWED_HOSTS=io.lan   (or an empty PIPULSE_ALLOWED_HOSTS= to answer to every name)' \
+    'PIPULSE_ALLOWED_HOSTS=auto' > "$defaults_tmp"
+  chown root:pipulse "$defaults_tmp"
+  chmod 640 "$defaults_tmp"
+  mv -f "$defaults_tmp" /etc/pipulse/defaults.env
+  log 'answering only to this host'"'"'s own names and addresses; to add another name set PIPULSE_ALLOWED_HOSTS in /etc/pipulse/pipulse.env'
+fi
+
 # 3b. HTTPS material and mode: made and checked before the service (re)starts; state.json is
 #     written last, and an upgrade never switches the transport.
 # install.sh leaves this marker on a fresh install until setup succeeds, so a retry after any
