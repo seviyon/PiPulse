@@ -33,6 +33,20 @@ timer_on() { grep -qx 'enable --now pipulse-tls-renew.timer' /tmp/systemctl.log;
 run disabled --first-install || bad 'first install ran'
 grep -qx 'enable pipulse' /tmp/systemctl.log && grep -qx 'restart pipulse' /tmp/systemctl.log && ok 'first install enables and starts' || bad 'first install enables and starts'
 timer_on && [ -e /etc/pipulse/.renew-timer-enabled ] && ok 'first install enables the renewal timer once' || bad 'first install enables the renewal timer once'
+# A fresh install starts with the DNS-rebinding guard on (the host's own names only); an upgrade never adds it.
+[ "$(stat -c '%U:%G %a' /etc/pipulse/defaults.env)" = 'root:pipulse 640' ] && grep -qx 'PIPULSE_ALLOWED_HOSTS=auto' /etc/pipulse/defaults.env && ok 'first install writes defaults.env: PIPULSE_ALLOWED_HOSTS=auto, root:pipulse 640' || bad 'first install writes defaults.env: PIPULSE_ALLOWED_HOSTS=auto, root:pipulse 640'
+grep -q 'answering only to this host' /tmp/setup.out && ok 'first install says which names it answers to' || bad 'first install says which names it answers to'
+[ -z "$(find /etc/pipulse -maxdepth 1 -name '.defaults*')" ] && ok 'no temporary defaults file is left' || bad 'no temporary defaults file is left'
+# pipulse.service reads defaults.env first, pipulse.env second (so the operator's value wins), both optional/required as before.
+awk '/^EnvironmentFile=/{print}' "$here/pipulse.service" | tr '\n' ' ' | grep -q '^EnvironmentFile=-/etc/pipulse/defaults.env EnvironmentFile=/etc/pipulse/pipulse.env $' && ok 'the unit loads defaults.env before pipulse.env' || bad 'the unit loads defaults.env before pipulse.env'
+rm -f /etc/pipulse/defaults.env
+run disabled '' || bad 'upgrade ran'
+[ ! -e /etc/pipulse/defaults.env ] && ok 'an upgrade does not write defaults.env' || bad 'an upgrade does not write defaults.env'
+touch /etc/pipulse/.first-install-pending
+echo 'PIPULSE_ALLOWED_HOSTS=io.lan' >> /etc/pipulse/pipulse.env
+run disabled --first-install || bad 'first install with the setting ran'
+[ ! -e /etc/pipulse/defaults.env ] && ok 'a first install keeps an operator-set PIPULSE_ALLOWED_HOSTS and writes no default' || bad 'a first install keeps an operator-set PIPULSE_ALLOWED_HOSTS and writes no default'
+sed -i '/^PIPULSE_ALLOWED_HOSTS=/d' /etc/pipulse/pipulse.env
 
 # Running but its certificate fails the client check (exit 2): warn and finish, like install.sh.
 printf '%s\n' 'process.stderr.write("[pipulse] health check: unable to get local issuer certificate\n"); process.exit(2);' > /opt/pipulse/app/packages/tls/dist/health-check.js

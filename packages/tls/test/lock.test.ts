@@ -14,6 +14,7 @@ import type { Layout } from '../src/layout.js';
 import {
   LOCK_FILE,
   LOCK_HEARTBEAT_MS,
+  LOCK_WAIT_MS,
   LOCK_OBSERVE_MS,
   LockError,
   breakLock,
@@ -201,6 +202,82 @@ describe('withLock', () => {
     ).rejects.toThrow(LockError);
     release();
     await held;
+  });
+
+  describe('the wait is bounded on the monotonic clock', () => {
+    const hold = () => {
+      let release!: () => void;
+      const held = withLock(layout, () => new Promise<void>((resolve) => (release = resolve)), {
+        create: true,
+        alive: () => true
+      });
+      return { held, release: () => release() };
+    };
+
+    it('a wall clock that jumps a day ahead does not end the wait early', async () => {
+      const holder = hold();
+      await pause(10);
+      let wall = Date.now();
+      let mono = 0;
+      let sleeps = 0;
+      const waiter = withLock(layout, async () => 'ran', {
+        create: true,
+        waitMs: 5000,
+        alive: () => true,
+        now: () => wall,
+        monotonic: () => mono,
+        sleep: async () => {
+          sleeps++;
+          wall += 86_400_000; // NTP steps the clock a day forward on every sleep
+          mono += 100;
+          if (sleeps === 3) holder.release();
+          await pause(20);
+        }
+      });
+      expect(await waiter).toBe('ran');
+      expect(sleeps).toBeGreaterThanOrEqual(3);
+      await holder.held;
+    });
+
+    it('without waitMs it gives up after the default wait', async () => {
+      const holder = hold();
+      await pause(10);
+      let mono = 0;
+      await expect(
+        withLock(layout, async () => 'no', {
+          create: true,
+          alive: () => true,
+          monotonic: () => mono,
+          sleep: async () => {
+            mono += LOCK_WAIT_MS / 2;
+          }
+        })
+      ).rejects.toThrow(LockError);
+      expect(mono).toBeGreaterThanOrEqual(LOCK_WAIT_MS);
+      holder.release();
+      await holder.held;
+    });
+
+    it('a wall clock stuck in place does not stretch it', async () => {
+      const holder = hold();
+      await pause(10);
+      const wall = Date.now();
+      let mono = 0;
+      await expect(
+        withLock(layout, async () => 'no', {
+          create: true,
+          waitMs: 1000,
+          alive: () => true,
+          now: () => wall,
+          monotonic: () => mono,
+          sleep: async () => {
+            mono += 400;
+          }
+        })
+      ).rejects.toThrow(LockError);
+      holder.release();
+      await holder.held;
+    });
   });
 
   it('still bounds the age of a holder whose identity cannot be verified', async () => {

@@ -86,6 +86,19 @@ describe('parseAllowedHosts', () => {
     ]);
   });
 
+  it('auto turns the check on with only the host’s own names', () => {
+    expect(parseAllowedHosts('auto', ['io', 'IO.local'])).toEqual(['io', 'io.local']);
+    expect(parseAllowedHosts(' AUTO ', ['io'])).toEqual(['io']);
+  });
+
+  it('auto together with names keeps both', () => {
+    expect(parseAllowedHosts('auto,pi.example', ['io'])).toEqual(['pi.example', 'io']);
+  });
+
+  it('auto with no extras at all is an empty list, which means no check', () => {
+    expect(parseAllowedHosts('auto')).toEqual([]);
+  });
+
   it.each(['*', '*.lan', 'a b', 'pi.example:8889', 'http://pi.example', ',,x_y'])(
     'refuses %j with one line naming the setting',
     (entry) => {

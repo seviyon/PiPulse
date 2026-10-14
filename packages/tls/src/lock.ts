@@ -420,9 +420,11 @@ export async function withLock<T>(
   }
   const path = join(layout.caRoot, LOCK_FILE);
   const token = randomBytes(16).toString('hex');
-  const deadline = now() + (options.waitMs ?? LOCK_WAIT_MS);
-
   const monotonic = options.monotonic ?? (() => performance.now());
+  // The wait is bounded on the monotonic clock: a wall clock that steps (NTP on a Pi without an
+  // RTC) must neither cut it short nor stretch it.
+  const waitFrom = monotonic();
+  const waitExpired = () => monotonic() - waitFrom >= (options.waitMs ?? LOCK_WAIT_MS);
   const heartbeatAge = () => {
     try {
       return Date.now() - statSync(path).mtimeMs;
@@ -523,7 +525,7 @@ export async function withLock<T>(
           ...(options.alive ? { alive: options.alive } : {})
         }) === 'busy'
       ) {
-        if (now() >= deadline) {
+        if (waitExpired()) {
           throw new LockError(
             'another pipulse tls command is clearing a stale lock; try again in a moment'
           );
@@ -533,7 +535,7 @@ export async function withLock<T>(
       continue;
     }
     // While a remote holder's heartbeat is being watched, the wait is not cut short by waitMs.
-    if (now() >= deadline && !observing) {
+    if (waitExpired() && !observing) {
       throw new LockError(
         `another pipulse tls command is running (pid ${holder?.pid ?? '?'}${
           holder?.host && holder.host !== me.host ? ` on ${holder.host}` : ''
