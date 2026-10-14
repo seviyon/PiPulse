@@ -27,6 +27,10 @@ export interface Context {
   candidate: () => { iface: string; cidr: string } | undefined;
   interfaces: () => NodeJS.Dict<NetworkInterfaceInfo[]>;
   clock: () => ClockReading;
+  /** Milliseconds since boot, on a clock that wall-clock steps do not move (clock-anchor.ts); tests may leave it out. */
+  uptime?: (() => number) | undefined;
+  /** This boot's id; with `uptime`, turns on the check that a forward clock step has held before `renew` issues. */
+  bootId?: (() => string | undefined) | undefined;
   isRoot: boolean;
   /** stdin and stdout are a terminal, so a question can be asked. */
   tty: boolean;
