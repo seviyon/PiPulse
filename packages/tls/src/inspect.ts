@@ -5,6 +5,12 @@ import { rootCertificates } from 'node:tls';
 import type { CertSource } from './config.js';
 import { readSecureFile } from './files.js';
 import { parseBundle, parseCertificateFile, parseKeyFile } from './pem.js';
+import {
+  leafNames,
+  nameConstraints,
+  pathLength,
+  violatesNameConstraints
+} from './x509-constraints.js';
 
 export type Validity = 'valid' | 'expiring-soon' | 'expired' | 'not-yet-valid';
 export type ChainClass =
@@ -63,7 +69,7 @@ export interface LoadedCertificate {
   notAfter: number;
   sans: { dns: string[]; ip: string[] };
   class: ChainClass;
-  /** Machine-readable: 'incomplete-chain', 'untrusted', 'san-missing', 'no-server-auth'. */
+  /** Machine-readable: 'incomplete-chain', 'untrusted', 'san-missing', 'no-server-auth', 'path-length', 'name-constraint'. */
   reasons: string[];
   /** PIPULSE_TLS_NAMES entries the leaf doesn't cover. */
   missingNames: string[];
@@ -207,6 +213,26 @@ export function inspectMaterial(input: {
       (a) => !climbed.some((c) => c.fingerprint256 === a.fingerprint256) && issuedBy(below, a)
     );
     if (!root) degrade('degraded-incomplete-chain', 'incomplete-chain');
+  }
+
+  // The CAs above the leaf, nearest first: what was sent, then the anchors the chain climbs
+  // to. A client refuses a chain whose CA limits the path length or the names it may certify
+  // and the chain breaks that (Node has no accessor for either, so they are read from the DER).
+  const issuers = certs.slice(1);
+  for (const extra of [...climbed, root, anchor]) {
+    if (extra && ![leaf, ...issuers].some((c) => c.fingerprint256 === extra.fingerprint256))
+      issuers.push(extra);
+  }
+  const names = leafNames(leaf);
+  let intermediates = 0;
+  for (const ca of issuers) {
+    const limit = pathLength(ca);
+    if (limit !== undefined && intermediates > limit) degrade('degraded-untrusted', 'path-length');
+    const constraints = nameConstraints(ca);
+    if (constraints && violatesNameConstraints(names, constraints))
+      degrade('degraded-untrusted', 'name-constraint');
+    // A self-issued certificate (a root, a rollover) does not count towards a path length.
+    if (!issuedBy(ca, ca)) intermediates++;
   }
 
   // A client checks the dates of every certificate it is sent except a trusted
