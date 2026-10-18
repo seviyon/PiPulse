@@ -11,7 +11,12 @@ import {
   startHousekeeping,
   type RetentionSettings
 } from '@pipulse/storage';
-import { builtinPlugins, readDeviceInfo, startScheduler } from '@pipulse/collector';
+import {
+  builtinPlugins,
+  describePluginError,
+  readDeviceInfo,
+  startScheduler
+} from '@pipulse/collector';
 import {
   createRuleSource,
   readRulesFile,
@@ -465,7 +470,7 @@ const scheduler = startScheduler(db, RUN_PLUGINS, {
     live.publish(sample);
   },
   onError: (plugin, error) => {
-    console.error(`[pipulse] ${plugin.id} failed:`, error);
+    console.error(`[pipulse] ${plugin.id} failed:`, describePluginError(error));
   }
 });
 // Checks every alert rule now and then every 15 s; raises and clears go to /api/live.

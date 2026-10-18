@@ -229,6 +229,7 @@ export const cpuFrequencyPlugin: CollectorPlugin = {
 };
 
 export { cpuVoltagePlugin, throttledPlugin };
+export { describePluginError, VcgencmdOutputError } from './vcgencmd.js';
 export { createSwapIoPlugin, swapIoPlugin, swapPages } from './swap-io.js';
 
 /** Static facts about the machine, for the dashboard header (served via /api/config). */

@@ -21,7 +21,9 @@ const {
   cpuFrequencyPlugin,
   cpuVoltagePlugin,
   throttledPlugin,
-  readDeviceInfo
+  readDeviceInfo,
+  VcgencmdOutputError,
+  describePluginError
 } = await import('../src/index.js');
 
 type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void;
@@ -121,6 +123,31 @@ describe('cpuVoltagePlugin', () => {
   it('rejects output it cannot parse, so the failure is reported', async () => {
     mockVcgencmd({ measure_volts: 'VCHI initialization failed\n' });
     await expect(cpuVoltagePlugin.collect()).rejects.toThrow(/unexpected vcgencmd output/);
+  });
+
+  it('says so when the firmware answers with nothing (right after a boot)', async () => {
+    mockVcgencmd({ measure_volts: '\n' });
+    await expect(cpuVoltagePlugin.collect()).rejects.toThrow(
+      'unexpected vcgencmd output: (nothing)'
+    );
+  });
+});
+
+describe('describePluginError', () => {
+  it('is one line, without a stack, for output vcgencmd gave that cannot be read', async () => {
+    mockVcgencmd({ measure_volts: '' });
+    const error: unknown = await cpuVoltagePlugin.collect().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VcgencmdOutputError);
+    expect((error as Error).stack).toContain('at ');
+    const shown = describePluginError(error);
+    expect(typeof shown).toBe('string');
+    expect(shown).toBe('unexpected vcgencmd output: (nothing)');
+  });
+
+  it('keeps the whole error, stack included, for anything unexpected', () => {
+    const error = new Error('boom');
+    expect(describePluginError(error)).toBe(error);
+    expect(describePluginError('text')).toBe('text');
   });
 });
 

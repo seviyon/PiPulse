@@ -67,10 +67,23 @@ function vcgencmdReportingOnce(): (args: string[]) => Promise<string | null> {
   };
 }
 
+/** vcgencmd ran but its output was not what the plugin reads (empty, for instance, right after a boot). */
+export class VcgencmdOutputError extends Error {}
+
+/**
+ * What to log for a plugin failure: one line, without a stack, for the failures that are about
+ * vcgencmd's answer (the cause is in the message); anything else unchanged, stack included.
+ */
+export function describePluginError(error: unknown): unknown {
+  return error instanceof VcgencmdOutputError ? error.message.split('\n')[0] : error;
+}
+
 /** Pulls the first capture group out of vcgencmd's `key=value` output. */
 function parse(output: string, pattern: RegExp): string {
   const match = pattern.exec(output);
-  if (!match?.[1]) throw new Error(`unexpected vcgencmd output: ${output.trim()}`);
+  if (!match?.[1]) {
+    throw new VcgencmdOutputError(`unexpected vcgencmd output: ${output.trim() || '(nothing)'}`);
+  }
   return match[1];
 }
 
