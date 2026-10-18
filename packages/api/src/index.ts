@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { getLatest, type PiPulseDb } from '@pipulse/storage';
-import { listAlerts, openAlerts } from '@pipulse/alerts';
+import { openAlerts } from '@pipulse/alerts';
 import { registerAlertRoutes, type Notice } from './alert-routes.js';
 import { registerAuth } from './auth-routes.js';
 import { registerHealthRoutes } from './health-routes.js';
@@ -38,17 +38,6 @@ const CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
-
-const alertsQuerySchema = {
-  type: 'object',
-  properties: {
-    state: { type: 'string', enum: ['active', 'cleared', 'all'] },
-    from: { type: 'integer', minimum: 0 },
-    to: { type: 'integer', minimum: 0 },
-    limit: { type: 'integer', minimum: 1, maximum: 1000 }
-  },
-  additionalProperties: false
-} as const;
 
 /**
  * Builds (but does not start) the PiPulse Fastify server bound to `db`.
@@ -107,27 +96,6 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   registerHealthRoutes(app, db, options);
 
   registerMetricsRoutes(app, db, options);
-
-  app.get<{
-    Querystring: {
-      state?: 'active' | 'cleared' | 'all';
-      from?: number;
-      to?: number;
-      limit?: number;
-    };
-  }>('/api/alerts', { schema: { querystring: alertsQuerySchema } }, async (request, reply) => {
-    const to = request.query.to ?? Date.now();
-    const from = request.query.from ?? to - 30 * 24 * 60 * 60 * 1000;
-    if (from > to) {
-      return reply.status(400).send({ error: 'from must not be after to' });
-    }
-    return listAlerts(db, {
-      state: request.query.state ?? 'all',
-      from,
-      to,
-      limit: request.query.limit ?? 100
-    });
-  });
 
   registerAlertRoutes(app, db, {
     ...(options.alertRules ? { rules: options.alertRules } : {}),
