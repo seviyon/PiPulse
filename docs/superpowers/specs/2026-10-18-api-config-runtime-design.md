@@ -161,8 +161,8 @@ Neither carries a release label: nothing a user can see changes. (The one visibl
 - **A changed message.** `loadConfig` moves checks, so a message could change by accident. The spawned tests assert the current messages; the plan adds a table of every refusal line, taken from the running code, as the oracle.
 - **Coverage.** `runtime.ts` and `tls-runtime.ts` are not on the exclusion list, so they must be covered by `packages/api`'s own tests. That is the point, but it is the work.
 
-## Open questions
+## Open questions (1 and 2 settled by the plan, see `docs/superpowers/plans/2026-10-18-api-config-runtime.md`)
 
-1. One `StartupError` class for refusals, or plain `Error` as today? Plain `Error`: nothing needs the distinction and the entry prints the message either way.
-2. Whether `PIPULSE_RETENTION_*` can be validated in `loadConfig` with an identical message (to be checked first thing in the plan).
+1. **Decided in the plan: a small `StartupError` class**, not plain `Error`. Today three failures end the process differently (a refusal prints `[pipulse] <message>`, a `listen` failure such as `EADDRINUSE` prints the whole error, anything else crashes with Node's own output), and the entry can only keep them apart if refusals are marked.
+2. **Decided in the plan: yes.** `retentionFromEnv` and the runtime's `resolveRetention` apply the same rule and print identical messages (checked on the base commit), so `loadConfig` validates `PIPULSE_RETENTION_*` early.
 3. `package.json`'s `main` is `dist/server.js`, so importing the package starts it. Left alone, since the installer and unit rely on the path, not on `main`; worth a separate look later.
