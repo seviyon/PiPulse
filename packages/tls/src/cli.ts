@@ -8,7 +8,7 @@ import { readClock } from './clock.js';
 import { newCa, restoreCa } from './cmd-ca.js';
 import { exportCa } from './cmd-export.js';
 import { disable, enable } from './cmd-mode.js';
-import { init } from './cmd-init.js';
+import { init, initChoosesMode } from './cmd-init.js';
 import { hostName } from './hostname.js';
 import { recordRenewLockFailure, renew } from './cmd-renew.js';
 import { status } from './cmd-status.js';
@@ -207,7 +207,7 @@ export function lockFor(
   const modeSwitch = command === 'enable' || command === 'disable';
   // `init --mode auto` writes state.json even over an operator certificate; with a refused
   // folder and no operator certificate it writes nothing, not even a lock file there.
-  const initState = command === 'init' && args.includes('--mode');
+  const initState = command === 'init' && initChoosesMode(args);
   if (initState && !operatorConfigured(ctx.env) && nativeLayoutProblem(ctx) !== undefined)
     return undefined;
   if (

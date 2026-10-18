@@ -57,20 +57,29 @@ type InitValues = {
   quiet?: boolean | undefined;
 };
 
+const INIT_OPTIONS = {
+  subnet: { type: 'string', multiple: true },
+  yes: { type: 'boolean' },
+  mode: { type: 'string' },
+  'first-install': { type: 'boolean' },
+  quiet: { type: 'boolean' }
+} as const;
+
+/**
+ * Whether these arguments ask `init` to choose the transport mode (`--mode auto` or `--mode=auto`),
+ * which writes state.json. Read with the parser `init` itself uses, so no spelling gets past it;
+ * arguments `init` would refuse write nothing, so they are not a mode request.
+ */
+export function initChoosesMode(args: string[]): boolean {
+  try {
+    return parseArgs({ args, options: INIT_OPTIONS, strict: true }).values.mode !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function init(ctx: Context, args: string[]): Promise<number> {
-  const { values } = usage(() =>
-    parseArgs({
-      args,
-      options: {
-        subnet: { type: 'string', multiple: true },
-        yes: { type: 'boolean' },
-        mode: { type: 'string' },
-        'first-install': { type: 'boolean' },
-        quiet: { type: 'boolean' }
-      },
-      strict: true
-    })
-  );
+  const { values } = usage(() => parseArgs({ args, options: INIT_OPTIONS, strict: true }));
   if (values.mode === undefined) return material(ctx, values);
   if (values.mode !== 'auto') throw new UsageError(`--mode must be auto, not ${values.mode}`);
   // PIPULSE_TLS=off overrides everything: an install or upgrade makes no CA and, on a first
