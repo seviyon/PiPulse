@@ -1,17 +1,14 @@
 import type { Server as HttpsServer } from 'node:https';
 import Fastify, { type FastifyInstance } from 'fastify';
-import websocket from '@fastify/websocket';
-import fastifyStatic from '@fastify/static';
-import { getLatest, type PiPulseDb } from '@pipulse/storage';
-import { openAlerts } from '@pipulse/alerts';
+import type { PiPulseDb } from '@pipulse/storage';
 import { registerAlertRoutes, type Notice } from './alert-routes.js';
 import { registerAuth } from './auth-routes.js';
+import { registerDashboard, registerLiveRoutes } from './live-routes.js';
 import { registerHealthRoutes } from './health-routes.js';
 import { registerMetricsRoutes } from './metrics-routes.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { registerUpdatesRoutes } from './updates-routes.js';
 import { isAllowedHost } from './host.js';
-import { isAllowedOrigin } from './origin.js';
 import { answerPlainHttp } from './plain-http.js';
 import { registerSettingsRoutes } from './settings-routes.js';
 import { createFeed } from './feed.js';
@@ -31,13 +28,9 @@ export { longestLookBack, rawRetentionProblem, type SettingsOptions } from './se
 export type { DeviceInfo, PluginInfo, ServerOptions } from './options.js';
 export { createFeed, createLiveFeed, type Feed, type LiveFeed } from './feed.js';
 
-/** The largest frame a /api/live client may send; the dashboard sends none. */
-const MAX_CLIENT_FRAME_BYTES = 1024;
 /** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
 const CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-const DEFAULT_HEARTBEAT_MS = 30_000;
-const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 
 /**
  * Builds (but does not start) the PiPulse Fastify server bound to `db`.
@@ -106,96 +99,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
 
   if (options.settings) registerSettingsRoutes(app, db, options.settings);
 
-  const live = options.live;
-  if (live) {
-    const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
-    const maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
-
-    // Clients only listen: any frame beyond a few bytes is refused (close code 1009) instead of
-    // being buffered, as ws's default of 100 MiB would, once per connection.
-    void app.register(websocket, { options: { maxPayload: MAX_CLIENT_FRAME_BYTES } });
-    // The plugin's own preClose sends each client a graceful close, and the
-    // HTTP server then waits for the handshake — up to ws's 30 s timeout for
-    // a client that never answers. Terminate instead so shutdown is prompt.
-    app.addHook('preClose', (done) => {
-      for (const client of app.websocketServer.clients) client.terminate();
-      done();
-    });
-
-    void app.register(async (scope) => {
-      scope.get(
-        '/api/live',
-        {
-          websocket: true,
-          preValidation: async (request, reply) => {
-            if (!isAllowedOrigin(request.headers.origin, request.headers.host, allowedOrigins)) {
-              return reply.status(403).send({ error: 'origin not allowed' });
-            }
-          }
-        },
-        (socket, request) => {
-          if (auth.protectReads && !auth.signedIn(request)) {
-            socket.close(4401, 'sign in required');
-            return;
-          }
-          // The rules in force ride along, so a client that reconnects after
-          // missing a `rules` notice isn't left colouring tiles by stale rules.
-          socket.send(
-            JSON.stringify({
-              type: 'snapshot',
-              samples: getLatest(db, Date.now()),
-              alerts: openAlerts(db),
-              ...(options.alertRules ? { rules: options.alertRules.source.read().rules } : {})
-            })
-          );
-
-          const send = (message: object) => {
-            // A client that stopped reading would otherwise queue messages forever.
-            if (socket.bufferedAmount > maxBufferedBytes) {
-              socket.terminate();
-              return;
-            }
-            socket.send(JSON.stringify(message));
-          };
-          const unsubscribe = live.subscribe((sample) => send({ type: 'sample', ...sample }));
-          const unsubscribeAlerts =
-            options.alertFeed?.subscribe((event) =>
-              send({ type: 'alert', event: event.type, alert: event.alert })
-            ) ?? (() => {});
-          const unsubscribeNotices = notices.subscribe(send);
-
-          let alive = true;
-          socket.on('pong', () => {
-            alive = true;
-          });
-          const heartbeat = setInterval(() => {
-            // A tab that signed out, or whose session ran out, must not keep receiving data.
-            if (auth.protectReads && !auth.signedIn(request)) {
-              socket.close(4401, 'sign in required');
-              return;
-            }
-            if (!alive) {
-              socket.terminate();
-              return;
-            }
-            alive = false;
-            socket.ping();
-          }, heartbeatMs);
-
-          socket.on('close', () => {
-            clearInterval(heartbeat);
-            unsubscribe();
-            unsubscribeAlerts();
-            unsubscribeNotices();
-          });
-        }
-      );
-    });
-  }
-
-  if (options.webRoot) {
-    void app.register(fastifyStatic, { root: options.webRoot });
-  }
+  registerLiveRoutes(app, db, options, { auth, notices, allowedOrigins });
+  registerDashboard(app, options.webRoot);
 
   return app;
 }
