@@ -194,16 +194,18 @@ describe('UpdatesPage states, in words', () => {
     expect(text()).toContain('apt-get full-upgrade');
   });
 
-  it('when: checked and refreshed, and a stale-lists warning with the command', async () => {
+  it('when: checked twice, and a stale-lists warning with the command', async () => {
     await show(ok());
-    expect(text()).toContain('Package lists refreshed 1 h ago (');
+    expect(text()).toContain('Apt last refreshed the package lists 1 h ago (');
     expect(text()).not.toContain('ago ago');
-    expect(text()).not.toContain('more than two days old');
+    // it says when apt ran, and that this is not proof of a successful fetch
+    expect(text()).toContain('not that it reached the repositories');
+    expect(text()).not.toContain('for more than two days');
     await show(ok({ listsRefreshedAt: NOW - STALE_LISTS_MS - 1 }));
-    expect(text()).toContain('more than two days old');
+    expect(text()).toContain('for more than two days');
     expect(text()).toContain('sudo apt-get update');
     await show(ok({ listsRefreshedAt: null }));
-    expect(text()).toContain('last refreshed is unknown');
+    expect(text()).toContain('last refreshed the package lists is unknown');
   });
 });
 

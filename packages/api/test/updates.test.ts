@@ -361,32 +361,48 @@ describe('the real runner and the lists age', () => {
     afterEach(() => rmSync(dir, { recursive: true, force: true }));
     const at = (path: string, ms: number) => utimesSync(path, new Date(ms), new Date(ms));
 
-    it('is the daily stamp when there is one', () => {
+    // apt sets a list file's mtime to the server's Last-Modified, so the lists say when a
+    // repository last changed; `lists/partial` is touched by every successful `apt-get update`.
+    const partial = () => {
+      mkdirSync(join(dir, 'partial'));
+      return join(dir, 'partial');
+    };
+
+    it('is the daily stamp when there is one and nothing newer', () => {
       writeFileSync(join(dir, 'stamp'), '');
       at(join(dir, 'stamp'), 1_700_000_000_000);
-      mkdirSync(join(dir, 'lists'));
-      expect(listsRefreshedAt(join(dir, 'stamp'), join(dir, 'lists'))).toBe(1_700_000_000_000);
+      expect(listsRefreshedAt(join(dir, 'stamp'), join(dir, 'no-partial'))).toBe(1_700_000_000_000);
     });
 
-    it('else the newest list file, ignoring the lock and partial downloads', () => {
+    it('else when apt last ran, from the partial-downloads folder', () => {
+      at(partial(), 1_750_000_000_000);
+      expect(listsRefreshedAt(join(dir, 'no-stamp'), join(dir, 'partial'))).toBe(1_750_000_000_000);
+    });
+
+    it('takes the newer of the stamp and the partial folder', () => {
+      writeFileSync(join(dir, 'stamp'), '');
+      at(join(dir, 'stamp'), 1_700_000_000_000);
+      at(partial(), 1_750_000_000_000);
+      expect(listsRefreshedAt(join(dir, 'stamp'), join(dir, 'partial'))).toBe(1_750_000_000_000);
+      at(join(dir, 'stamp'), 1_800_000_000_000);
+      expect(listsRefreshedAt(join(dir, 'stamp'), join(dir, 'partial'))).toBe(1_800_000_000_000);
+    });
+
+    it('never reads the dates of the list files themselves', () => {
+      // A repository that last changed long ago, checked a moment ago (the Io case).
       const lists = join(dir, 'lists');
       mkdirSync(lists);
-      for (const [name, ms] of [
-        ['a_Packages', 1_600_000_000_000],
-        ['b_Packages', 1_650_000_000_000],
-        ['lock', 1_900_000_000_000],
-        ['partial', 1_900_000_000_000]
-      ] as const) {
-        writeFileSync(join(lists, name), '');
-        at(join(lists, name), ms);
-      }
-      expect(listsRefreshedAt(join(dir, 'no-stamp'), lists)).toBe(1_650_000_000_000);
+      writeFileSync(join(lists, 'a_InRelease'), '');
+      at(join(lists, 'a_InRelease'), 1_900_000_000_000);
+      mkdirSync(join(lists, 'partial'));
+      at(join(lists, 'partial'), 1_600_000_000_000);
+      expect(listsRefreshedAt(join(dir, 'no-stamp'), join(lists, 'partial'))).toBe(
+        1_600_000_000_000
+      );
     });
 
-    it('is unknown with no stamp and no lists', () => {
-      expect(listsRefreshedAt(join(dir, 'no-stamp'), join(dir, 'no-lists'))).toBeNull();
-      mkdirSync(join(dir, 'empty'));
-      expect(listsRefreshedAt(join(dir, 'no-stamp'), join(dir, 'empty'))).toBeNull();
+    it('is unknown with no stamp and no partial folder', () => {
+      expect(listsRefreshedAt(join(dir, 'no-stamp'), join(dir, 'no-partial'))).toBeNull();
     });
 
     it('isFile tells a file from a folder and from nothing', () => {

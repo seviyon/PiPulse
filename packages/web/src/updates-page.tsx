@@ -48,18 +48,19 @@ function When({ view, now }: { view: Extract<UpdatesView, { state: 'ok' }>; now:
       <h2 id="updates-when">When</h2>
       <p>Checked {formatDateTime(view.checkedAt)}.</p>
       {view.listsRefreshedAt === null ? (
-        <p>When the package lists were last refreshed is unknown.</p>
+        <p>When apt last refreshed the package lists is unknown.</p>
       ) : (
         <p>
-          Package lists refreshed {formatAge(now - view.listsRefreshedAt)} (
-          {formatDateTime(view.listsRefreshedAt)}).
+          Apt last refreshed the package lists {formatAge(now - view.listsRefreshedAt)} (
+          {formatDateTime(view.listsRefreshedAt)}). That says when it ran, not that it reached the
+          repositories: if the Pi was offline, the lists may be older than this.
         </p>
       )}
       {stale && (
         <p class="alert-severity">
           <StatusIcon level="warning" />
-          The package lists are more than two days old, so newer updates may not show here. Refresh
-          them with <code>sudo apt-get update</code>.
+          Apt has not refreshed the package lists for more than two days, so newer updates may not
+          show here. Refresh them with <code>sudo apt-get update</code>.
         </p>
       )}
     </section>
