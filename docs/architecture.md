@@ -24,6 +24,9 @@ Packages build in dependency order: storage, collector, alerts, notify, tls, api
 - **Web**: a browser dashboard consuming the API/WebSocket: a live status view, historical charts, an alerts view, and Settings.
 - **Alerting**: a rules engine evaluates the same KPI values with hysteresis (a condition must last `for` a while to raise and be normal for `clearAfter` to clear) and shows open alerts on the dashboard. See [Alerts and notifications](alerts.md).
 - **Notifications**: raised and cleared alerts are queued in the database and delivered to webhooks in order, with retries.
+- **Updates**: the server asks apt, as its own unprivileged user, what `apt-get upgrade` would do (a simulation, 2 minutes after start and every 6 hours) and shows it on the Updates tab with the exact commands to run. It never installs anything, and does nothing in Docker. See [API](api.md).
+- **Request guards**: one hook decides sign-in for every request, an optional Host allowlist (`PIPULSE_ALLOWED_HOSTS`) answers `421` to unknown names, and every response carries a Content-Security-Policy and frame protection.
+- **Dashboard build check**: the web bundle knows the release it was built as and warns when the server it talks to is a different version.
 - **TLS**: a fresh install serves HTTPS from a name-constrained CA made for that Pi; the CA key is never readable by the server. See [HTTPS](https.md).
 
 The reasoning behind each decision is in [PLAN.md](PLAN.md).

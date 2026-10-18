@@ -34,7 +34,7 @@ To change them, point `PIPULSE_ALERTS_FILE` at a JSON file and restart. Entries 
 
 The temperature defaults suit a Pi 5 with an active cooler (it holds a busy Pi 5 around 55–65 °C) as well as a passively cooled Pi. For a hot enclosure, raise `cpu_warm`; for a fan you want to know about early, lower it.
 
-Signed in, rules can be added, edited, disabled and reverted, and open alerts acknowledged, on the Alerts page; saved rules sit above `PIPULSE_ALERTS_FILE` and the built-ins and apply within 15 seconds, no restart needed.
+Signed in, rules can be added, edited, disabled and reverted, and open alerts acknowledged, on the Alerts page (Disable asks for confirmation first, because it closes the rule's open alerts; Enable, Revert and Delete do not); saved rules sit above `PIPULSE_ALERTS_FILE` and the built-ins and apply within 15 seconds, no restart needed.
 
 ## Notifications
 
