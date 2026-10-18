@@ -1,12 +1,11 @@
 import { execFile } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { statSync } from 'node:fs';
 
 /** Run by absolute path with a fixed argv: nothing from a request or a file reaches a command line. */
 export const APT_GET = '/usr/bin/apt-get';
 export const APT_CACHE = '/usr/bin/apt-cache';
 const APT_STAMP = '/var/lib/apt/periodic/update-success-stamp';
-const APT_LISTS = '/var/lib/apt/lists';
+const APT_PARTIAL = '/var/lib/apt/lists/partial';
 
 /** At most this many packages are listed (the total is always exact). */
 export const MAX_LISTED = 300;
@@ -30,7 +29,7 @@ export type UpdatesView =
   | {
       state: 'ok';
       checkedAt: number;
-      /** When the package lists were last refreshed (apt-daily, or `apt-get update`); null if unknown. */
+      /** When apt last checked the repositories (apt-daily, or `apt-get update`); null if unknown. */
       listsRefreshedAt: number | null;
       pipulse: {
         /** `apt`: installed as a package; `other`: a tarball install (or apt can't say). */
@@ -111,24 +110,23 @@ export const runApt: Runner = (file, args) =>
     );
   });
 
-/** When the package lists were last refreshed: Debian's daily stamp, else the newest list file. */
-export function listsRefreshedAt(stamp = APT_STAMP, lists = APT_LISTS): number | null {
-  try {
-    return statSync(stamp).mtimeMs;
-  } catch {
-    // no apt-daily stamp: fall through to the lists themselves
-  }
-  try {
-    let newest: number | null = null;
-    for (const name of readdirSync(lists)) {
-      if (name === 'lock' || name === 'partial') continue;
-      const mtime = statSync(join(lists, name)).mtimeMs;
+/**
+ * When apt last checked the repositories: Debian's daily stamp or the partial-downloads folder,
+ * whichever is newer. Every successful `apt-get update` touches that folder, even when nothing
+ * changed. The list files' own dates are no use: apt sets them to the server's Last-Modified, so
+ * they say when a repository last changed.
+ */
+export function listsRefreshedAt(stamp = APT_STAMP, partial = APT_PARTIAL): number | null {
+  let newest: number | null = null;
+  for (const path of [stamp, partial]) {
+    try {
+      const mtime = statSync(path).mtimeMs;
       if (newest === null || mtime > newest) newest = mtime;
+    } catch {
+      // not there (no apt, or this apt keeps no stamp)
     }
-    return newest;
-  } catch {
-    return null;
   }
+  return newest;
 }
 
 /** One short line for the page: apt's own `E:` line when it has one, no paths. */

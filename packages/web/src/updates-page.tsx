@@ -48,10 +48,10 @@ function When({ view, now }: { view: Extract<UpdatesView, { state: 'ok' }>; now:
       <h2 id="updates-when">When</h2>
       <p>Checked {formatDateTime(view.checkedAt)}.</p>
       {view.listsRefreshedAt === null ? (
-        <p>When the package lists were last refreshed is unknown.</p>
+        <p>When the package lists were last checked is unknown.</p>
       ) : (
         <p>
-          Package lists refreshed {formatAge(now - view.listsRefreshedAt)} (
+          Package lists last checked {formatAge(now - view.listsRefreshedAt)} (
           {formatDateTime(view.listsRefreshedAt)}).
         </p>
       )}

@@ -18,13 +18,13 @@ The server runs the simulation itself, as the unprivileged `pipulse` user, with 
 
 - `/usr/bin/apt-get -s -o Debug::NoLocking=1 upgrade` (the same operation the button would run). `Inst name [old] (new repo)` lines are the packages; `The following packages have been kept back:` lists the held ones.
 - `/usr/bin/apt-cache policy pipulse`: `Installed` and `Candidate` for PiPulse itself. No `Installed` (or no apt package) means a tarball install.
-- The age of the package lists: the mtime of `/var/lib/apt/periodic/update-success-stamp` (Debian's daily refresh), else of the newest file in `/var/lib/apt/lists`. Older than two days: the tab says to run `sudo apt-get update`.
+- When apt last checked the repositories: the newer of the mtime of `/var/lib/apt/periodic/update-success-stamp` (Debian's daily refresh; Raspberry Pi OS 11 has none) and of the folder `/var/lib/apt/lists/partial`, which every successful `apt-get update` touches even when nothing changed. The list files' own mtimes are not used: apt sets them to the server's Last-Modified, so they say when a repository last changed (checked on `Io`, 2026-10-18). Older than two days: the tab says to run `sudo apt-get update`.
 
 Both commands are run by absolute path with a fixed argv, `LC_ALL=C`, a minimal environment, a timeout of 2 minutes and `SIGKILL`, and their output is capped. Nothing is run when `PIPULSE_IN_CONTAINER=true` (the container's apt is not the host's) or when `/usr/bin/apt-get` is missing: the tab then says "not available here" and, in Docker, how to update the image (`docker compose pull && docker compose up -d`).
 
 First check two minutes after start (so boot is not slowed), then every 6 hours on a monotonic timer, and on demand (`POST /api/updates/check`, signed in, at most one per 30 s). The result lives in memory only; a restart checks again.
 
-The simulation reads the package lists as they are. Refreshing them is `apt-daily.timer`'s job (on by default on Raspberry Pi OS), or the button's (piece B).
+The simulation reads the package lists as they are. Refreshing them is `apt-daily.timer`'s job (it refreshes when `APT::Periodic::Update-Package-Lists` is `1`, as on `Io`), or the button's (piece B, not built: the tab only reads what apt already refreshed, so nothing runs as root).
 
 ## API
 
@@ -40,7 +40,7 @@ Reads follow `PIPULSE_PROTECT_READS` like the rest of the API. The package list 
 ## Dashboard
 
 - Route `#/updates`, tab **Updates** after Alerts, with a count badge (PiPulse update counts as one, plus OS packages) when something is waiting. The badge is fetched at load and every 10 minutes, and never raises an alert.
-- Sections: **PiPulse** (installed → available; the command for this install type: `sudo apt-get update && sudo apt-get install --only-upgrade pipulse` for apt installs, re-run the installer for tarballs, `docker compose pull && docker compose up -d` in Docker), **System packages** (table name / from / to, the kept-back list), **When** (checked, lists refreshed).
+- Sections: **PiPulse** (installed → available; the command for this install type: `sudo apt-get update && sudo apt-get install --only-upgrade pipulse` for apt installs, re-run the installer for tarballs, `docker compose pull && docker compose up -d` in Docker), **System packages** (table name / from / to, the kept-back list), **When** (checked, lists last checked).
 - The full command `sudo apt-get update && sudo apt-get upgrade` is shown with a **Copy** button, always.
 - **Check now** when signed in.
 - Everything is stated in words; status is never colour alone.

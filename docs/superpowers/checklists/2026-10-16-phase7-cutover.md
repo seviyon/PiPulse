@@ -102,6 +102,7 @@ RPi-Monitor is back on 8888 with its old configuration; PiPulse keeps running ne
 
 - Tell me the result: I update `README.md` (roadmap: Phase 7 done), `docs/PLAN.md` and `CLAUDE.md`, and record the gap-check output.
 - After a month with no regrets: `sudo apt remove rpimonitor` (not `purge`, so the configuration stays).
+- `/etc/cron.d/rpimonitor` still runs `apt-get update` at 03:05 every night, as root, after the service is stopped, and `remove` keeps it (a conffile); `purge` deletes it. It is harmless (apt's own `apt-daily.timer` refreshes the lists too, `Update-Package-Lists "1"` on `Io`), and PiPulse does not depend on it.
 
 ## Rehearsal findings (2026-10-13)
 
