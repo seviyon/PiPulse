@@ -196,14 +196,16 @@ describe('UpdatesPage states, in words', () => {
 
   it('when: checked twice, and a stale-lists warning with the command', async () => {
     await show(ok());
-    expect(text()).toContain('Package lists last checked 1 h ago (');
+    expect(text()).toContain('Apt last refreshed the package lists 1 h ago (');
     expect(text()).not.toContain('ago ago');
-    expect(text()).not.toContain('more than two days old');
+    // it says when apt ran, and that this is not proof of a successful fetch
+    expect(text()).toContain('not that it reached the repositories');
+    expect(text()).not.toContain('for more than two days');
     await show(ok({ listsRefreshedAt: NOW - STALE_LISTS_MS - 1 }));
-    expect(text()).toContain('more than two days old');
+    expect(text()).toContain('for more than two days');
     expect(text()).toContain('sudo apt-get update');
     await show(ok({ listsRefreshedAt: null }));
-    expect(text()).toContain('last checked is unknown');
+    expect(text()).toContain('last refreshed the package lists is unknown');
   });
 });
 

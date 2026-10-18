@@ -4,7 +4,7 @@ import { statSync } from 'node:fs';
 /** Run by absolute path with a fixed argv: nothing from a request or a file reaches a command line. */
 export const APT_GET = '/usr/bin/apt-get';
 export const APT_CACHE = '/usr/bin/apt-cache';
-const APT_STAMP = '/var/lib/apt/periodic/update-success-stamp';
+const APT_STAMP = '/var/lib/apt/periodic/update-stamp';
 const APT_PARTIAL = '/var/lib/apt/lists/partial';
 
 /** At most this many packages are listed (the total is always exact). */
@@ -29,7 +29,7 @@ export type UpdatesView =
   | {
       state: 'ok';
       checkedAt: number;
-      /** When apt last checked the repositories (apt-daily, or `apt-get update`); null if unknown. */
+      /** When apt last ran a refresh (apt-daily, or `apt-get update`); not proof it reached a repository. null if unknown. */
       listsRefreshedAt: number | null;
       pipulse: {
         /** `apt`: installed as a package; `other`: a tarball install (or apt can't say). */
@@ -111,10 +111,12 @@ export const runApt: Runner = (file, args) =>
   });
 
 /**
- * When apt last checked the repositories: Debian's daily stamp or the partial-downloads folder,
- * whichever is newer. Every successful `apt-get update` touches that folder, even when nothing
- * changed. The list files' own dates are no use: apt sets them to the server's Last-Modified, so
- * they say when a repository last changed.
+ * When apt last ran a refresh: Debian's daily stamp (`apt.systemd.daily` touches it after an
+ * `apt-get update` that exits 0) or the partial-downloads folder (every `apt-get update` touches
+ * it), whichever is newer. This is when apt ran, not proof that it reached a repository:
+ * `apt-get update` exits 0 with `W: Failed to fetch` when offline (apt 2.2 and 2.6), and both
+ * files move anyway. The list files' own dates are no use either: apt sets them to the server's
+ * Last-Modified, so they say when a repository last changed.
  */
 export function listsRefreshedAt(stamp = APT_STAMP, partial = APT_PARTIAL): number | null {
   let newest: number | null = null;
