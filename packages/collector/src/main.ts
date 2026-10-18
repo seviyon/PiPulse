@@ -1,5 +1,5 @@
 import { openDb, policyOf, retentionSource, startHousekeeping } from '@pipulse/storage';
-import { builtinPlugins, startScheduler } from './index.js';
+import { builtinPlugins, describePluginError, startScheduler } from './index.js';
 
 /**
  * Collector daemon: opens the database, polls every built-in plugin on its
@@ -31,7 +31,7 @@ const housekeeping = startHousekeeping(db, {
 });
 const scheduler = startScheduler(db, builtinPlugins, {
   onError: (plugin, error) => {
-    console.error(`[collector] ${plugin.id} failed:`, error);
+    console.error(`[collector] ${plugin.id} failed:`, describePluginError(error));
   }
 });
 console.log(`[collector] polling ${builtinPlugins.length} plugins into ${dbPath}`);
