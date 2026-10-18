@@ -163,8 +163,9 @@ export interface ServerOptions {
 
 /** The largest frame a /api/live client may send; the dashboard sends none. */
 const MAX_CLIENT_FRAME_BYTES = 1024;
-/** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
+/** What /history and raw /series answer (400) when a window holds more than MAX_RAW_ROWS readings. */
 const TOO_MANY_RAW = `That window holds more than ${MAX_RAW_ROWS} raw readings: ask for a shorter window, or resolution=1m, 1h or 1d (or auto).`;
+/** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
 const CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const DEFAULT_HEARTBEAT_MS = 30_000;

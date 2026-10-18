@@ -72,9 +72,10 @@ export function getLatest(db: PiPulseDb, now?: number): Sample[] {
 
 /**
  * The most raw readings one request may ask for. The dashboard never needs more than 1500 (`auto`
- * stops there); a Pi 2 spends about 75 ms per 1000 readings building the answer and the process
- * does nothing else meanwhile, so 5000 keeps the worst case near half a second. Longer windows
- * have the rolled-up resolutions.
+ * stops there). The read is synchronous, so the process does nothing else while it builds the
+ * answer. Measured on a Pi 2 from a LAN client, a raw answer costs about 75 ms per 1000 readings
+ * end to end (query, JSON and transfer together; the process's own share is part of that), so 5000
+ * keeps the worst case near half a second. Longer windows have the rolled-up resolutions.
  */
 export const MAX_RAW_ROWS = 5000;
 
