@@ -53,21 +53,33 @@ export function insertSample(db: PiPulseDb, sample: Sample): void {
 const LATEST_SLACK_MS = 5 * 60_000;
 
 /**
+ * The newest reading of every metric at or before `?`. The primary key is (metric, ts), so a plain
+ * `MAX(ts) ... WHERE ts <= ? GROUP BY metric` cannot seek: it reads every raw row, about half a
+ * second on a Pi 2 with two days of readings, and the synchronous call stalls the whole process.
+ * This walks the distinct metric names with one seek each (a loose index scan) and then seeks the
+ * newest allowed reading of each: a few dozen index lookups however many rows there are.
+ * Exported only so a test can check its query plan.
+ */
+export const LATEST_SQL = `WITH RECURSIVE names(metric) AS (
+  SELECT MIN(metric) FROM metrics
+  UNION ALL
+  SELECT (SELECT MIN(metric) FROM metrics WHERE metric > names.metric)
+  FROM names WHERE names.metric IS NOT NULL
+)
+SELECT m.ts AS ts, m.metric AS metric, m.value AS value
+FROM names n
+JOIN metrics m ON m.metric = n.metric
+ AND m.ts = (SELECT MAX(ts) FROM metrics WHERE metric = n.metric AND ts <= ?)
+WHERE n.metric IS NOT NULL`;
+
+/**
  * Returns the most recent value recorded for every distinct metric. With `now`, a reading stamped
  * after it (plus a few minutes) is not "most recent": it was written by a clock that read ahead
  * and came back, and would otherwise be served for as long as the clock was off.
  */
 export function getLatest(db: PiPulseDb, now?: number): Sample[] {
   const limit = now === undefined ? Number.MAX_SAFE_INTEGER : now + LATEST_SLACK_MS;
-  return db
-    .prepare(
-      `SELECT m.ts as ts, m.metric as metric, m.value as value
-       FROM metrics m
-       JOIN (
-         SELECT metric, MAX(ts) as ts FROM metrics WHERE ts <= ? GROUP BY metric
-       ) latest ON latest.metric = m.metric AND latest.ts = m.ts`
-    )
-    .all(limit) as unknown as Sample[];
+  return db.prepare(LATEST_SQL).all(limit) as unknown as Sample[];
 }
 
 /** Returns raw samples for one metric within an inclusive [from, to] window (unix ms). */
