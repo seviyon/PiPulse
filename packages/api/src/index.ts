@@ -1,6 +1,4 @@
-import { uptime } from 'node:os';
 import type { Server as HttpsServer } from 'node:https';
-import { hostName } from '@pipulse/tls';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
@@ -8,12 +6,10 @@ import { getLatest, type PiPulseDb } from '@pipulse/storage';
 import { listAlerts, openAlerts } from '@pipulse/alerts';
 import { registerAlertRoutes, type Notice } from './alert-routes.js';
 import { registerAuth } from './auth-routes.js';
-import { createHealth } from './health.js';
-import { healthBody, type TlsView } from './tls-status.js';
+import { registerHealthRoutes } from './health-routes.js';
 import { registerMetricsRoutes } from './metrics-routes.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { registerUpdatesRoutes } from './updates-routes.js';
-import { nodeSupport } from './version.js';
 import { isAllowedHost } from './host.js';
 import { isAllowedOrigin } from './origin.js';
 import { answerPlainHttp } from './plain-http.js';
@@ -107,41 +103,8 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
   }
   const auth = registerAuth(app, { ...options.auth, allowedOrigins });
   const notices = createFeed<Notice>();
-  const plugins = options.plugins ?? [];
-  const device = options.device ?? {
-    hostname: hostName(),
-    platform: process.platform,
-    arch: process.arch
-  };
 
-  app.get('/health', async () => ({ status: 'ok' }));
-
-  const readUptimeMs = options.uptimeMs ?? (() => uptime() * 1000);
-
-  // serverTime lets the dashboard measure staleness and pick history windows
-  // on the Pi's clock rather than the viewer's, which may disagree. Uptime is
-  // sent as a duration, read fresh per request, not as a boot timestamp: the
-  // Pi has no RTC, so a boot time computed before NTP syncs stays wrong by
-  // however far the clock later jumps.
-  const health = options.health ?? createHealth(db);
-  const readTls =
-    options.tls ?? ((): TlsView => ({ mode: 'http', reason: 'default', inContainer: false }));
-  app.get('/api/health', async (_request, reply) => {
-    const body = healthBody(health.check(), readTls(), options.auth?.passwordHash !== undefined);
-    return body.status === 'failing' ? reply.status(503).send(body) : body;
-  });
-
-  const node = options.node ?? nodeSupport();
-  app.get('/api/config', async () => ({
-    version: options.version ?? 'dev',
-    node,
-    device,
-    plugins,
-    serverTime: Date.now(),
-    uptimeMs: readUptimeMs(),
-    rules: options.alertRules ? options.alertRules.source.read().rules : (options.rules ?? []),
-    tls: readTls()
-  }));
+  registerHealthRoutes(app, db, options);
 
   registerMetricsRoutes(app, db, options);
 
