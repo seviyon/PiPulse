@@ -237,6 +237,98 @@ describe('a collect() that never finishes', () => {
     await drain(scheduler);
   });
 
+  it('stops starting reads while three given-up ones are still hanging, and says so once', async () => {
+    let calls = 0;
+    const errors: string[] = [];
+    const hung = fakePlugin('hung', 1000, () => {
+      calls++;
+      return new Promise<number | null>(() => {}); // never settles, however long we wait
+    });
+    const scheduler = startScheduler(db, [hung], {
+      onError: (_plugin, error) => errors.push((error as Error).message)
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(calls).toBe(3); // not one every deadline for as long as the Pi runs
+    expect(errors).toEqual([
+      'hung: collect() did not finish within 3000 ms',
+      'hung: collect() did not finish within 3000 ms',
+      'hung: collect() did not finish within 3000 ms',
+      'hung: 3 earlier reads are still hanging; not starting another until one finishes'
+    ]);
+    await drain(scheduler);
+  });
+
+  it('starts reading again as soon as one of the hanging reads settles', async () => {
+    const finishes: ((value: number) => void)[] = [];
+    const flaky = fakePlugin(
+      'flaky',
+      1000,
+      () => new Promise<number | null>((resolve) => finishes.push(resolve))
+    );
+    const errors: string[] = [];
+    const scheduler = startScheduler(db, [flaky], {
+      onError: (_p, e) => errors.push((e as Error).message)
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishes).toHaveLength(3); // capped
+    finishes[0]!(1); // the firmware call comes back, long after it was given up on
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(finishes).toHaveLength(4); // a slot is free: the next tick reads again
+    finishes[3]!(5); // and that fresh read is stored as usual
+    await vi.advanceTimersByTimeAsync(10);
+    expect(timestamps(db, 'flaky')).toHaveLength(1);
+    // another stuck read after the recovery is a new episode and is reported again
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(errors.filter((m) => m.includes('still hanging'))).toHaveLength(2);
+    await drain(scheduler);
+  });
+
+  it('reports a hanging read without an error handler and still caps the reads', async () => {
+    let calls = 0;
+    const hung = fakePlugin('hung', 1000, () => {
+      calls++;
+      return new Promise<number | null>(() => {});
+    });
+    const scheduler = startScheduler(db, [hung]); // no onError: nothing to tell, nothing to throw
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toBe(3);
+    await drain(scheduler);
+  });
+
+  it('does not leave the deadline timer running after a read that finished in time', async () => {
+    const quick = fakePlugin('quick', 600_000, async () => 1);
+    const scheduler = startScheduler(db, [quick], { onError: () => {} });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(timestamps(db, 'quick')).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1); // the poll interval only
+    await drain(scheduler);
+  });
+
+  it('counts reads per plugin: one stuck plugin does not stop the others', async () => {
+    const stuck = fakePlugin('stuck', 1000, () => new Promise<number | null>(() => {}));
+    const fine = fakePlugin('fine', 1000, async () => 1);
+    const scheduler = startScheduler(db, [stuck, fine], { onError: () => {} });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(timestamps(db, 'fine').length).toBeGreaterThan(50);
+    await drain(scheduler);
+  });
+
+  it('counts a read that rejects late as settled too', async () => {
+    const rejections: ((e: Error) => void)[] = [];
+    const sick = fakePlugin(
+      'sick',
+      1000,
+      () => new Promise<number | null>((_, reject) => rejections.push(reject))
+    );
+    const scheduler = startScheduler(db, [sick], { onError: () => {} });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rejections).toHaveLength(3);
+    rejections[1]!(new Error('driver gave up'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(rejections).toHaveLength(4);
+    await drain(scheduler);
+  });
+
   it('allows at most 30 s for a slow plugin, whatever its interval', async () => {
     const errors: string[] = [];
     const hung = fakePlugin('hung', 600_000, () => new Promise<number | null>(() => {}));
