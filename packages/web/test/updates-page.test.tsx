@@ -192,6 +192,22 @@ describe('UpdatesPage states, in words', () => {
     await show(ok({ os: { total: 0, packages: [], keptBack: ['raspi-firmware', 'libcamera0'] } }));
     expect(text()).toContain('2 kept back by apt: raspi-firmware, libcamera0');
     expect(text()).toContain('apt-get full-upgrade');
+    // with packages kept back it is not "everything": the page must not say both
+    expect(text()).not.toContain('Everything is up to date.');
+  });
+
+  it('says everything is up to date only when nothing is waiting and nothing is kept back', async () => {
+    await show(ok());
+    expect(text()).toContain('Everything is up to date.');
+    await show(ok({ os: { total: 0, packages: [], keptBack: ['held'] } }));
+    expect(text()).not.toContain('Everything is up to date.');
+    // a tarball install is not apt's to judge: nothing waiting there says nothing about PiPulse
+    await show(
+      ok({ pipulse: { source: 'other', installed: null, candidate: null, available: false } })
+    );
+    expect(text()).not.toContain('Everything is up to date.');
+    // kept-back packages (a deliberate `apt-mark hold` shows up there) never raise the badge
+    expect(waitingCount(ok({ os: { total: 0, packages: [], keptBack: ['held'] } }))).toBe(0);
   });
 
   it('when: checked twice, and a stale-lists warning with the command', async () => {

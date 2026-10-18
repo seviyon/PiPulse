@@ -216,9 +216,10 @@ export function UpdatesPage({
           {problem && <span class="alert-severity"> {problem}</span>}
         </p>
       )}
-      {view?.state === 'ok' && waitingCount(view) === 0 && view.pipulse.source === 'apt' && (
-        <p class="waiting">Everything is up to date.</p>
-      )}
+      {view?.state === 'ok' &&
+        waitingCount(view) === 0 &&
+        view.os.keptBack.length === 0 &&
+        view.pipulse.source === 'apt' && <p class="waiting">Everything is up to date.</p>}
     </div>
   );
 }
