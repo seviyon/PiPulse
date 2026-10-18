@@ -220,8 +220,10 @@ describe('/api/live with read protection', () => {
     const url = `ws://127.0.0.1:${(api.server.address() as AddressInfo).port}/api/live`;
 
     const out = new WebSocket(url);
-    const code = await new Promise<number>((resolve) => out.on('close', (c) => resolve(c)));
-    expect(code).toBe(4401);
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) =>
+      out.on('close', (code, reason) => resolve({ code, reason: reason.toString() }))
+    );
+    expect(closed).toEqual({ code: 4401, reason: 'sign in required' });
 
     const inside = new WebSocket(url, { headers: { cookie } });
     const first = await new Promise<string>((resolve) =>
@@ -269,9 +271,11 @@ describe('/api/live after sign-out', () => {
     const url = `ws://127.0.0.1:${(api.server.address() as AddressInfo).port}/api/live`;
     const inside = new WebSocket(url, { headers: { cookie } });
     await new Promise<void>((resolve) => inside.once('message', () => resolve()));
-    const closed = new Promise<number>((resolve) => inside.on('close', (code) => resolve(code)));
+    const closed = new Promise<{ code: number; reason: string }>((resolve) =>
+      inside.on('close', (code, reason) => resolve({ code, reason: reason.toString() }))
+    );
     await api.inject({ method: 'POST', url: '/api/logout', headers: { cookie } });
-    expect(await closed).toBe(4401);
+    expect(await closed).toEqual({ code: 4401, reason: 'sign in required' });
   });
 
   it('keeps a socket whose session is still live', async () => {

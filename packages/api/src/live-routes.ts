@@ -14,6 +14,22 @@ const MAX_CLIENT_FRAME_BYTES = 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 
+/** The WebSocket limits in force: what the options say, else the defaults. */
+export function liveLimits(options: Pick<ServerOptions, 'heartbeatMs' | 'maxBufferedBytes'>): {
+  heartbeatMs: number;
+  maxBufferedBytes: number;
+} {
+  return {
+    heartbeatMs: options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS,
+    maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+  };
+}
+
+/** Whether a client has fallen too far behind to keep: more than the limit is queued unsent to it. */
+export function fallenBehind(bufferedAmount: number, maxBufferedBytes: number): boolean {
+  return bufferedAmount > maxBufferedBytes;
+}
+
 export interface LiveDeps {
   auth: ReturnType<typeof registerAuth>;
   notices: Feed<Notice>;
@@ -32,8 +48,7 @@ export function registerLiveRoutes(
 ): void {
   const live = options.live;
   if (live) {
-    const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
-    const maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
+    const { heartbeatMs, maxBufferedBytes } = liveLimits(options);
 
     // Clients only listen: any frame beyond a few bytes is refused (close code 1009) instead of
     // being buffered, as ws's default of 100 MiB would, once per connection.
@@ -75,7 +90,7 @@ export function registerLiveRoutes(
 
           const send = (message: object) => {
             // A client that stopped reading would otherwise queue messages forever.
-            if (socket.bufferedAmount > maxBufferedBytes) {
+            if (fallenBehind(socket.bufferedAmount, maxBufferedBytes)) {
               socket.terminate();
               return;
             }
