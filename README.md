@@ -17,7 +17,7 @@
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
 
-> **Status: pre-alpha, but feature-complete up to Phase 6b.** One server process collects 12 metrics into SQLite, checks them against alert rules, sends webhook notifications, and serves a live dashboard, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, a password-protected Settings page, a REST API and a WebSocket feed. Packaging (apt, tarball, Docker, automatic releases) is done, and from 0.7.0 a fresh install serves HTTPS from a certificate authority made for that Pi. Verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: pre-alpha, but feature-complete through Phase 7 (RPi-Monitor retired on the reference Pi).** One server process collects 13 metrics into SQLite, checks them against alert rules, sends webhook notifications, and serves a live dashboard, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, an Updates page that says what `apt-get upgrade` would install, a password-protected Settings page, a REST API and a WebSocket feed. Packaging (apt, tarball, Docker, automatic releases) is done, and from 0.7.0 a fresh install serves HTTPS from a certificate authority made for that Pi. Verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -70,7 +70,7 @@ On a Raspberry Pi (or any Debian-based Linux), Pi 2 and newer, 32- or 64-bit:
 curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh
 ```
 
-That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js. It runs as the `pipulse` service on port **8889** (next to RPi-Monitor, which uses 8888). New releases arrive with `sudo apt upgrade`.
+That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js. It runs as the `pipulse` service on port **8889** (it can run next to RPi-Monitor, which uses 8888). New releases arrive with `sudo apt upgrade`.
 
 A fresh install serves **HTTPS** from a certificate authority made for this Pi: the installer prints its fingerprint, and you trust it once on each device ([HTTPS](docs/https.md)). An upgrade stays on plain HTTP until you run `sudo pipulse tls enable`. Settings live in `/etc/pipulse/pipulse.env`.
 
