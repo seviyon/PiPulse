@@ -7,6 +7,8 @@ import fastifyStatic from '@fastify/static';
 import {
   chooseResolution,
   getHistory,
+  MAX_RAW_ROWS,
+  rawRowsExceed,
   getLatest,
   getSeries,
   policyOf,
@@ -162,6 +164,7 @@ export interface ServerOptions {
 /** The largest frame a /api/live client may send; the dashboard sends none. */
 const MAX_CLIENT_FRAME_BYTES = 1024;
 /** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
+const TOO_MANY_RAW = `That window holds more than ${MAX_RAW_ROWS} raw readings: ask for a shorter window, or resolution=1m, 1h or 1d (or auto).`;
 const CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -304,6 +307,9 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
         return reply.status(400).send({ error: 'from must not be after to' });
       }
 
+      if (rawRowsExceed(db, request.params.id, from, to)) {
+        return reply.status(400).send({ error: TOO_MANY_RAW });
+      }
       return getHistory(db, request.params.id, from, to);
     }
   );
@@ -331,6 +337,9 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
         requested === 'auto'
           ? chooseResolution(db, request.params.id, from, to, now, retention)
           : requested;
+      if (resolution === 'raw' && rawRowsExceed(db, request.params.id, from, to)) {
+        return reply.status(400).send({ error: TOO_MANY_RAW });
+      }
       return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
   );

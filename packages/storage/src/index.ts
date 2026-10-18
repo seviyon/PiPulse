@@ -70,6 +70,34 @@ export function getLatest(db: PiPulseDb, now?: number): Sample[] {
     .all(limit) as unknown as Sample[];
 }
 
+/**
+ * The most raw readings one request may ask for. The dashboard never needs more than 1500 (`auto`
+ * stops there); a Pi 2 spends about 75 ms per 1000 readings building the answer and the process
+ * does nothing else meanwhile, so 5000 keeps the worst case near half a second. Longer windows
+ * have the rolled-up resolutions.
+ */
+export const MAX_RAW_ROWS = 5000;
+
+/**
+ * Whether `metric` has more than `max` raw readings in [from, to]. The inner LIMIT stops the
+ * primary-key scan at `max + 1`, so this costs at most that many index steps however large the
+ * table is.
+ */
+export function rawRowsExceed(
+  db: PiPulseDb,
+  metric: string,
+  from: number,
+  to: number,
+  max = MAX_RAW_ROWS
+): boolean {
+  const { n } = db
+    .prepare(
+      'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? LIMIT ?)'
+    )
+    .get(metric, from, to, max + 1) as { n: number };
+  return n > max;
+}
+
 /** Returns raw samples for one metric within an inclusive [from, to] window (unix ms). */
 export function getHistory(db: PiPulseDb, metric: string, from: number, to: number): Sample[] {
   return db
