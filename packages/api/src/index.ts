@@ -4,22 +4,13 @@ import { hostName } from '@pipulse/tls';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
-import {
-  chooseResolution,
-  getHistory,
-  MAX_RAW_ROWS,
-  rawRowsExceed,
-  getLatest,
-  getSeries,
-  policyOf,
-  type PiPulseDb,
-  type Resolution
-} from '@pipulse/storage';
+import { getLatest, type PiPulseDb } from '@pipulse/storage';
 import { listAlerts, openAlerts } from '@pipulse/alerts';
 import { registerAlertRoutes, type Notice } from './alert-routes.js';
 import { registerAuth } from './auth-routes.js';
 import { createHealth } from './health.js';
 import { healthBody, type TlsView } from './tls-status.js';
+import { registerMetricsRoutes } from './metrics-routes.js';
 import { registerNotifyRoutes } from './notify-routes.js';
 import { registerUpdatesRoutes } from './updates-routes.js';
 import { nodeSupport } from './version.js';
@@ -46,36 +37,11 @@ export { createFeed, createLiveFeed, type Feed, type LiveFeed } from './feed.js'
 
 /** The largest frame a /api/live client may send; the dashboard sends none. */
 const MAX_CLIENT_FRAME_BYTES = 1024;
-/** What /history and raw /series answer (400) when a window holds more than MAX_RAW_ROWS readings. */
-const TOO_MANY_RAW = `That window holds more than ${MAX_RAW_ROWS} raw readings: ask for a shorter window, or resolution=1m, 1h or 1d (or auto).`;
 /** Everything the dashboard needs comes from its own origin: scripts, styles, fonts, the API and the WebSocket. */
 const CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
-
-interface HistoryQuery {
-  from?: number;
-  to?: number;
-}
-
-const historyQuerySchema = {
-  type: 'object',
-  properties: {
-    from: { type: 'integer', minimum: 0 },
-    to: { type: 'integer', minimum: 0 }
-  },
-  additionalProperties: false
-} as const;
-
-const seriesQuerySchema = {
-  type: 'object',
-  properties: {
-    ...historyQuerySchema.properties,
-    resolution: { type: 'string', enum: ['auto', 'raw', '1m', '1h', '1d'] }
-  },
-  additionalProperties: false
-} as const;
 
 const alertsQuerySchema = {
   type: 'object',
@@ -177,56 +143,7 @@ export function buildServer(db: PiPulseDb, options: ServerOptions = {}): Fastify
     tls: readTls()
   }));
 
-  app.get('/api/metrics/latest', async () => getLatest(db, Date.now()));
-
-  app.get<{ Params: { id: string }; Querystring: HistoryQuery }>(
-    '/api/metrics/:id/history',
-    { schema: { querystring: historyQuerySchema } },
-    async (request, reply) => {
-      const now = Date.now();
-      const to = request.query.to ?? now;
-      const from = request.query.from ?? to - 60 * 60 * 1000;
-
-      if (from > to) {
-        return reply.status(400).send({ error: 'from must not be after to' });
-      }
-
-      if (rawRowsExceed(db, request.params.id, from, to)) {
-        return reply.status(400).send({ error: TOO_MANY_RAW });
-      }
-      return getHistory(db, request.params.id, from, to);
-    }
-  );
-
-  app.get<{
-    Params: { id: string };
-    Querystring: HistoryQuery & { resolution?: Resolution | 'auto' };
-  }>(
-    '/api/metrics/:id/series',
-    { schema: { querystring: seriesQuerySchema } },
-    async (request, reply) => {
-      const now = Date.now();
-      const to = request.query.to ?? now;
-      const from = request.query.from ?? to - 24 * 60 * 60 * 1000;
-
-      if (from > to) {
-        return reply.status(400).send({ error: 'from must not be after to' });
-      }
-
-      const requested = request.query.resolution ?? 'auto';
-      const retention = options.settings
-        ? policyOf(options.settings.getRetention())
-        : options.retention;
-      const resolution =
-        requested === 'auto'
-          ? chooseResolution(db, request.params.id, from, to, now, retention)
-          : requested;
-      if (resolution === 'raw' && rawRowsExceed(db, request.params.id, from, to)) {
-        return reply.status(400).send({ error: TOO_MANY_RAW });
-      }
-      return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
-    }
-  );
+  registerMetricsRoutes(app, db, options);
 
   app.get<{
     Querystring: {
