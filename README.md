@@ -105,7 +105,7 @@ More: [reading the script first, the tarball, remove and Node support](docs/inst
 | 5b-3 | Notifications (webhook) | ✅ Done |
 | 6 | Packaging (apt, tarball, Docker, releases, Renovate) | ✅ Done |
 | 6b | HTTPS by default (a per-Pi CA, or your own certificate) | ✅ Done (6b-1 your own certificate, 6b-2a generated CA, 6b-2b status and alerts, 6b-2c default and Docker) |
-| 7 | Cutover from the legacy daemon |  |
+| 7 | Cutover from the legacy daemon | ✅ Done (RPi-Monitor stopped and disabled on the Pi 2026-10-18) |
 
 ## Credits
 

@@ -41,7 +41,7 @@ curl -s https://io.local:8889/ | grep -o 'assets/index-[^"]*\.js'
 ## 4. Before stopping anything (Io)
 
 ```
-sudo systemctl is-active pipulse rpimonitord
+sudo systemctl is-active pipulse rpimonitor
 ss -ltnp | grep -E ':(8888|8889)\b'
 ls /opt/pipulse/app/packages/web/dist/assets/
 sudo journalctl -u pipulse --since '7 days ago' --no-pager | grep -ciE 'error|failed'
@@ -54,15 +54,15 @@ Side by side: open `http://io:8888/status.html` and `https://io.local:8889/` nex
 ## 5. Decommission (Io)
 
 ```
-sudo systemctl stop rpimonitord
-sudo systemctl disable rpimonitord
+sudo systemctl stop rpimonitor
+sudo systemctl disable rpimonitor
 ```
 
 Check:
 
 ```
-systemctl is-active rpimonitord        # inactive
-systemctl is-enabled rpimonitord       # disabled
+systemctl is-active rpimonitor        # inactive
+systemctl is-enabled rpimonitor       # disabled
 curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 http://127.0.0.1:8888/   # 000: refused
 curl -s -o /dev/null -w '%{http_code}\n' https://io.local:8889/api/health       # (Mac) 200
 ls /etc/rpimonitor/                    # its configuration is still there
@@ -88,12 +88,12 @@ PiPulse starts by itself and `rpimonitord` stays off. The rehearsal checked a se
 sudo reboot
 ```
 
-Then from the Mac: `curl -s https://io.local:8889/api/health` and `ssh` back in for `systemctl is-enabled rpimonitord` (disabled). The hour or so right after a boot can show a `vcgencmd` empty answer once and `clock-unknown` health reasons until timesyncd syncs; both clear by themselves.
+Then from the Mac: `curl -s https://io.local:8889/api/health` and `ssh` back in for `systemctl is-enabled rpimonitor` (disabled). The hour or so right after a boot can show a `vcgencmd` empty answer once and `clock-unknown` health reasons until timesyncd syncs; both clear by themselves.
 
 ## 8. Rollback
 
 ```
-sudo systemctl enable --now rpimonitord
+sudo systemctl enable --now rpimonitor
 ```
 
 RPi-Monitor is back on 8888 with its old configuration; PiPulse keeps running next to it.
