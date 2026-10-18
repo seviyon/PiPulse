@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { askYesNo, defaultContext, lockFor, main } from '../src/cli.js';
+import { initChoosesMode } from '../src/cmd-init.js';
 import { asCaller } from '../src/cmd-export.js';
 import { readClock } from '../src/clock.js';
 import { collectStatus, formatStatus } from '../src/cmd-status.js';
@@ -319,6 +320,20 @@ describe('F5: export-ca --out is written with the caller’s rights', () => {
   });
 });
 
+describe('initChoosesMode', () => {
+  it('is exactly true for a valid --mode and exactly false for everything else', () => {
+    expect(initChoosesMode(['--mode', 'auto'])).toBe(true);
+    expect(initChoosesMode(['--mode=auto'])).toBe(true);
+    expect(initChoosesMode(['--mode=bogus'])).toBe(true);
+    expect(initChoosesMode([])).toBe(false);
+    expect(initChoosesMode(['--yes', '--quiet'])).toBe(false);
+    // what init refuses is no mode request, and it never throws from here
+    expect(initChoosesMode(['--mode'])).toBe(false);
+    expect(initChoosesMode(['--nope', '--mode=auto'])).toBe(false);
+    expect(initChoosesMode(['stray', '--mode=auto'])).toBe(false);
+  });
+});
+
 describe('lockFor with init --mode', () => {
   it('locks over an operator certificate (it writes state.json)', () => {
     expect(lockFor('init', operator(join(dir, 'tls')), ['--mode', 'auto'])).toEqual({
@@ -334,6 +349,39 @@ describe('lockFor with init --mode', () => {
 
   it('locks in the default folder', () => {
     expect(lockFor('init', ctx, ['--mode', 'auto'])).toEqual({ create: true });
+  });
+
+  it('recognises --mode however it is spelled, over an operator certificate', () => {
+    const op = operator(join(dir, 'tls'));
+    const locked = { create: true };
+    expect(lockFor('init', op, ['--mode=auto'])).toEqual(locked);
+    expect(lockFor('init', op, ['--yes', '--mode=auto', '--first-install'])).toEqual(locked);
+    expect(lockFor('init', op, ['--subnet=10.0.0.0/24', '--mode', 'auto'])).toEqual(locked);
+  });
+
+  it('does not take other arguments for --mode', () => {
+    const op = operator(join(dir, 'tls'));
+    // arguments init itself refuses write nothing; "--mode" as a value or after `--` is no option
+    expect(lockFor('init', op, ['--subnet', '--mode'])).toBeUndefined();
+    expect(lockFor('init', op, ['--', '--mode=auto'])).toBeUndefined();
+    expect(lockFor('init', op, ['--unknown', '--mode=auto'])).toBeUndefined();
+    expect(lockFor('init', op, ['--yes'])).toBeUndefined();
+    // a --mode without its value is a usage error before anything is written
+    expect(lockFor('init', op, ['--mode'])).toBeUndefined();
+  });
+
+  it('only init treats --mode as a request for a mode', () => {
+    const op = operator(join(dir, 'tls'));
+    for (const command of ['renew', 'new-ca', 'restore-ca']) {
+      expect(lockFor(command, op, ['--mode=auto'])).toBeUndefined();
+      expect(lockFor(command, op, ['--mode', 'auto'])).toBeUndefined();
+    }
+    expect(lockFor('enable', op, ['--mode=auto'])).toEqual({ create: true });
+  });
+
+  it('keeps the refused-folder rule for the = spelling', () => {
+    const refused = testContext(dir, { defaultTlsDir: join(dir, 'elsewhere') });
+    expect(lockFor('init', refused, ['--mode=auto'])).toBeUndefined();
   });
 });
 
