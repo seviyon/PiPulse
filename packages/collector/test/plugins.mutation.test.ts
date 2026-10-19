@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('systeminformation', () => ({
@@ -19,6 +20,7 @@ const {
   cpuLoadPlugin,
   cpuTemperaturePlugin,
   diskUsedPlugin,
+  loadPlugin,
   memoryUsedPlugin,
   swapUsedPlugin
 } = await import('../src/index.js');
@@ -58,6 +60,17 @@ describe('readings', () => {
   it('memory_used is the active memory in MB, rounded to two decimals', async () => {
     vi.mocked(si.mem).mockResolvedValue({ active: 2 ** 20 * 1234.5678 } as never);
     expect(await memoryUsedPlugin.collect()).toBe(1234.57);
+  });
+
+  it('load_1 is the one-minute load average, and null if the platform reports none', async () => {
+    vi.spyOn(os, 'platform').mockReturnValue('linux');
+    vi.spyOn(os, 'loadavg').mockReturnValue([0.42, 1, 2]);
+    expect(await loadPlugin.collect()).toBe(0.42);
+    vi.spyOn(os, 'loadavg').mockReturnValue([]);
+    expect(await loadPlugin.collect()).toBeNull();
+    vi.spyOn(os, 'platform').mockReturnValue('win32');
+    vi.spyOn(os, 'loadavg').mockReturnValue([0, 0, 0]);
+    expect(await loadPlugin.collect()).toBeNull();
   });
 
   it('swap_used is a percentage, and null when there is no swap', async () => {
