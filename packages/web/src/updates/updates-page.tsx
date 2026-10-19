@@ -14,7 +14,7 @@ import {
 /** A command to run over SSH, selectable, with a button that copies it where the browser allows. */
 function Command({ text }: { text: string }) {
   const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no');
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   const copy = async () => {
     try {

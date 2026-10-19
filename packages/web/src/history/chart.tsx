@@ -78,7 +78,7 @@ function drawReference(
  */
 export function Chart({ data, labels, unit, band, title, reference, onZoom }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
-  const plot = useRef<uPlot>();
+  const plot = useRef<uPlot | undefined>(undefined);
   const zoom = useRef(onZoom);
   zoom.current = onZoom;
   const scheme = useColorScheme();
