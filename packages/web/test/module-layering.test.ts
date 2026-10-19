@@ -14,7 +14,7 @@ function sourceFiles(dir = SRC): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory()
       ? sourceFiles(join(dir, entry.name))
-      : /\.(ts|tsx)$/.test(entry.name)
+      : /\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith('.d.ts')
         ? [join(dir, entry.name)]
         : []
   );
