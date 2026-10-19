@@ -15,9 +15,3 @@ pipulse: missing-dep-for-interpreter node (does not satisfy nodejs:any) [opt/pip
 # Third-party npm packages are shipped exactly as published, stray files included.
 pipulse: package-contains-eslint-config-file [opt/pipulse/app/node_modules/*]
 pipulse: wrong-path-for-interpreter /usr/bin/bash != /bin/bash [opt/pipulse/app/node_modules/*]
-
-# The units are packaged in /lib/systemd/system because Debian 11 (Raspberry Pi OS "bullseye",
-# the Pi 2's system) and older are not merged-/usr, so that is the directory their systemd
-# reads. Newer lintian (Ubuntu 26.04's) wants /usr/lib/systemd/system, which a merged-/usr
-# system aliases to the same place; moving the units would need checking on bullseye first.
-pipulse: aliased-location [lib/*]

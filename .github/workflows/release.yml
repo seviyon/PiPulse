@@ -83,7 +83,12 @@ jobs:
           sh packaging/build-tarball.sh "$V" out
           for arch in armhf arm64 amd64; do
             sh packaging/build-deb.sh "$V" "$arch" "out/pipulse-$V.tar.gz" out
-            lintian --fail-on error "out/pipulse_${V}_${arch}.deb"
+            # The units ship in /lib/systemd/system: Debian 11 (Raspberry Pi OS "bullseye", the Pi 2's
+            # system) is not merged-/usr, so that is where its systemd reads them. lintian 2.129 (Ubuntu
+            # 26.04) flags that as aliased-location; the older lintian of the packaging job (Debian
+            # bookworm) does not know the tag and calls an override for it an error, so the tag is
+            # suppressed here, on the newer lintian, and not in the package.
+            lintian --fail-on error --suppress-tags aliased-location "out/pipulse_${V}_${arch}.deb"
           done
           sh packaging/stamp-installer.sh packaging/install.sh out/install.sh
           cp compose.yaml out/
