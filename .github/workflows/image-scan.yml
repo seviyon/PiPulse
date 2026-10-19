@@ -1,12 +1,19 @@
 name: Image scan
 
 # Looks for known vulnerabilities in the image people run (the one compose.yaml pulls), for both
-# CPUs, on the 1st of every month and on demand. It is not a pull request check, so it never blocks a merge;
-# it fails, and GitHub tells you, when a HIGH or CRITICAL finding already has a fix. Most of
-# them come from the Debian base image and clear with the next base image digest Renovate bumps.
+# CPUs, on the 1st of every month, right after each release is published, and on demand. It is
+# not a pull request check, so it never blocks a merge; it fails, and GitHub tells you, when a
+# HIGH or CRITICAL finding already has a fix. Most come from the Debian base image and clear with
+# the next release (the Dockerfile upgrades Debian's packages when it builds).
 on:
   schedule:
     - cron: '23 5 1 * *'
+  # A new release is a new image: check it when it is out. The Release workflow also runs (and
+  # skips every job) for a merged pull request without a release label; only a run that
+  # succeeded published an image.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +21,7 @@ permissions:
 
 jobs:
   trivy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
