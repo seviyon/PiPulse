@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import type { CollectorPlugin } from './index.js';
+import type { CollectorPlugin } from './plugin.js';
 
 /** Pages swapped in plus out since boot, from /proc/vmstat; null if either counter is missing. */
 export function swapPages(vmstat: string): number | null {
