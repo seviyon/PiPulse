@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { inspectMaterial, type LoadedCertificate } from '../src/inspect.js';
-import { RETRY_MS, startReloader } from '../src/reload.js';
+import { inspectMaterial, type LoadedCertificate } from '../src/inspect/inspect.js';
+import { RETRY_MS, startReloader } from '../src/inspect/reload.js';
 import { fixture } from './helpers.js';
 
 const MIN = 60_000;

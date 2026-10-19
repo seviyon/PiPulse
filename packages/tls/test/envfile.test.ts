@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEnvFile, settingsEnv } from '../src/envfile.js';
+import { parseEnvFile, settingsEnv } from '../src/common/envfile.js';
 
 describe('parseEnvFile', () => {
   it('reads KEY=VALUE lines the way systemd and install.sh do: last wins, quotes removed', () => {

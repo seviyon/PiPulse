@@ -15,7 +15,7 @@ import {
   readRuntimeStatus,
   writeRuntimeStatus,
   type RuntimeStatus
-} from '../src/runtime-status.js';
+} from '../src/ca/runtime-status.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;

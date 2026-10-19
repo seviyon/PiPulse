@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildConstraints } from '../src/constraints.js';
-import { SimulatedCrash, type FsHook } from '../src/files.js';
-import { JournalError, readTxn, recover, runTransaction, TXN_STEPS } from '../src/journal.js';
-import { listBackups, paths, pub, readMeta, type Layout } from '../src/layout.js';
+import { buildConstraints } from '../src/ca/constraints.js';
+import { SimulatedCrash, type FsHook } from '../src/common/files.js';
+import { JournalError, readTxn, recover, runTransaction, TXN_STEPS } from '../src/ca/journal.js';
+import { listBackups, paths, pub, readMeta, type Layout } from '../src/ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -13,7 +13,7 @@ import {
   stageNewCa,
   validateStage,
   type IssueContext
-} from '../src/material.js';
+} from '../src/ca/material.js';
 import { tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

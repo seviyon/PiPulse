@@ -11,10 +11,10 @@ import {
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cmd-renew.js';
-import { CLOCK_FLOOR_MS } from '../src/clock.js';
-import { decideInitialMode } from '../src/cmd-init.js';
-import { paths, readMeta, readRenewStatus, readState, writeState } from '../src/layout.js';
+import { IPV6_RENEW_AFTER_MS, renewDue } from '../src/cli/cmd-renew.js';
+import { CLOCK_FLOOR_MS } from '../src/settings/clock.js';
+import { decideInitialMode } from '../src/cli/cmd-init.js';
+import { paths, readMeta, readRenewStatus, readState, writeState } from '../src/ca/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 

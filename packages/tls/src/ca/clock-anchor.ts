@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeAtomic } from './files.js';
+import { writeAtomic } from '../common/files.js';
 import { pub, type Layout } from './layout.js';
 
 /**

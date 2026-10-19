@@ -1,4 +1,4 @@
-import { pathExists } from './files.js';
+import { pathExists } from '../common/files.js';
 import { join } from 'node:path';
 
 export type ClockState = 'synced' | 'unsynced' | 'unknown';

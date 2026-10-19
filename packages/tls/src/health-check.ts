@@ -5,11 +5,11 @@ import { Agent as HttpsAgent, request } from 'node:https';
 import { isIP } from 'node:net';
 import { checkServerIdentity, rootCertificates } from 'node:tls';
 import { pathToFileURL } from 'node:url';
-import { RELEASE_DEFAULT, listenPort, readTlsConfig } from './config.js';
-import { parseSans } from './inspect.js';
-import { userId } from './layout.js';
-import { parseBundle, parseCertificateFile } from './pem.js';
-import { DEFAULT_RUNTIME_DIR, readRuntimeStatus, type RuntimeView } from './runtime-status.js';
+import { RELEASE_DEFAULT, listenPort, readTlsConfig } from './settings/config.js';
+import { parseSans } from './inspect/inspect.js';
+import { userId } from './ca/layout.js';
+import { parseBundle, parseCertificateFile } from './common/pem.js';
+import { DEFAULT_RUNTIME_DIR, readRuntimeStatus, type RuntimeView } from './ca/runtime-status.js';
 
 export interface CheckResult {
   /** 0 healthy, 1 unhealthy or not answering, 2 TLS verification failed. */

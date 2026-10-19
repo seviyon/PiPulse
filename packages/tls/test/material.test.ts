@@ -11,9 +11,9 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildConstraints } from '../src/constraints.js';
-import { ensureDir } from '../src/files.js';
-import { MODES, paths, pub, readMeta, type Layout } from '../src/layout.js';
+import { buildConstraints } from '../src/ca/constraints.js';
+import { ensureDir } from '../src/common/files.js';
+import { MODES, paths, pub, readMeta, type Layout } from '../src/ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -25,7 +25,7 @@ import {
   validateStage,
   writeLeaf,
   type IssueContext
-} from '../src/material.js';
+} from '../src/ca/material.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

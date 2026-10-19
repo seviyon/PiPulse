@@ -1,6 +1,6 @@
 import type { NetworkInterfaceInfo } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { caExtensions } from '../src/issue.js';
+import { caExtensions } from '../src/ca/issue.js';
 import {
   ConstraintError,
   EXCLUDE_BELOW_SINGLE_LABEL,
@@ -20,7 +20,7 @@ import {
   parseConstraints,
   scopeOf,
   subnetWarning
-} from '../src/constraints.js';
+} from '../src/ca/constraints.js';
 
 const ROUTE4_HEADER =
   'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT';

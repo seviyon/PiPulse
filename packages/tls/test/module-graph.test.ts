@@ -26,7 +26,7 @@ function graph(entry: string) {
 }
 
 describe('the sidecar opens no sockets', () => {
-  it.each(['sidecar.ts', 'cli.ts'])(
+  it.each(['cli/sidecar.ts', 'cli.ts'])(
     '%s has no network client in its static module graph',
     (entry) => {
       const { files, builtins } = graph(entry);

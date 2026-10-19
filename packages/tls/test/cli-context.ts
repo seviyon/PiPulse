@@ -1,5 +1,5 @@
-import type { Context } from '../src/cli-common.js';
-import type { Layout } from '../src/layout.js';
+import type { Context } from '../src/cli/cli-common.js';
+import type { Layout } from '../src/ca/layout.js';
 import { TEST_OPENSSL } from './openssl.js';
 
 export const NOW = Date.now();

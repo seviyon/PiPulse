@@ -3,10 +3,10 @@ import { parseArgs } from 'node:util';
 import { operatorConfigured, printCa, tlsOff, usage, type Context } from './cli-common.js';
 import { init } from './cmd-init.js';
 import { renew } from './cmd-renew.js';
-import { ensureDir } from './files.js';
-import { MODES, paths, priv, pub, readState } from './layout.js';
-import { withLock } from './lock.js';
-import { checkLeaf } from './material.js';
+import { ensureDir } from '../common/files.js';
+import { MODES, paths, priv, pub, readState } from '../ca/layout.js';
+import { withLock } from '../ca/lock.js';
+import { checkLeaf } from '../ca/material.js';
 
 /** On the sidecar's tmpfs, so a restart starts unready. */
 export const READY_FILE = '/tmp/pipulse-sidecar-ready';

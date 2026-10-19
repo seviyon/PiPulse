@@ -17,9 +17,9 @@ import {
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { pathExists } from './files.js';
+import { pathExists } from '../common/files.js';
 import type { Layout } from './layout.js';
-import { pidAlive, pidNamespace, processIdentity } from './proc.js';
+import { pidAlive, pidNamespace, processIdentity } from '../common/proc.js';
 
 export const LOCK_FILE = '.pipulse-tls.lock';
 export const LOCK_WAIT_MS = 30_000;

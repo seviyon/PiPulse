@@ -1,11 +1,11 @@
 import type { NetworkInterfaceInfo } from 'node:os';
-import type { ClockReading } from './clock.js';
-import { consequenceText } from './constraints.js';
+import type { ClockReading } from '../settings/clock.js';
+import { consequenceText } from '../ca/constraints.js';
 import { mkdirSync } from 'node:fs';
-import { ensureDir, pathExists, type FsHook } from './files.js';
-import type { CheckResult } from './health-check.js';
-import { MODES, priv, pub, readMeta, type Layout } from './layout.js';
-import type { LockHolder } from './lock.js';
+import { ensureDir, pathExists, type FsHook } from '../common/files.js';
+import type { CheckResult } from '../health-check.js';
+import { MODES, priv, pub, readMeta, type Layout } from '../ca/layout.js';
+import type { LockHolder } from '../ca/lock.js';
 
 export class UsageError extends Error {
   override name = 'UsageError';

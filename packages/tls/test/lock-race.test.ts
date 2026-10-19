@@ -9,8 +9,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Layout } from '../src/layout.js';
-import { LOCK_FILE, breakLock, localIdentity, withLock, type LockHolder } from '../src/lock.js';
+import type { Layout } from '../src/ca/layout.js';
+import { LOCK_FILE, breakLock, localIdentity, withLock, type LockHolder } from '../src/ca/lock.js';
 import { tempDir } from './helpers.js';
 
 // breakLock() links the lock to a second name, renames it away, and may put it back with

@@ -5,7 +5,7 @@ import {
   parseKeyFile,
   parsePemBlocks,
   PemError
-} from '../src/pem.js';
+} from '../src/common/pem.js';
 import { fixture } from './helpers.js';
 
 const leaf = fixture('leaf.crt');

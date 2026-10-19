@@ -2,9 +2,9 @@ import { createHash, createPrivateKey, X509Certificate, type KeyObject } from 'n
 import { isIP } from 'node:net';
 import { basename } from 'node:path';
 import { rootCertificates } from 'node:tls';
-import type { CertSource } from './config.js';
-import { readSecureFile } from './files.js';
-import { parseBundle, parseCertificateFile, parseKeyFile } from './pem.js';
+import type { CertSource } from '../settings/config.js';
+import { readSecureFile } from '../common/files.js';
+import { parseBundle, parseCertificateFile, parseKeyFile } from '../common/pem.js';
 import {
   leafNames,
   nameConstraints,

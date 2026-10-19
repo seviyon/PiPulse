@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { paths, readMeta, readState, writeRenewStatus } from '../src/layout.js';
-import { sidecar, sidecarHealth, sidecarInit, sidecarStart } from '../src/sidecar.js';
-import { withLock } from '../src/lock.js';
+import { paths, readMeta, readState, writeRenewStatus } from '../src/ca/layout.js';
+import { sidecar, sidecarHealth, sidecarInit, sidecarStart } from '../src/cli/sidecar.js';
+import { withLock } from '../src/ca/lock.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 

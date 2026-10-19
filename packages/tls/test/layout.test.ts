@@ -12,7 +12,7 @@ import {
   writeRenewStatus,
   writeState,
   type Layout
-} from '../src/layout.js';
+} from '../src/ca/layout.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;

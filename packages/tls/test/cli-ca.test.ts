@@ -2,7 +2,7 @@ import { cpSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { listBackups, paths, readMeta, readRenewStatus } from '../src/layout.js';
+import { listBackups, paths, readMeta, readRenewStatus } from '../src/ca/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 

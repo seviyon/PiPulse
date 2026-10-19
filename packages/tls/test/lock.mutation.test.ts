@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Layout } from '../src/layout.js';
+import type { Layout } from '../src/ca/layout.js';
 import {
   BREAK_MUTEX_STALE_MS,
   LOCK_FILE,
@@ -11,7 +11,7 @@ import {
   withLock,
   type LockHolder,
   type LocalIdentity
-} from '../src/lock.js';
+} from '../src/ca/lock.js';
 import { tempDir } from './helpers.js';
 
 // Tests written against the survivors of a mutation run over the breaker turns and the wait loop.

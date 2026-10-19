@@ -8,7 +8,7 @@ import {
   REFUSE_LINE,
   REFUSE_LINE_CONTAINER,
   TlsConfigError
-} from '../src/config.js';
+} from '../src/settings/config.js';
 import { tempDir } from './helpers.js';
 
 const noState = () => undefined;

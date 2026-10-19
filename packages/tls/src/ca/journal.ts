@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { TlsConfigError } from './config.js';
+import { TlsConfigError } from '../settings/config.js';
 import {
   SimulatedCrash,
   cleanTemp,
@@ -12,7 +12,7 @@ import {
   syncDir,
   writeAtomic,
   type FsHook
-} from './files.js';
+} from '../common/files.js';
 import { MODES, backupName, paths, priv, pub, type Layout } from './layout.js';
 import type { StageDirs } from './material.js';
 

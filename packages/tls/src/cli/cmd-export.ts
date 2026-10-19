@@ -9,7 +9,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { paths } from './layout.js';
+import { paths } from '../ca/layout.js';
 import { usage, type Context } from './cli-common.js';
 
 /** Per-OS steps. The wording is always "trust this certificate authority", never "accept this certificate". */

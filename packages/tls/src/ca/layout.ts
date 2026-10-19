@@ -1,9 +1,9 @@
 import { X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { DEFAULT_TLS_DIR, parseState, TlsConfigError, type StateMode } from './config.js';
+import { DEFAULT_TLS_DIR, parseState, TlsConfigError, type StateMode } from '../settings/config.js';
 import { parseConstraints, type Constraints } from './constraints.js';
-import { writeAtomic, type FsHook, type Owner } from './files.js';
+import { writeAtomic, type FsHook, type Owner } from '../common/files.js';
 
 /**
  * Where generated TLS material lives. Natively caRoot is tlsDir

@@ -1,10 +1,10 @@
 import { parseArgs } from 'node:util';
-import { ANCHOR_HOLD_MS, aheadText, judgeClock, readAnchor, writeAnchor } from './clock-anchor.js';
-import { opensslVersion } from './issue.js';
-import { leafNames } from './constraints.js';
-import { pathExists, removeTree } from './files.js';
-import { recover } from './journal.js';
-import { paths, pub, readState, writeRenewStatus, type RenewStatus } from './layout.js';
+import { ANCHOR_HOLD_MS, aheadText, judgeClock, readAnchor, writeAnchor } from '../ca/clock-anchor.js';
+import { opensslVersion } from '../ca/issue.js';
+import { leafNames } from '../ca/constraints.js';
+import { pathExists, removeTree } from '../common/files.js';
+import { recover } from '../ca/journal.js';
+import { paths, pub, readState, writeRenewStatus, type RenewStatus } from '../ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -14,7 +14,7 @@ import {
   repairPublic,
   writeLeaf,
   type LeafCheck
-} from './material.js';
+} from '../ca/material.js';
 import {
   isoDate,
   nativeLayoutProblem,

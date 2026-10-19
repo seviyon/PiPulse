@@ -1,16 +1,16 @@
 import { basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { opensslVersion } from './issue.js';
+import { opensslVersion } from '../ca/issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import {
   buildConstraints,
   consequenceText,
   subnetWarning,
   type Constraints
-} from './constraints.js';
-import { removeTree } from './files.js';
-import { recover, runTransaction } from './journal.js';
-import { BACKUP_NAME, listBackups, paths, pub, type BackupInfo } from './layout.js';
+} from '../ca/constraints.js';
+import { removeTree } from '../common/files.js';
+import { recover, runTransaction } from '../ca/journal.js';
+import { BACKUP_NAME, listBackups, paths, pub, type BackupInfo } from '../ca/layout.js';
 import {
   checkCa,
   namesSetting,
@@ -22,7 +22,7 @@ import {
   subnetsSetting,
   validateStage,
   type CaFiles
-} from './material.js';
+} from '../ca/material.js';
 import {
   UsageError,
   confirm,

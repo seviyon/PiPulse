@@ -12,11 +12,11 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { askYesNo, defaultContext, lockFor, main } from '../src/cli.js';
-import { initChoosesMode } from '../src/cmd-init.js';
-import { asCaller } from '../src/cmd-export.js';
-import { readClock } from '../src/clock.js';
-import { collectStatus, formatStatus } from '../src/cmd-status.js';
-import { paths, readMeta, readState, writeState } from '../src/layout.js';
+import { initChoosesMode } from '../src/cli/cmd-init.js';
+import { asCaller } from '../src/cli/cmd-export.js';
+import { readClock } from '../src/settings/clock.js';
+import { collectStatus, formatStatus } from '../src/cli/cmd-status.js';
+import { paths, readMeta, readState, writeState } from '../src/ca/layout.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { fixture, tempDir } from './helpers.js';
 

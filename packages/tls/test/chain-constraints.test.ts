@@ -3,7 +3,7 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { inspectMaterial } from '../src/inspect.js';
+import { inspectMaterial } from '../src/inspect/inspect.js';
 import {
   dnsInSubtree,
   ipInSubtree,
@@ -11,7 +11,7 @@ import {
   nameConstraints,
   pathLength,
   violatesNameConstraints
-} from '../src/x509-constraints.js';
+} from '../src/inspect/x509-constraints.js';
 import { tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

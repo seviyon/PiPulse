@@ -1,10 +1,10 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeAtomic } from './files.js';
+import { writeAtomic } from '../common/files.js';
 import { FINGERPRINT } from './layout.js';
-import { processIdentity } from './proc.js';
-import type { ChainClass } from './inspect.js';
-import type { ReloadState } from './reload.js';
+import { processIdentity } from '../common/proc.js';
+import type { ChainClass } from '../inspect/inspect.js';
+import type { ReloadState } from '../inspect/reload.js';
 
 export const DEFAULT_RUNTIME_DIR = '/run/pipulse';
 export const RUNTIME_FILE = 'tls-status.json';
@@ -80,7 +80,7 @@ function readText(path: string, expectUid?: number): string {
 }
 
 // proc.ts has it (the lock uses it too); re-exported here for the server and the tests.
-export { processIdentity } from './proc.js';
+export { processIdentity } from '../common/proc.js';
 
 export function writeRuntimeStatus(dir: string, status: RuntimeStatus): void {
   writeAtomic(join(dir, RUNTIME_FILE), `${JSON.stringify(status)}\n`, { mode: 0o640 });

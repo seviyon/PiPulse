@@ -11,8 +11,8 @@ import {
   parseSans,
   validityOf,
   type Trust
-} from '../src/inspect.js';
-import { issueCa, issueLeaf } from '../src/issue.js';
+} from '../src/inspect/inspect.js';
+import { issueCa, issueLeaf } from '../src/ca/issue.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

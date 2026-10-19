@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLOCK_FLOOR_MS, readClock } from '../src/clock.js';
+import { CLOCK_FLOOR_MS, readClock } from '../src/settings/clock.js';
 
 const NOW = Date.UTC(2027, 0, 1);
 const files =

@@ -8,11 +8,11 @@ import {
   formatStatus,
   type ActiveView,
   type StatusReport
-} from '../src/cmd-status.js';
-import { buildConstraints } from '../src/constraints.js';
-import { runTransaction } from '../src/journal.js';
-import { paths, pub } from '../src/layout.js';
-import { prepareWork, stageNewCa, validateStage } from '../src/material.js';
+} from '../src/cli/cmd-status.js';
+import { buildConstraints } from '../src/ca/constraints.js';
+import { runTransaction } from '../src/ca/journal.js';
+import { paths, pub } from '../src/ca/layout.js';
+import { prepareWork, stageNewCa, validateStage } from '../src/ca/material.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { fixturePath, tempDir } from './helpers.js';
 

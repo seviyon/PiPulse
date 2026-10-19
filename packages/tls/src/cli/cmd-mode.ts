@@ -1,11 +1,11 @@
 import { rmSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from './config.js';
-import type { CheckResult } from './health-check.js';
-import { loadCertificate, validityOf } from './inspect.js';
-import { recover } from './journal.js';
-import { paths, pub, readState, writeState, type Layout } from './layout.js';
-import { checkCa, checkLeaf, repairPublic, type CaFiles } from './material.js';
+import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from '../settings/config.js';
+import type { CheckResult } from '../health-check.js';
+import { loadCertificate, validityOf } from '../inspect/inspect.js';
+import { recover } from '../ca/journal.js';
+import { paths, pub, readState, writeState, type Layout } from '../ca/layout.js';
+import { checkCa, checkLeaf, repairPublic, type CaFiles } from '../ca/material.js';
 import {
   confirm,
   ensureStateDirs,

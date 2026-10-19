@@ -19,7 +19,7 @@ import {
   pathExists,
   writeAtomic,
   type FsPoint
-} from '../src/files.js';
+} from '../src/common/files.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;

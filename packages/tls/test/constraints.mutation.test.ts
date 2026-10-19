@@ -14,7 +14,7 @@ import {
   parseCidr,
   parseConstraints,
   type Constraints
-} from '../src/constraints.js';
+} from '../src/ca/constraints.js';
 
 const HEADER =
   'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT';

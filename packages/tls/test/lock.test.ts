@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Layout } from '../src/layout.js';
+import type { Layout } from '../src/ca/layout.js';
 import {
   LOCK_FILE,
   LOCK_HEARTBEAT_MS,
@@ -21,8 +21,8 @@ import {
   localIdentity,
   withLock,
   type LockHolder
-} from '../src/lock.js';
-import { processIdentity } from '../src/proc.js';
+} from '../src/ca/lock.js';
+import { processIdentity } from '../src/common/proc.js';
 import { tempDir } from './helpers.js';
 
 let dir: string;

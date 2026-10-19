@@ -19,7 +19,7 @@ import {
   parseOpensslVersion,
   type IssueScope,
   type Issued
-} from '../src/issue.js';
+} from '../src/ca/issue.js';
 import { tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

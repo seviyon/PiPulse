@@ -14,7 +14,7 @@ import {
   pendingReload,
   servedFingerprintOf
 } from '../src/health-check.js';
-import { issueCa, issueLeaf } from '../src/issue.js';
+import { issueCa, issueLeaf } from '../src/ca/issue.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 

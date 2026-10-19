@@ -1,5 +1,5 @@
 import { waitClock, type Context } from './cli-common.js';
-import { CLOCK_FLOOR_MS } from './clock.js';
+import { CLOCK_FLOOR_MS } from '../settings/clock.js';
 
 export const CLOCK_WAIT_MS = 60_000;
 

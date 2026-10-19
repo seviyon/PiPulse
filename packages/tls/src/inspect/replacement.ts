@@ -1,4 +1,4 @@
-import { readClock } from './clock.js';
+import { readClock } from '../settings/clock.js';
 import { CertificateRefused, validityOf, type LoadedCertificate } from './inspect.js';
 
 /**

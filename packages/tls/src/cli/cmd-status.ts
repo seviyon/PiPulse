@@ -2,12 +2,12 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClockState } from './clock.js';
-import { RELEASE_DEFAULT, dbPathOf, readTlsConfig, type StateMode } from './config.js';
-import { pathExists } from './files.js';
-import { consequenceText, formatAddress, parseAddress } from './constraints.js';
-import { EXPIRING_SOON_MS, parseSans, validityOf, type Validity } from './inspect.js';
-import { readTxn } from './journal.js';
+import type { ClockState } from '../settings/clock.js';
+import { RELEASE_DEFAULT, dbPathOf, readTlsConfig, type StateMode } from '../settings/config.js';
+import { pathExists } from '../common/files.js';
+import { consequenceText, formatAddress, parseAddress } from '../ca/constraints.js';
+import { EXPIRING_SOON_MS, parseSans, validityOf, type Validity } from '../inspect/inspect.js';
+import { readTxn } from '../ca/journal.js';
 import {
   paths,
   readMeta,
@@ -16,14 +16,14 @@ import {
   userId,
   type CaMeta,
   type RenewStatus
-} from './layout.js';
-import { parseCertificateFile } from './pem.js';
+} from '../ca/layout.js';
+import { parseCertificateFile } from '../common/pem.js';
 import {
   DEFAULT_RUNTIME_DIR,
   printable,
   readRuntimeStatus,
   type RuntimeView
-} from './runtime-status.js';
+} from '../ca/runtime-status.js';
 import {
   isoDate,
   isoMinute,

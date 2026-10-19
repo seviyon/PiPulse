@@ -1,9 +1,9 @@
 import { copyFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { inspectMaterial, type LoadedCertificate, type Trust } from '../src/inspect.js';
-import { startReloader } from '../src/reload.js';
-import { statSignature } from '../src/files.js';
+import { inspectMaterial, type LoadedCertificate, type Trust } from '../src/inspect/inspect.js';
+import { startReloader } from '../src/inspect/reload.js';
+import { statSignature } from '../src/common/files.js';
 import { fixture, fixturePath, tempDir } from './helpers.js';
 
 const root: Trust = { anchors: [fixture('root-ca.crt')], system: false };

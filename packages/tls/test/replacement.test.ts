@@ -1,8 +1,8 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { inspectMaterial, type LoadedCertificate } from '../src/inspect.js';
-import { checkReplacement } from '../src/replacement.js';
+import { inspectMaterial, type LoadedCertificate } from '../src/inspect/inspect.js';
+import { checkReplacement } from '../src/inspect/replacement.js';
 import { fixture, tempDir } from './helpers.js';
 
 const load = (crt: string, key: string): LoadedCertificate =>

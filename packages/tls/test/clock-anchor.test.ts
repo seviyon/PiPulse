@@ -11,8 +11,8 @@ import {
   readAnchor,
   writeAnchor,
   type Anchor
-} from '../src/clock-anchor.js';
-import { paths, readRenewStatus } from '../src/layout.js';
+} from '../src/ca/clock-anchor.js';
+import { paths, readRenewStatus } from '../src/ca/layout.js';
 import { NOW, testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 

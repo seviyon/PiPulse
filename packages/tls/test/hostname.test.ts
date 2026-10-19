@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { hostName } from '../src/hostname.js';
+import { hostName } from '../src/common/hostname.js';
 
 describe('hostName', () => {
   it('prefers PIPULSE_HOSTNAME', () => {

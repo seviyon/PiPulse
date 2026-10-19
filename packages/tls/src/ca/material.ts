@@ -16,8 +16,8 @@ import {
   writeAtomic,
   type FsHook,
   type Owner
-} from './files.js';
-import { inspectMaterial } from './inspect.js';
+} from '../common/files.js';
+import { inspectMaterial } from '../inspect/inspect.js';
 import { issueCa, issueLeaf, type Issued } from './issue.js';
 import {
   MODES,
@@ -34,7 +34,7 @@ import {
   type CaMeta,
   type Layout
 } from './layout.js';
-import { parseBundle } from './pem.js';
+import { parseBundle } from '../common/pem.js';
 
 /** What issuing needs, injected so tests control time, names and addresses. */
 export interface IssueContext {

@@ -12,12 +12,12 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cli, ignoreClosedPipe, lockFor, main } from '../src/cli.js';
-import { collectStatus, formatStatus } from '../src/cmd-status.js';
-import { REFUSE_LINE } from '../src/config.js';
-import { buildConstraints } from '../src/constraints.js';
-import { runTransaction } from '../src/journal.js';
-import { paths, pub, writeState } from '../src/layout.js';
-import { prepareWork, stageNewCa, validateStage } from '../src/material.js';
+import { collectStatus, formatStatus } from '../src/cli/cmd-status.js';
+import { REFUSE_LINE } from '../src/settings/config.js';
+import { buildConstraints } from '../src/ca/constraints.js';
+import { runTransaction } from '../src/ca/journal.js';
+import { paths, pub, writeState } from '../src/ca/layout.js';
+import { prepareWork, stageNewCa, validateStage } from '../src/ca/material.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { tempDir } from './helpers.js';
 

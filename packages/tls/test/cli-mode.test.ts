@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } f
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { paths, readState, writeState } from '../src/layout.js';
+import { paths, readState, writeState } from '../src/ca/layout.js';
 import { testContext, type TestContext } from './cli-context.js';
 import { fixture, tempDir } from './helpers.js';
 

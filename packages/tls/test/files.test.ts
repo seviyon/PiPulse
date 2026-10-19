@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readSecureFile, statSignature, TlsFileError } from '../src/files.js';
+import { readSecureFile, statSignature, TlsFileError } from '../src/common/files.js';
 import { fixture, tempDir } from './helpers.js';
 
 let dir: string;

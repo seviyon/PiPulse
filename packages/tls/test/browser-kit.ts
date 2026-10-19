@@ -2,7 +2,7 @@
 // constraints (spec: "Browser name-constraint check"). Not part of the suite.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { issueCa, issueLeaf, type IssueScope } from '../src/issue.js';
+import { issueCa, issueLeaf, type IssueScope } from '../src/ca/issue.js';
 import { TEST_OPENSSL } from './openssl.js';
 
 const [out, lanIp] = process.argv.slice(2);

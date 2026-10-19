@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureDir, renameDurable, writeAtomic } from '../src/files.js';
+import { ensureDir, renameDurable, writeAtomic } from '../src/common/files.js';
 import { tempDir } from './helpers.js';
 
 // Records every ownership and mode change and applies only the ones that need no privilege,

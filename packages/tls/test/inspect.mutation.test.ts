@@ -8,7 +8,7 @@ import {
   inspectMaterial,
   loadCertificate,
   type Trust
-} from '../src/inspect.js';
+} from '../src/inspect/inspect.js';
 import { fixture, tempDir } from './helpers.js';
 import { TEST_OPENSSL } from './openssl.js';
 
