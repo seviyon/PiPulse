@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dbPathOf } from '../src/config.js';
+import { dbPathOf } from '../src/settings/config.js';
 
 describe('dbPathOf', () => {
   it('defaults and keeps absolute paths', () => {

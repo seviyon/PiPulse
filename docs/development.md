@@ -39,7 +39,7 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages
 
 ## Naming tests
 
-A test file is named after the module it tests, so it sorts next to it: `lock.test.ts` for `src/lock.ts`, `cli-edges.test.ts` (or `lock-race.test.ts`) for a part of its behaviour that needs its own file, and `lock.mutation.test.ts` for the cases added to kill surviving mutants. Coverage is collected per package, so the tests for a module live in that module's package, never only in another one's.
+A test file is named after the module it tests, so it sorts next to it: `ca/lock.test.ts` for `src/ca/lock.ts`, `cli-edges.test.ts` (or `lock-race.test.ts`) for a part of its behaviour that needs its own file, and `lock.mutation.test.ts` for the cases added to kill surviving mutants. Coverage is collected per package, so the tests for a module live in that module's package, never only in another one's.
 
 ## Mutation testing
 
@@ -47,7 +47,7 @@ Coverage says which lines the tests ran; mutation testing says whether they woul
 
 ```bash
 # npm run mutate -- <package> <src-file[:from-to]> <test-file>...
-npm run mutate -- tls src/runtime-status.ts:100-126 test/runtime-status.test.ts
+npm run mutate -- tls src/ca/runtime-status.ts:100-126 test/ca/runtime-status.test.ts
 ```
 
 Give it one file (or a line range) and the tests that cover it: every mutant runs those tests once, so a whole package takes a long time. The report prints in the terminal and as HTML in `packages/<package>/reports/mutation/index.html`. Neither `reports/` nor `.stryker-tmp/` is committed. The terminal prints nothing until the end, so a long run looks stuck: add `--bail=1` after the test files (`npm run mutate -- tls src/journal.ts test/journal.test.ts --bail=1`) so a mutant that is caught stops at its first failing test. The 236 mutants of `journal.ts` still took about 74 minutes; avoid running other test suites meanwhile, because a slowed mutant that hits the 60 s timeout counts as caught.

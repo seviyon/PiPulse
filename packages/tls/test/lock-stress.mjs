@@ -19,7 +19,7 @@ import {
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const LOCK = new URL('../dist/lock.js', import.meta.url).href;
+const LOCK = new URL('../dist/ca/lock.js', import.meta.url).href;
 const [role, dir, secs] = process.argv.slice(2);
 
 if (role === 'worker') {
