@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import { builtinPlugins, type CollectorPlugin } from '@pipulse/collector';
 import { loadConfig, type PiPulseConfig } from '../src/config.js';
 import { fixture } from '../../tls/test/helpers.js';
@@ -16,6 +17,10 @@ vi.mock('@pipulse/storage', async (importOriginal) => {
     startHousekeeping: vi.fn(actual.startHousekeeping),
     retentionSource: vi.fn(actual.retentionSource)
   };
+});
+vi.mock('@pipulse/collector', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@pipulse/collector')>();
+  return { ...actual, startScheduler: vi.fn(actual.startScheduler) };
 });
 vi.mock('@pipulse/alerts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@pipulse/alerts')>();
@@ -37,6 +42,18 @@ vi.mock('../src/app.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/app.js')>();
   return { ...actual, buildServer: vi.fn(actual.buildServer) };
 });
+vi.mock('../src/health.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/health.js')>();
+  return { ...actual, createHealth: vi.fn(actual.createHealth) };
+});
+vi.mock('../src/tls-status.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/tls-status.js')>();
+  return { ...actual, readGeneratedExtras: vi.fn(actual.readGeneratedExtras) };
+});
+vi.mock('@pipulse/tls', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@pipulse/tls')>();
+  return { ...actual, processIdentity: vi.fn(actual.processIdentity) };
+});
 vi.mock('../src/tls-runtime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/tls-runtime.js')>();
   return {
@@ -47,7 +64,12 @@ vi.mock('../src/tls-runtime.js', async (importOriginal) => {
 });
 
 const { startHousekeeping, retentionSource } = await import('@pipulse/storage');
+const { startScheduler } = await import('@pipulse/collector');
 const { startAlerts, createRuleSource } = await import('@pipulse/alerts');
+const { createHealth } = await import('../src/health.js');
+const { readGeneratedExtras } = await import('../src/tls-status.js');
+const { processIdentity } = await import('@pipulse/tls');
+const realUpdates = await vi.importActual<typeof import('../src/updates.js')>('../src/updates.js');
 const { startNotifications } = await import('@pipulse/notify');
 const { createUpdates } = await import('../src/updates.js');
 const { buildServer } = await import('../src/app.js');
@@ -482,5 +504,242 @@ describe('the certificate reloader it starts', () => {
     expect(options.provider()?.current().source).toBe('operator');
     options.warn('status note');
     expect(printed(warn)).toContain('[pipulse] status note');
+  });
+});
+
+describe('what each part is told about the plugins', () => {
+  const idsAndIntervals = (list: Array<{ id: string; intervalMs: number }>) =>
+    list.map(({ id, intervalMs }) => ({ id, intervalMs }));
+
+  it('gives the rules and the engine the metrics of the plugins, the engine only the running ones', async () => {
+    const plugins = fakePlugins();
+    await start({}, (config) => ({ ...config, inContainer: true }), { plugins, device });
+    const running = plugins.filter((p) => p.id !== 'cpu_voltage' && p.id !== 'throttled');
+    expect(lastCall(createRuleSource)[1].metrics).toEqual(idsAndIntervals(plugins));
+    expect(lastCall(startAlerts)[1].metrics).toEqual(idsAndIntervals(running));
+  });
+
+  it('gives notifications a label and unit for each plugin and for the certificate', async () => {
+    const plugins = fakePlugins();
+    await start({}, (config) => config, { plugins, device });
+    expect(lastCall(startNotifications)[1].metrics).toEqual([
+      ...plugins.map(({ id, label, unit }) => ({ id, label, unit })),
+      { id: 'certificate', label: 'HTTPS certificate', unit: '' }
+    ]);
+    expect(lastCall(startNotifications)[1].hostname).toBeTruthy();
+  });
+
+  it('asks the health check to track readings and alert checks', async () => {
+    await start();
+    expect(lastCall(createHealth)[1]).toEqual({ trackReadings: true, trackAlertChecks: true });
+  });
+});
+
+describe('what the server is built with', () => {
+  it('passes the sign-in settings through, with the hash only when there is one', async () => {
+    await start();
+    expect(lastCall(buildServer)[1].auth).toEqual({ protectReads: false });
+    await start({}, (config) => ({
+      ...config,
+      dbPath: join(dir, 'q.sqlite'),
+      auth: { passwordHash: 'scrypt$x', protectReads: true } as PiPulseConfig['auth']
+    }));
+    expect(lastCall(buildServer)[1].auth).toEqual({ passwordHash: 'scrypt$x', protectReads: true });
+  });
+
+  it('has an HSTS setting only when HSTS is on', async () => {
+    await start();
+    expect(lastCall(buildServer)[1]).not.toHaveProperty('hstsSeconds');
+    await start(httpsSettings({ PIPULSE_TLS_HSTS: '1d' }), (config) => ({
+      ...config,
+      dbPath: join(dir, 'q.sqlite')
+    }));
+    expect(lastCall(buildServer)[1].hstsSeconds).toBe(86_400);
+  });
+
+  it("reads a generated certificate's files for the TLS view, and no other kind's", async () => {
+    await start({}, (config) => ({
+      ...config,
+      tls: {
+        ...config.tls,
+        source: { kind: 'generated', bundlePath: '/x/leaf.pem', caPath: '/x/ca.crt' } as never
+      }
+    }));
+    expect(vi.mocked(startCertificateReloader)).not.toHaveBeenCalled(); // no certificate is served
+    vi.mocked(readGeneratedExtras).mockClear();
+    lastCall(buildServer)[1].tls?.();
+    expect(readGeneratedExtras).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(readGeneratedExtras).mock.calls[0]![0]).toBe(join(dir, 'tls'));
+
+    await start({}, (config) => ({ ...config, dbPath: join(dir, 'q.sqlite') }));
+    vi.mocked(readGeneratedExtras).mockClear();
+    lastCall(buildServer)[1].tls?.();
+    expect(readGeneratedExtras).not.toHaveBeenCalled();
+  });
+
+  it('does not keep a certificate reloader for a server that serves none', async () => {
+    vi.mocked(startCertificateReloader).mockClear();
+    await start();
+    expect(startCertificateReloader).not.toHaveBeenCalled();
+  });
+});
+
+describe('the callbacks, called with what they receive', () => {
+  it('publishes a sample to the live feed and marks a reading', async () => {
+    await start();
+    const live = lastCall(buildServer)[1].live!;
+    const health = vi.mocked(createHealth).mock.results.at(-1)!.value as { markReading(): void };
+    const marked = vi.spyOn(health, 'markReading');
+    const received: unknown[] = [];
+    live.subscribe((sample) => received.push(sample));
+    const sample = { ts: 1, metric: 'cpu_load', value: 2 };
+    lastCall(startScheduler)[2]?.onSample?.(sample);
+    expect(received).toEqual([sample]);
+    expect(marked).toHaveBeenCalled();
+  });
+
+  it('marks an alert check, and publishes an alert change to the alert feed', async () => {
+    await start();
+    const health = vi.mocked(createHealth).mock.results.at(-1)!.value as {
+      markAlertCheck(): void;
+    };
+    const marked = vi.spyOn(health, 'markAlertCheck');
+    const options = lastCall(startAlerts)[1];
+    options.onCheck?.();
+    expect(marked).toHaveBeenCalled();
+
+    const feed = lastCall(buildServer)[1].alertFeed!;
+    const received: unknown[] = [];
+    feed.subscribe((event) => received.push(event));
+    const notifications = vi.mocked(startNotifications).mock.results.at(-1)!.value as {
+      enqueue(event: unknown): void;
+    };
+    vi.spyOn(notifications, 'enqueue').mockImplementation(() => {});
+    const event = { type: 'raised' };
+    options.onChange?.(event as never);
+    expect(received).toEqual([event]);
+  });
+
+  it('hands the housekeeping job the retention in force, in milliseconds', async () => {
+    await start({ PIPULSE_RETENTION_RAW: '3d' });
+    expect(lastCall(startHousekeeping)[1].retention()).toMatchObject({ raw: 3 * 86_400_000 });
+  });
+
+  it('gives the alert engine the certificate context over HTTPS', async () => {
+    await start(httpsSettings());
+    expect(lastCall(startAlerts)[1].context?.()).toMatchObject({
+      certificate: { notAfter: expect.any(Number), clockSynced: true }
+    });
+  });
+
+  it('starts the updates check once it listens', async () => {
+    const started: Array<ReturnType<typeof vi.spyOn>> = [];
+    vi.mocked(createUpdates).mockImplementationOnce((options) => {
+      const updates = realUpdates.createUpdates(options);
+      started.push(vi.spyOn(updates, 'start').mockImplementation(() => {}));
+      return updates;
+    });
+    await start();
+    expect(started[0]).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('what is written and printed after it listens', () => {
+  beforeEach(() => {
+    vi.mocked(processIdentity).mockReturnValue({ startTime: '1', bootId: 'b' });
+  });
+
+  it('writes the runtime status file, on any platform', async () => {
+    mkdirSync(join(dir, 'run'));
+    await start();
+    expect(existsSync(join(dir, 'run', 'tls-status.json'))).toBe(true);
+  });
+
+  it('writes the data-folder marker only for HTTPS, and says nothing when that works', async () => {
+    await start();
+    expect(existsSync(join(dir, 'tls-installed'))).toBe(false);
+    await start(httpsSettings(), (config) => ({ ...config, dbPath: join(dir, 'q.sqlite') }));
+    expect(existsSync(join(dir, 'tls-installed'))).toBe(true);
+    expect(printed(error)).not.toContain('[pipulse] ERROR:');
+  });
+
+  it('prints the certificate, its end date and fingerprint when it serves HTTPS', async () => {
+    const server = await start(httpsSettings());
+    const { port } = server.address();
+    const cert = loadServingCertificate(lastCall(startCertificateReloader)[0].tls)!;
+    expect(printed(log)).toContain(
+      `listening on https://127.0.0.1:${port} (certificate: operator, valid until ${new Date(cert.notAfter).toISOString().slice(0, 10)}, SHA-256 ${cert.fingerprint})`
+    );
+  });
+
+  it('ends the line there when there is nothing more to say', async () => {
+    await start({}, (config) => ({
+      ...config,
+      auth: { passwordHash: 'scrypt$x', protectReads: false } as PiPulseConfig['auth']
+    }));
+    const line = log.mock.calls.flat().find((text) => String(text).includes('listening on'))!;
+    expect(String(line)).toMatch(/\(HTTPS off: PIPULSE_TLS=off\)$/);
+  });
+
+  it('says nothing about "HTTPS is ready" unless the state file says HTTPS is prepared', async () => {
+    const ready = '[pipulse] HTTPS is ready';
+    await start({}, (config) => ({
+      ...config,
+      tls: { ...config.tls, modeReason: 'env', stateMode: 'legacy-http' }
+    }));
+    expect(printed(log)).not.toContain(ready);
+    await start({}, (config) => ({
+      ...config,
+      dbPath: join(dir, 'q.sqlite'),
+      tls: { ...config.tls, modeReason: 'state', stateMode: 'https' }
+    }));
+    expect(printed(log)).not.toContain(ready);
+    await start({}, (config) => ({
+      ...config,
+      dbPath: join(dir, 'r.sqlite'),
+      tls: { ...config.tls, modeReason: 'state', stateMode: undefined }
+    }));
+    expect(printed(log)).not.toContain(ready);
+  });
+
+  it('says nothing about "HTTPS is ready" when HTTPS is on', async () => {
+    await start(httpsSettings(), (config) => ({
+      ...config,
+      tls: { ...config.tls, modeReason: 'state', stateMode: 'legacy-http' }
+    }));
+    expect(printed(log)).not.toContain('[pipulse] HTTPS is ready');
+  });
+
+  it('does not warn about Node when its line is supported', async () => {
+    await start();
+    expect(printed(warn)).not.toContain('no longer gets security fixes');
+  });
+
+  it('does not warn about unencrypted sign-in over HTTPS', async () => {
+    await start(httpsSettings(), (config) => ({
+      ...config,
+      auth: { passwordHash: 'scrypt$x', protectReads: false } as PiPulseConfig['auth']
+    }));
+    expect(printed(warn)).not.toContain('sign-in is on but HTTPS is off');
+  });
+});
+
+describe('the certificate reloader, what it is given', () => {
+  it('keeps the TLS floor when it replaces the context', async () => {
+    const server = await start(httpsSettings());
+    const [options] = lastCall(startCertificateReloader);
+    const setSecureContext = vi
+      .spyOn(
+        server.app.server as unknown as { setSecureContext(o: unknown): void },
+        'setSecureContext'
+      )
+      .mockImplementation(() => {});
+    const cert = loadServingCertificate(options.tls)!;
+    options.apply(cert);
+    expect(setSecureContext).toHaveBeenCalledWith({
+      key: cert.key,
+      cert: cert.cert,
+      minVersion: 'TLSv1.2'
+    });
   });
 });

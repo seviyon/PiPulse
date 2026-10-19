@@ -85,8 +85,7 @@ export function certificateAlertContext(
     const clock = readClock({
       timesyncDir: tls.timesyncDir,
       now: Date.now(),
-      trust: tls.clockTrust,
-      ...(cert.source === 'generated' ? { notBefore: cert.notBefore } : {})
+      trust: tls.clockTrust
     });
     return { certificate: { notAfter: cert.notAfter, clockSynced: clock.synced } };
   };

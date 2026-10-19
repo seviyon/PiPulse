@@ -1,9 +1,15 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { REFUSE_LINE } from '@pipulse/tls';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_RUNTIME_DIR, REFUSE_LINE, hostName } from '@pipulse/tls';
 import { loadConfig, refuse, StartupError } from '../src/config.js';
+
+vi.mock('../src/version.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/version.js')>();
+  return { ...actual, readVersion: vi.fn(actual.readVersion) };
+});
+const { readVersion } = await import('../src/version.js');
 
 let dir: string;
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -206,5 +212,91 @@ describe('refuse', () => {
 
   it('passes a result through', () => {
     expect(refuse(() => 7)).toBe(7);
+  });
+});
+
+describe('loadConfig, the details', () => {
+  const warningsFor = (extra: Record<string, string>) =>
+    loadConfig({ ...base(), ...extra }).warnings;
+  const UNUSED =
+    '[pipulse] warning: PIPULSE_TLS_CERT/PIPULSE_TLS_KEY are set but HTTPS is off (set PIPULSE_TLS=on)';
+
+  it('has no warnings by default', () => {
+    expect(loadConfig(base()).warnings).toEqual([]);
+  });
+
+  it('prefixes the TLS settings warnings', () => {
+    const env = base();
+    mkdirSync(env['PIPULSE_TLS_DIR']!, { recursive: true });
+    writeFileSync(join(env['PIPULSE_TLS_DIR']!, 'state.json'), 'not json');
+    const warnings = loadConfig(env).warnings;
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(
+      /^\[pipulse\] warning: .*state\.json \(PIPULSE_TLS_DIR\): .*; ignoring it because PIPULSE_TLS=off$/
+    );
+  });
+
+  it.each([
+    // One of the two alone is refused earlier ("must be set together"), so `||` vs `&&` cannot show.
+    ['both', { PIPULSE_TLS_CERT: '/x.pem', PIPULSE_TLS_KEY: '/x.key' }]
+  ])('warns that %s is set while HTTPS is off', (_, extra) => {
+    expect(warningsFor(extra)).toEqual([UNUSED]);
+  });
+
+  it.each([
+    ['blank values', { PIPULSE_TLS_CERT: '  ', PIPULSE_TLS_KEY: '\t' }],
+    ['none', {}]
+  ])('does not warn about %s', (_, extra) => {
+    expect(warningsFor(extra)).toEqual([]);
+  });
+
+  it('does not warn about a certificate and key that HTTPS uses', () => {
+    const fixtures = resolve(import.meta.dirname, '../../tls/test/fixtures');
+    expect(
+      warningsFor({
+        PIPULSE_TLS: 'on',
+        PIPULSE_TLS_CERT: join(fixtures, 'leaf.crt'),
+        PIPULSE_TLS_KEY: join(fixtures, 'leaf.key')
+      })
+    ).not.toContain(UNUSED);
+  });
+
+  it("adds the host's own names and PIPULSE_TLS_NAMES to a list that is set, and nothing to one that is not", () => {
+    const set = loadConfig({
+      ...base(),
+      PIPULSE_ALLOWED_HOSTS: 'io.lan',
+      PIPULSE_TLS_NAMES: 'pi.example'
+    }).allowedHosts;
+    expect(set).toEqual(
+      expect.arrayContaining([
+        'io.lan',
+        hostName().toLowerCase(),
+        `${hostName().toLowerCase()}.local`,
+        'pi.example'
+      ])
+    );
+    expect(loadConfig(base()).allowedHosts).toEqual([]);
+  });
+
+  it("serves the dashboard from the web package's build by default", () => {
+    expect(loadConfig(base()).webDir).toBe(resolve(import.meta.dirname, '../../web/dist'));
+  });
+
+  it('has no hstsSeconds key unless HSTS is on', () => {
+    expect(loadConfig(base())).not.toHaveProperty('hstsSeconds');
+  });
+
+  it('keeps the runtime folder from the environment, trimmed, and falls back for a blank one', () => {
+    expect(loadConfig({ ...base(), PIPULSE_RUNTIME_DIR: '  /run/x  ' }).runtimeDir).toBe('/run/x');
+    expect(loadConfig({ ...base(), PIPULSE_RUNTIME_DIR: '   ' }).runtimeDir).toBe(
+      DEFAULT_RUNTIME_DIR
+    );
+    expect(loadConfig(base()).runtimeDir).toBe(DEFAULT_RUNTIME_DIR);
+  });
+
+  it('reads the release version from the app root, three levels above the package source', () => {
+    loadConfig(base());
+    const root = resolve(import.meta.dirname, '../../..');
+    expect(resolve(vi.mocked(readVersion).mock.calls.at(-1)![0])).toBe(root);
   });
 });
