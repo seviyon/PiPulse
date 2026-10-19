@@ -28,7 +28,8 @@ import { meterMax } from './now/status.js';
 import { HistoryPage } from './history/history-page.js';
 import { historyOnly } from './history/history.js';
 import { routeHash, useRoute } from './router.js';
-import { StatusIcon, Tile } from './now/tile.js';
+import { StatusIcon } from './core/status-icon.js';
+import { Tile } from './now/tile.js';
 import type { Alert, Config, DeviceInfo, Rule, Sample, UpdatesView } from './core/types.js';
 
 /** Node's process.platform values, as people say them. */

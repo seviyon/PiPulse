@@ -15,7 +15,7 @@ import { AboutSection } from './about.js';
 import { CertificateSection } from './certificate.js';
 import { NotificationsSection } from './notifications.js';
 import { SignIn } from '../sign-in.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { Resolution } from '../core/types.js';
 
 type Draft = Record<Resolution, string>;

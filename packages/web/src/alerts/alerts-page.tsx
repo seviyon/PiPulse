@@ -3,7 +3,7 @@ import { rangeCovering, worstAlert } from './alerts.js';
 import { formatDateTime, formatUptime, formatValue } from '../core/format.js';
 import { routeHash } from '../router.js';
 import { RulesSection } from './rules-editor.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { Alert, Config, PluginInfo, Rule } from '../core/types.js';
 import { apiFetch, HttpError, sendJson, type Session } from '../core/api.js';
 

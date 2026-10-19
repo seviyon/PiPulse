@@ -13,7 +13,7 @@ import {
   type RuleDraft
 } from './rule-form.js';
 import { routeHash } from '../router.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { PluginInfo, Rule, RuleEntry, RuleKind } from '../core/types.js';
 
 const KIND_LABELS: Record<RuleKind, string> = {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson, type Session } from '../core/api.js';
 import { compactIp, formatDateYear } from '../core/format.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { Config, TlsView } from '../core/types.js';
 
 const DAY_MS = 86_400_000;

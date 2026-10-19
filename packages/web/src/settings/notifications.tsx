@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson } from '../core/api.js';
 import { formatDateTime } from '../core/format.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { WebhookStatus } from '../core/types.js';
 
 type Loaded =
