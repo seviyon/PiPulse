@@ -1,5 +1,11 @@
 import { parseArgs } from 'node:util';
-import { ANCHOR_HOLD_MS, aheadText, judgeClock, readAnchor, writeAnchor } from '../ca/clock-anchor.js';
+import {
+  ANCHOR_HOLD_MS,
+  aheadText,
+  judgeClock,
+  readAnchor,
+  writeAnchor
+} from '../ca/clock-anchor.js';
 import { opensslVersion } from '../ca/issue.js';
 import { leafNames } from '../ca/constraints.js';
 import { pathExists, removeTree } from '../common/files.js';

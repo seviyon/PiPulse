@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // ever be inside at once. Separate processes are the point: breaking a stale lock is a run of
 // synchronous syscalls, so a race in it cannot show inside one.
 const script = fileURLToPath(new URL('./lock-stress.mjs', import.meta.url));
-const built = existsSync(fileURLToPath(new URL('../dist/lock.js', import.meta.url)));
+const built = existsSync(fileURLToPath(new URL('../dist/ca/lock.js', import.meta.url)));
 
 const run = (workers: number, seconds: number, stale: boolean, leftovers = false) => {
   const result = spawnSync(process.execPath, [script, String(workers), String(seconds)], {

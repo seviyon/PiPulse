@@ -4,7 +4,12 @@ import { parseArgs } from 'node:util';
 import { dbPathOf, type StateMode } from '../settings/config.js';
 import { opensslVersion } from '../ca/issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
-import { buildConstraints, checkSubnet, consequenceText, subnetWarning } from '../ca/constraints.js';
+import {
+  buildConstraints,
+  checkSubnet,
+  consequenceText,
+  subnetWarning
+} from '../ca/constraints.js';
 import { removeTree } from '../common/files.js';
 import { runTransaction } from '../ca/journal.js';
 import { listBackups, paths, pub, readState, writeState } from '../ca/layout.js';

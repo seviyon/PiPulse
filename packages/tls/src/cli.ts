@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { networkInterfaces, uptime } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
-import { UsageError, nativeLayoutProblem, operatorConfigured, type Context } from './cli/cli-common.js';
+import {
+  UsageError,
+  nativeLayoutProblem,
+  operatorConfigured,
+  type Context
+} from './cli/cli-common.js';
 import { readClock } from './settings/clock.js';
 import { newCa, restoreCa } from './cli/cmd-ca.js';
 import { exportCa } from './cli/cmd-export.js';
@@ -13,7 +18,11 @@ import { hostName } from './common/hostname.js';
 import { recordRenewLockFailure, renew } from './cli/cmd-renew.js';
 import { status } from './cli/cmd-status.js';
 import { DEFAULT_TIMESYNC_DIR, DEFAULT_TLS_DIR } from './settings/config.js';
-import { candidateSubnet, defaultRouteAddresses, defaultRouteInterfaces } from './ca/constraints.js';
+import {
+  candidateSubnet,
+  defaultRouteAddresses,
+  defaultRouteInterfaces
+} from './ca/constraints.js';
 import { settingsEnv } from './common/envfile.js';
 import { OPENSSL } from './ca/issue.js';
 import { LOCK_WAIT_MS, LockError, withLock } from './ca/lock.js';
