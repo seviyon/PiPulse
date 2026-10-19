@@ -15,13 +15,6 @@ function fail(error: unknown): never {
   process.exit(1);
 }
 
-let running: RunningServer;
-try {
-  running = await startServer(loadConfig(process.env));
-} catch (error) {
-  fail(error);
-}
-
 let shuttingDown = false;
 async function shutdown(): Promise<void> {
   // Our handlers replace Node's default terminate-on-signal, so a second
@@ -31,7 +24,7 @@ async function shutdown(): Promise<void> {
     process.exit(1);
   }
   shuttingDown = true;
-  const { drained } = await running.stop();
+  const { drained } = await (await starting).stop();
   if (!drained) {
     console.error(
       `[pipulse] collections still running after ${SHUTDOWN_TIMEOUT_MS} ms, exiting without them`
@@ -46,3 +39,16 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     void shutdown();
   });
 }
+
+// The signal handlers are installed before startup begins (startServer opens the database
+// synchronously, so they must already be there), and shutdown() waits for the start: a
+// SIGTERM from systemd or `docker stop` while the server is still opening its database or binding
+// its port waits for the start to finish and then stops cleanly, instead of killing the process
+// with Node's default handler (no drain, no db.close).
+const starting: Promise<RunningServer> = (async () => {
+  try {
+    return await startServer(loadConfig(process.env));
+  } catch (error) {
+    return fail(error);
+  }
+})();
