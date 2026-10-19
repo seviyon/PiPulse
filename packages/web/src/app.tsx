@@ -138,7 +138,7 @@ export function App() {
    * Neither the Pi's nor the viewer's wall clock is involved, so a clock
    * correction on either side can't skew it.
    */
-  const uptimeAnchor = useRef<{ uptimeMs: number; at: number }>();
+  const uptimeAnchor = useRef<{ uptimeMs: number; at: number } | undefined>(undefined);
   const now = useNow(1000) + clockOffset.current;
   const route = useRoute();
   /** Server time when the config arrived; tiles still empty well after it point at a missing sensor. */
