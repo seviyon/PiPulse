@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { PiPulseDb } from '@pipulse/storage';
 import {
   acknowledgeAlert,
+  listAlerts,
   RULE_ID_TAKEN,
   type Alert,
   type Rule,
@@ -23,6 +24,17 @@ const RULE_ID = /^[a-z][a-z0-9_]*$/;
 /** A rule is a few hundred bytes; this leaves room for a long message. */
 const RULE_BODY_LIMIT = 4096;
 
+const alertsQuerySchema = {
+  type: 'object',
+  properties: {
+    state: { type: 'string', enum: ['active', 'cleared', 'all'] },
+    from: { type: 'integer', minimum: 0 },
+    to: { type: 'integer', minimum: 0 },
+    limit: { type: 'integer', minimum: 1, maximum: 1000 }
+  },
+  additionalProperties: false
+} as const;
+
 /**
  * Rule editing and acknowledging. Auth is decided by the one hook in
  * auth-routes.ts (every PUT, DELETE and POST here needs a session). The body
@@ -36,6 +48,27 @@ export function registerAlertRoutes(
   options: { rules?: AlertRulesOptions; publish(notice: Notice): void; now?: () => number }
 ): void {
   const now = options.now ?? Date.now;
+
+  app.get<{
+    Querystring: {
+      state?: 'active' | 'cleared' | 'all';
+      from?: number;
+      to?: number;
+      limit?: number;
+    };
+  }>('/api/alerts', { schema: { querystring: alertsQuerySchema } }, async (request, reply) => {
+    const to = request.query.to ?? Date.now();
+    const from = request.query.from ?? to - 30 * 24 * 60 * 60 * 1000;
+    if (from > to) {
+      return reply.status(400).send({ error: 'from must not be after to' });
+    }
+    return listAlerts(db, {
+      state: request.query.state ?? 'all',
+      from,
+      to,
+      limit: request.query.limit ?? 100
+    });
+  });
 
   app.post<{ Params: { id: number } }>(
     '/api/alerts/:id/acknowledge',

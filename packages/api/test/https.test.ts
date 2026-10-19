@@ -16,6 +16,7 @@ import {
 } from '@pipulse/tls';
 import { hashPassword, parsePasswordHash } from '../src/auth.js';
 import { buildServer, createLiveFeed } from '../src/index.js';
+import { answerPlainHttp } from '../src/plain-http.js';
 import { fixture, tempDir } from '../../tls/test/helpers.js';
 
 const ca = fixture('root-ca.crt');
@@ -116,6 +117,14 @@ describe('HTTPS server', () => {
     expect((await get(port, '/api/health')).headers['strict-transport-security']).toBe(
       'max-age=86400'
     );
+  });
+
+  it('answers a plain-HTTP client on the HTTPS port only when it serves HTTPS', async () => {
+    const plain = buildServer(db);
+    expect(plain.server.listeners('tlsClientError')).not.toContain(answerPlainHttp);
+    await plain.close();
+    await start();
+    expect(app!.server.listeners('tlsClientError')).toContain(answerPlainHttp);
   });
 
   it('never sends HSTS over plain HTTP, even when asked', async () => {

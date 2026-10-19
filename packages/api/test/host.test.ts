@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { connect, type AddressInfo } from 'node:net';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
@@ -164,6 +164,26 @@ describe('the Host check on every request', () => {
 
   it('refuses a request with no Host header at all', async () => {
     expect(await raw(['pi.example'], 'GET /api/config HTTP/1.0\r\n\r\n')).toMatch(/ 421 /);
+  });
+
+  it('keeps a plain connection open after refusing a name; only an upgrade is cut off', async () => {
+    const app = buildServer(db, { allowedHosts: ['pi.example'] });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const socket = connect((app.server.address() as AddressInfo).port, '127.0.0.1');
+      await once(socket, 'connect');
+      let received = '';
+      socket.on('data', (chunk: Buffer) => (received += chunk.toString()));
+      const request = 'GET /health HTTP/1.1\r\nHost: evil.example\r\n\r\n';
+      const refusals = () => received.match(/ 421 /g)?.length ?? 0;
+      socket.write(request);
+      await vi.waitFor(() => expect(refusals()).toBe(1));
+      socket.write(request); // the same connection still answers
+      await vi.waitFor(() => expect(refusals()).toBe(2));
+      socket.destroy();
+    } finally {
+      await app.close();
+    }
   });
 
   it('refuses a WebSocket upgrade for another name, and accepts one for a listed name', async () => {

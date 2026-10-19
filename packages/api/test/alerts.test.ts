@@ -58,6 +58,25 @@ describe('GET /api/alerts', () => {
   );
 });
 
+describe('GET /api/alerts, the window', () => {
+  it('says what is wrong with a window that ends before it starts', async () => {
+    const res = await buildServer(db).inject({ method: 'GET', url: '/api/alerts?from=5&to=1' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'from must not be after to' });
+  });
+
+  it('accepts a window of a single instant', async () => {
+    const found = raiseAlert(db, { ...alert, raisedAt: 5000 });
+    clearAlert(db, found.id, 5000, 'condition');
+    const res = await buildServer(db).inject({
+      method: 'GET',
+      url: '/api/alerts?from=5000&to=5000&state=cleared'
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().map((a: { id: number }) => a.id)).toEqual([found.id]);
+  });
+});
+
 describe('GET /api/config', () => {
   it('includes the effective rules', async () => {
     const rules = builtinRules(4);
