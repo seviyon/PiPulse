@@ -13,9 +13,9 @@ Run by a person. Nothing here touches `Io`. All paths are absolute.
    ```
    Everything passes in Chromium.
 3. **Break one thing at a time** on a scratch branch, watch the right test fail with a useful trace, then revert:
-   - `packages/web/src/live.ts`: set `FIRST_RETRY_MS` to `60000` → only `reconnect.e2e.ts` fails.
+   - `packages/web/src/core/live.ts`: set `FIRST_RETRY_MS` to `60000` → only `reconnect.e2e.ts` fails.
    - `packages/api/src/index.ts`: change the `4401` close code to `1000` → the read-protection test in `auth.e2e.ts` fails (and the `packages/api` unit tests).
-   - `packages/web/src/settings-page.tsx`: drop `disabled={deletes && !confirmed}` from Save → `settings.e2e.ts` fails.
+   - `packages/web/src/settings/settings-page.tsx`: drop `disabled={deletes && !confirmed}` from Save → `settings.e2e.ts` fails.
    - `e2e/src/harness/hook.ts`: in `resolve`, return `nextResolve(specifier, context)` unconditionally (drop the fake branch) → every test fails with "fake collector not loaded".
 4. **Repeat.** `cd /Users/seviyon/Repositories/PiPulse/e2e && npx playwright test --repeat-each=5` → no failure.
 5. **Greps and packaging.**

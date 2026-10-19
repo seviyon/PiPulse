@@ -1,4 +1,4 @@
-import { formatValue } from '../../../packages/web/src/format.js';
+import { formatValue } from '../../../packages/web/src/core/format.js';
 import { expect, signIn, test } from '../fixtures.js';
 
 // Runs only in the `chromium-https` project, the one project that skips certificate checks in

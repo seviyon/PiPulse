@@ -1,4 +1,4 @@
-import { formatValue } from '../../packages/web/src/format.js';
+import { formatValue } from '../../packages/web/src/core/format.js';
 import { expect, test } from './fixtures.js';
 
 interface Config {
@@ -27,7 +27,7 @@ test('the dashboard shows Reconnecting when the server stops and is Live again a
   server.setReadings({ cpu_load: 77 });
   await server.restart();
 
-  // Retries come after 1 s, 2 s, 4 s and so on, doubling to 30 s (packages/web/src/live.ts).
+  // Retries come after 1 s, 2 s, 4 s and so on, doubling to 30 s (packages/web/src/core/live.ts).
   await expect(page.getByRole('status')).toContainText('Live', { timeout: 15_000 });
   await expect(tile).toContainText(formatValue(77, cpu.unit).text);
   expect(navigations).toBe(0);

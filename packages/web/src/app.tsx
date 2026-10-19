@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './live.js';
-import { applyHistory, applySample, applySnapshot, emptyState, type LiveState } from './store.js';
-import { AlertsPage } from './alerts-page.js';
-import { SettingsPage } from './settings-page.js';
-import { UpdatesPage } from './updates-page.js';
-import { waitingCount } from './updates.js';
+import { connectLive, FIRST_RETRY_MS, MAX_RETRY_MS, type ConnectionStatus } from './core/live.js';
+import {
+  applyHistory,
+  applySample,
+  applySnapshot,
+  emptyState,
+  type LiveState
+} from './core/store.js';
+import { AlertsPage } from './alerts/alerts-page.js';
+import { SettingsPage } from './settings/settings-page.js';
+import { UpdatesPage } from './updates/updates-page.js';
+import { waitingCount } from './updates/updates.js';
 import {
   authEvents,
   getJson,
@@ -13,17 +19,17 @@ import {
   NO_SESSION,
   sendJson,
   type Session
-} from './api.js';
+} from './core/api.js';
 import { SignIn } from './sign-in.js';
-import { applyAlertEvent, unacknowledged, worstAlert } from './alerts.js';
+import { applyAlertEvent, unacknowledged, worstAlert } from './alerts/alerts.js';
 import { WEB_VERSION, staleDashboard } from './build.js';
-import { formatUptime } from './format.js';
-import { meterMax } from './status.js';
-import { HistoryPage } from './history-page.js';
-import { historyOnly } from './history.js';
+import { formatUptime } from './core/format.js';
+import { meterMax } from './now/status.js';
+import { HistoryPage } from './history/history-page.js';
+import { historyOnly } from './history/history.js';
 import { routeHash, useRoute } from './router.js';
-import { StatusIcon, Tile } from './tile.js';
-import type { Alert, Config, DeviceInfo, Rule, Sample, UpdatesView } from './types.js';
+import { StatusIcon, Tile } from './now/tile.js';
+import type { Alert, Config, DeviceInfo, Rule, Sample, UpdatesView } from './core/types.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {

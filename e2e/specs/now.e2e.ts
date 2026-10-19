@@ -1,5 +1,5 @@
-import { historyOnly } from '../../packages/web/src/history.js';
-import { formatValue } from '../../packages/web/src/format.js';
+import { historyOnly } from '../../packages/web/src/history/history.js';
+import { formatValue } from '../../packages/web/src/core/format.js';
 import { DEFAULT_READINGS } from '../src/harness/readings.js';
 import { expect, test } from './fixtures.js';
 
