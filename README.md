@@ -30,7 +30,7 @@ The original RPi-Monitor is a great idea that hasn't had a real release since 20
 - Live status dashboard (CPU load/frequency/voltage, memory, network throughput, disk/SD card usage, temperature)
 - Historical charts with zoom, backed by a real embedded database instead of fixed-size RRD files
 - Live updates over WebSocket instead of polling
-- Configurable alerting with hysteresis (raise/cancel thresholds), notifying over webhook (e.g. [Apprise](https://github.com/caronc/apprise)), shell command, or log
+- Configurable alerting with hysteresis (raise/cancel thresholds), notifying over webhook (e.g. [Apprise](https://github.com/caronc/apprise)); shell-command and log actions are not built yet
 - JSON export of current and historical metrics
 - Read-only mode for write-constrained storage (SD cards, etc.)
 - Both a native systemd service and an official Docker image
@@ -50,17 +50,17 @@ The original RPi-Monitor is a great idea that hasn't had a real release since 20
 
 | Layer | Choice | Version |
 | --- | --- | --- |
-| Runtime | Node.js | >=22.13.0 (needed for built-in `node:sqlite` without a flag) |
-| Language | TypeScript, end to end | 5.9.3 |
+| Runtime | Node.js | >=22.13.0 (needed for built-in `node:sqlite` without a flag); the packages and the Docker image bring their own: 22.23.3 on 32-bit ARM, 24.21.0 on 64-bit |
+| Language | TypeScript, end to end | 6.0.3 |
 | Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs | 5.33.13 |
 | Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode — no native module, no install step | Node built-in |
 | API | [Fastify](https://fastify.io/) (HTTP + WebSocket) | 5.12.5 |
-| Frontend | Preact + Vite (React-compatible, ~3 KB runtime) | Preact 10.29.8, Vite 8.3.0 |
-| Testing | Vitest (unit/integration today), Playwright Test (end-to-end, Chromium only, in CI) | Vitest 5.0.1, Playwright 1.64.0 |
-| Lint/format | ESLint (flat config) + Prettier | ESLint 10.11.0, Prettier 3.9.8 |
-| Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`) | — |
+| Frontend | Preact + Vite (React-compatible, ~3 KB runtime), [uPlot](https://github.com/leeoniya/uPlot) for the charts | Preact 11.0.1, Vite 8.3.0, uPlot 1.6.32 |
+| Testing | Vitest (unit and integration; happy-dom for the dashboard), Playwright Test (end-to-end, Chromium only, in CI), StrykerJS mutation testing (run by hand) | Vitest 5.0.5, Playwright 1.64.0 |
+| Lint/format | ESLint (flat config, typescript-eslint) + Prettier | ESLint 10.13.0, typescript-eslint 8.72.0, Prettier 3.9.10 |
+| Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`, on Debian 12, scanned for known vulnerabilities monthly and after each release) | — |
 
-Dependency versions above reflect the last verified clean install (`npm install`, 0 vulnerabilities); see `package.json`/`package-lock.json` for exact ranges.
+Dependency versions above are what `package-lock.json` resolved on 2026-10-19 (`npm ci`, `npm audit`: 0 vulnerabilities); Renovate keeps them current, so `package.json` and `package-lock.json` have the exact ranges. TypeScript stays on 6.x until `typescript-eslint` supports TypeScript 7.
 
 ## Install
 
