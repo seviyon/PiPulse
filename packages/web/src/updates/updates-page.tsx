@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { sendJson, type Session } from '../core/api.js';
 import { formatAge, formatDateTime } from '../core/format.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import type { UpdatesView } from '../core/types.js';
 import {
   DOCKER_COMMAND,

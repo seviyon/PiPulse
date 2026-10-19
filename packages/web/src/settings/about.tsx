@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson } from '../core/api.js';
-import { StatusIcon } from '../now/tile.js';
+import { StatusIcon } from '../core/status-icon.js';
 import { WEB_VERSION } from '../build.js';
 import type { Config } from '../core/types.js';
 
