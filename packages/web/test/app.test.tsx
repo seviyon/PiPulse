@@ -11,7 +11,7 @@ vi.mock('uplot', () => ({
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { App } from '../src/app.js';
-import type { Config, LiveMessage, Sample } from '../src/types.js';
+import type { Config, LiveMessage, Sample } from '../src/core/types.js';
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
