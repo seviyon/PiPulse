@@ -37,6 +37,10 @@ PIPULSE_DB_PATH=~/pipulse-data/pipulse.sqlite npm run start --workspace=packages
 
 > For dashboard development, run the server (`npm run dev`) and, in a second terminal, `npm run dev --workspace=packages/web`. Vite serves the dashboard on port 5173 and proxies `/api` and the WebSocket to the server (`PIPULSE_API`, default `http://localhost:8889`).
 
+## Naming tests
+
+A test file is named after the module it tests, so it sorts next to it: `lock.test.ts` for `src/lock.ts`, `cli-edges.test.ts` (or `lock-race.test.ts`) for a part of its behaviour that needs its own file, and `lock.mutation.test.ts` for the cases added to kill surviving mutants. Coverage is collected per package, so the tests for a module live in that module's package, never only in another one's.
+
 ## Mutation testing
 
 Coverage says which lines the tests ran; mutation testing says whether they would notice a change. [StrykerJS](https://stryker-mutator.io/) makes small edits to a source file (a `<` turned into `<=`, a condition forced to `true`, a string emptied), runs the tests for each edit, and reports the ones no test failed on ("survived").
