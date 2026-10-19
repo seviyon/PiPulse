@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer as createTcpServer } from 'node:net';
 import { get } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -459,6 +460,35 @@ describe('api server process, a port it cannot use', () => {
     const [code] = (await once(child, 'exit')) as [number | null];
     expect(code).toBe(1);
     expect(stderr).toContain('[pipulse] PIPULSE_PORT must be a port number from 0 to 65535');
+  });
+});
+
+describe('api server process, a port that is taken', () => {
+  it('prints the whole listen error, not a [pipulse] refusal line, and exits 1', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const holder = createTcpServer();
+    await new Promise<void>((resolve) => holder.listen(0, '127.0.0.1', resolve));
+    const taken = (holder.address() as { port: number }).port;
+    try {
+      const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+        env: {
+          ...process.env,
+          PIPULSE_DB_PATH: join(dir, 'pipulse.sqlite'),
+          PIPULSE_HOST: '127.0.0.1',
+          PIPULSE_PORT: String(taken),
+          PIPULSE_TLS: 'off'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      const [code] = (await once(child, 'exit')) as [number | null];
+      expect(code).toBe(1);
+      expect(stderr).toContain('EADDRINUSE');
+      expect(stderr.startsWith('[pipulse]')).toBe(false);
+    } finally {
+      holder.close();
+    }
   });
 });
 
