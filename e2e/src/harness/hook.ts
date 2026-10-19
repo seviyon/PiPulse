@@ -1,7 +1,11 @@
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { SERVER_JS } from './paths.js';
 
-const SERVER_URL = pathToFileURL(SERVER_JS).href;
+/** The api modules that import the two packages: `server.js` is only the entry, `runtime.js` wires them. */
+const SERVER_URLS: ReadonlySet<string> = new Set(
+  ['server.js', 'runtime.js'].map((file) => pathToFileURL(join(dirname(SERVER_JS), file)).href)
+);
 
 /** The two packages whose imports are swapped, and the module that stands in for each. */
 const FAKES: Readonly<Record<string, string>> = {
@@ -24,8 +28,8 @@ interface ModuleApi {
 
 /**
  * Redirects '@pipulse/collector' and '@pipulse/alerts' to the fakes, only for imports made by
- * the real packages/api/dist/server.js. The fakes import the real packages themselves; their
- * importer is not the server, so those imports resolve normally and nothing loops.
+ * the real packages/api/dist server.js and runtime.js. The fakes import the real packages
+ * themselves; their importer is not the server, so those imports resolve normally and nothing loops.
  */
 export function install(moduleApi: ModuleApi): void {
   if (typeof moduleApi.registerHooks !== 'function') {
@@ -34,7 +38,11 @@ export function install(moduleApi: ModuleApi): void {
   moduleApi.registerHooks({
     resolve(specifier, context, nextResolve) {
       const fake = FAKES[specifier];
-      if (fake !== undefined && context.parentURL === SERVER_URL) {
+      if (
+        fake !== undefined &&
+        context.parentURL !== undefined &&
+        SERVER_URLS.has(context.parentURL)
+      ) {
         return { url: fake, format: 'module', shortCircuit: true };
       }
       return nextResolve(specifier, context);
