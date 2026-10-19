@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { DatabaseSync } from 'node:sqlite';
 import { openDb, saveSettings } from '@pipulse/storage';
 import { SAVED_RULES_KEY } from '@pipulse/alerts';
 import { REFUSE_LINE } from '@pipulse/tls';
@@ -490,6 +491,39 @@ describe('api server process, a port that is taken', () => {
       holder.close();
     }
   });
+});
+
+describe('api server process, a signal while it is still starting', () => {
+  it('shuts down cleanly once started instead of being killed by the default handler', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'pipulse-api-'));
+    const dbPath = join(dir, 'pipulse.sqlite');
+    // Hold the database so the server's startup waits in openDb (it retries for a few seconds).
+    const holder = new DatabaseSync(dbPath);
+    holder.exec('BEGIN EXCLUSIVE');
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', serverPath], {
+      env: {
+        ...process.env,
+        PIPULSE_DB_PATH: dbPath,
+        PIPULSE_HOST: '127.0.0.1',
+        PIPULSE_PORT: '0',
+        PIPULSE_TLS: 'off'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    const exited = once(child, 'exit') as Promise<[number | null, NodeJS.Signals | null]>;
+    // Long enough for node to load the modules and register its handlers, short of the lock's end.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    child.kill('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    holder.exec('ROLLBACK');
+    holder.close();
+    const [code, signal] = await exited;
+    expect(signal).toBeNull();
+    expect(code).toBe(0);
+    expect(stdout).toContain('listening on'); // it finished starting, then stopped
+  }, 30000);
 });
 
 describe('api server process, PIPULSE_ALLOWED_HOSTS', () => {
