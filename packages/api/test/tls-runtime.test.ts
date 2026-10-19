@@ -34,6 +34,10 @@ vi.mock('@pipulse/tls', async (importOriginal) => {
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'pipulse-tlsrt-'));
+  // The fixture chain has no root in the trust store, so loading it warns "incomplete-chain" in
+  // nearly every test; the tests that assert on the output spy on the console themselves.
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
