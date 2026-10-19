@@ -42,4 +42,64 @@ describe('hostOverrides', () => {
     mkdirSync(join(root, 'model')); // another
     expect(hostOverrides(root)).toEqual({});
   });
+
+  describe('PRETTY_NAME as os-release writes it', () => {
+    const osFor = (line: string) => {
+      const root = mkdtempSync(join(tmpdir(), 'pp-host-'));
+      mkdirSync(join(root, 'etc'));
+      writeFileSync(join(root, 'etc/os-release'), `NAME=x\n${line}\nID=x\n`);
+      return hostOverrides(root).os;
+    };
+
+    it.each([
+      [
+        'double-quoted',
+        'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"',
+        'Debian GNU/Linux 12 (bookworm)'
+      ],
+      ['single-quoted', "PRETTY_NAME='Debian GNU/Linux 12'", 'Debian GNU/Linux 12'],
+      ['single-quoted with a double quote inside', `PRETTY_NAME='The "Pi" OS'`, 'The "Pi" OS'],
+      [
+        'single-quoted, backslashes kept as they are',
+        String.raw`PRETTY_NAME='a\nb\"c'`,
+        String.raw`a\nb\"c`
+      ],
+      ['with an escaped double quote', String.raw`PRETTY_NAME="The \"Pi\" OS"`, 'The "Pi" OS'],
+      [
+        'with escaped backslash, dollar and backtick',
+        String.raw`PRETTY_NAME="a\\b\$c\`d"`,
+        'a\\b$c`d'
+      ],
+      [
+        'with another backslash kept as it is (as the shell does)',
+        String.raw`PRETTY_NAME="a\qb"`,
+        String.raw`a\qb`
+      ],
+      ['unquoted', 'PRETTY_NAME=Raspbian', 'Raspbian'],
+      ['unquoted with spaces (older files)', 'PRETTY_NAME=Debian 12', 'Debian 12'],
+      ['unquoted with an escaped space', String.raw`PRETTY_NAME=Debian\ 12`, 'Debian 12'],
+      ['unquoted, a # inside the word is part of it', 'PRETTY_NAME=Pi#4', 'Pi#4'],
+      ['unquoted, followed by a comment after two spaces', 'PRETTY_NAME=Raspbian  # x', 'Raspbian'],
+      [
+        'unquoted, followed by a long comment',
+        'PRETTY_NAME=Raspbian # a longer comment',
+        'Raspbian'
+      ],
+      ['unquoted, with blanks after it', 'PRETTY_NAME=Raspbian   ', 'Raspbian'],
+      ['followed by a comment', 'PRETTY_NAME="Debian 12" # the name', 'Debian 12'],
+      ['single-quoted, followed by a comment', "PRETTY_NAME='Debian 12'  # x", 'Debian 12']
+    ])('reads a name that is %s', (_, line, expected) => {
+      expect(osFor(line)).toBe(expected);
+    });
+
+    it.each([
+      ['an unterminated double quote', 'PRETTY_NAME="Debian 12'],
+      ['an unterminated single quote', "PRETTY_NAME='Debian 12"],
+      ['text after the closing quote', 'PRETTY_NAME="a"b'],
+      ['text after a single-quoted value', "PRETTY_NAME='a'b"],
+      ['an empty value', "PRETTY_NAME=''"]
+    ])('leaves the OS out for %s', (_, line) => {
+      expect(osFor(line)).toBeUndefined();
+    });
+  });
 });

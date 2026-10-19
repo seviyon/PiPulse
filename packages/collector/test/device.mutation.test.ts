@@ -52,7 +52,6 @@ describe('hostOverrides reading', () => {
 
   it.each([
     ['unquoted', 'PRETTY_NAME=Debian 12\n', 'Debian 12'],
-    ['not closed', 'PRETTY_NAME="Debian 12\n', 'Debian 12'],
     ['on a later line', 'NAME="x"\nPRETTY_NAME="Debian 12"\nID=debian\n', 'Debian 12'],
     ['at the end, no newline', 'PRETTY_NAME="Debian 12"', 'Debian 12']
   ])('takes the name when it is %s', (_, osRelease, os) => {
@@ -63,6 +62,7 @@ describe('hostOverrides reading', () => {
     ['another key that ends in PRETTY_NAME', 'FAKE_PRETTY_NAME="wrong"\n'],
     ['text after the closing quote', 'PRETTY_NAME="a"b\n'],
     ['no such line', 'NAME="Debian"\n'],
+    ['a quote that is never closed', 'PRETTY_NAME="Debian 12\n'],
     ['an empty name', 'PRETTY_NAME=""\n']
   ])('leaves the OS out for %s', (_, osRelease) => {
     expect(hostOverrides(hostWith({ osRelease }))).toStrictEqual({});

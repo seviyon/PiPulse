@@ -31,6 +31,45 @@ function readText(path: string): string | undefined {
   }
 }
 
+/** The characters a backslash escapes inside double quotes in a shell-style assignment. */
+const DOUBLE_QUOTE_ESCAPES = new Set<string | undefined>(['"', '\\', '$', '`']);
+
+/**
+ * The value of a shell-style assignment's right-hand side as os-release(5) allows it: single
+ * quotes (literal), double quotes (a backslash escapes `"`, `\`, `$` and a backtick and is kept
+ * before anything else) or no quotes; only blanks and a `#` comment may follow. Undefined for
+ * anything else, such as a quote that is never closed or text after the closing quote.
+ */
+function osReleaseValue(raw: string): string | undefined {
+  const quote = raw[0];
+  if (quote !== '"' && quote !== "'") {
+    // Unquoted: older files leave the spaces of a name unquoted, so the rest of the line counts.
+    return raw.replace(/\s+#.*/, '').replace(/\\(.)/g, '$1');
+  }
+  let value = '';
+  for (let i = 1; i < raw.length; i++) {
+    const char = raw[i]!;
+    if (char === quote) {
+      const rest = raw.slice(i + 1);
+      return /^\s*(#.*)?$/.test(rest) ? value : undefined;
+    }
+    const next = raw[i + 1];
+    if (quote === '"' && char === '\\' && DOUBLE_QUOTE_ESCAPES.has(next)) {
+      value += next;
+      i++;
+    } else {
+      value += char;
+    }
+  }
+  return undefined;
+}
+
+/** The first PRETTY_NAME assignment of an os-release file, or undefined. */
+function prettyName(osRelease: string): string | undefined {
+  const raw = osRelease.match(/^PRETTY_NAME=(.*)/m)?.[1];
+  return raw === undefined ? undefined : osReleaseValue(raw.trim());
+}
+
 /**
  * The host's OS name and Pi model, read under `hostRoot` (a container mounts
  * the host's /etc/os-release and /proc/device-tree/model there). Missing
@@ -39,7 +78,7 @@ function readText(path: string): string | undefined {
 export function hostOverrides(hostRoot: string): { os?: string; model?: string } {
   const result: { os?: string; model?: string } = {};
   const osRelease = readText(join(hostRoot, 'etc/os-release'));
-  const pretty = osRelease?.match(/^PRETTY_NAME="?([^"\n]*)"?$/m)?.[1];
+  const pretty = osRelease === undefined ? undefined : prettyName(osRelease);
   if (pretty) result.os = pretty;
   const model = readText(join(hostRoot, 'model'))?.replace(/\0/g, '').trim();
   if (model) result.model = model;
