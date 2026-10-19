@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import type { CollectorPlugin } from './index.js';
+import type { CollectorPlugin } from './plugin.js';
 
 /** vcgencmd answers in milliseconds; a hung firmware call must not stall the scheduler slot forever. */
 const TIMEOUT_MS = 2000;
