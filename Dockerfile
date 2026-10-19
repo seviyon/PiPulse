@@ -12,9 +12,14 @@ RUN mkdir /app && cp package.json package-lock.json /app/ \
  && printf '{"version":"%s"}\n' "$VERSION" > /app/version.json
 
 FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+# upgrade: Debian's security fixes (the Node image is rebuilt on its own schedule and can lag
+# behind them, as perl-base did), so each release ships the fixes available on its build day.
+# npm, npx and corepack are removed: nothing in the image runs them, and npm's own bundled
+# packages are what vulnerability scans flag in the Node image.
 # openssl: the sidecar issues certificates with it. The pipulse ids are pinned so the
 # compose file's tmpfs options and existing volumes keep matching.
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/lib/node_modules/corepack /usr/local/bin/corepack \
  && groupadd --system --gid 999 pipulse && useradd --system --uid 999 --gid pipulse --home /data --shell /usr/sbin/nologin pipulse \
  && mkdir /data && chown pipulse:pipulse /data
 COPY --from=build /app /opt/pipulse/app
