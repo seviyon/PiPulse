@@ -14,6 +14,7 @@ id -nG pipulse | grep -qw video && ok 'in video group' || bad 'in video group'
 # systemd refuses to start a unit that names a missing group; the user's own groups
 # (video, when it exists) already apply, so the unit must not name any.
 ! grep -q '^SupplementaryGroups=' "$here/pipulse.service" && ok 'unit names no groups that may be missing' || bad 'unit names no groups that may be missing'
+grep -q '^LimitNOFILE=4096$' "$here/pipulse.service" && ok 'unit raises the open-files limit above the default 1024' || bad 'unit raises the open-files limit above the default 1024'
 [ "$(stat -c '%U:%G %a' /etc/pipulse)" = 'root:pipulse 750' ] && ok '/etc/pipulse mode' || bad '/etc/pipulse mode'
 [ "$(stat -c '%U:%G %a' /etc/pipulse/pipulse.env)" = 'root:pipulse 640' ] && ok 'env mode' || bad 'env mode'
 [ "$(stat -c '%U %a' /var/lib/pipulse)" = 'pipulse 700' ] && ok '/var/lib/pipulse mode' || bad '/var/lib/pipulse mode'

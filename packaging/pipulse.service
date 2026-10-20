@@ -22,6 +22,9 @@ RuntimeDirectoryMode=0750
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
+# The default soft limit is 1024: sockets, the database and every command the server starts use
+# descriptors, and the server holds at most 256 connections (DEFAULT_LIMITS in app.ts).
+LimitNOFILE=4096
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -33,6 +33,12 @@ export interface DeviceInfo {
 }
 
 export interface ServerOptions {
+  /** Limits on one client's connections and requests; see DEFAULT_LIMITS in app.ts (tests shrink them). */
+  limits?: Partial<{
+    requestTimeoutMs: number;
+    connectionTimeoutMs: number;
+    maxConnections: number;
+  }>;
   plugins?: PluginInfo[];
   device?: DeviceInfo;
   live?: LiveFeed;
