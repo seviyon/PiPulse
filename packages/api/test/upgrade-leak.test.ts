@@ -78,6 +78,24 @@ describe('a refused request that carries an Upgrade header', () => {
     expect(result.closed).toBe(true);
   });
 
+  it('has its connection closed when the Host name is refused (421)', async () => {
+    const result = await exchange(
+      { allowedHosts: ['pi.example'] },
+      `GET /api/live HTTP/1.1\r\nHost: evil.example\r\n${WS_HEADERS}\r\n`
+    );
+    expect(result.status).toMatch(/ 421 /);
+    expect(result.closed).toBe(true);
+  });
+
+  it('has its connection closed when no route matches (404)', async () => {
+    const result = await exchange(
+      {},
+      `GET /no/such/route HTTP/1.1\r\nHost: x\r\n${UPGRADE_HEADERS}\r\n`
+    );
+    expect(result.status).toMatch(/ 404 /);
+    expect(result.closed).toBe(true);
+  });
+
   it('still lets a real WebSocket upgrade through, and keeps it open', async () => {
     const result = await exchange(
       {},
