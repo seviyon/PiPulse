@@ -270,24 +270,43 @@ export function getSeries(
 }
 
 /**
- * Whether `metric` has more than MAX_POINTS rows at `resolution` in the
- * window. The inner LIMIT stops the primary-key scan at MAX_POINTS + 1, so
- * this costs at most that many index steps however large the table is.
+ * The most rolled-up rows one explicit `resolution=1m|1h|1d` request may ask for. The read is
+ * synchronous, so the process does nothing else while it builds the answer: at about 75 ms per
+ * 1000 rows on a Pi 2 (see MAX_RAW_ROWS), 10000 keeps the worst case under a second. It still
+ * holds a year of hourly rows (8760) and six days of 1-minute rows; a longer window has the
+ * coarser levels, or `auto`.
  */
-function tooManyPoints(
+export const MAX_SERIES_ROWS = 10_000;
+
+/**
+ * Whether `metric` has more than `max` rows at `resolution` in the window. The inner LIMIT stops
+ * the primary-key scan at `max + 1`, so this costs at most that many index steps however large the
+ * table is.
+ */
+export function seriesRowsExceed(
   db: DatabaseSync,
   metric: string,
   from: number,
   to: number,
-  resolution: Resolution
+  resolution: Resolution,
+  max: number
 ): boolean {
   const sql =
     resolution === 'raw'
       ? 'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? LIMIT ?)'
       : `SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics_rollup WHERE metric = ? AND resolution = '${resolution}' AND ts BETWEEN ? AND ? LIMIT ?)`;
-  const { n } = db.prepare(sql).get(metric, from, to, MAX_POINTS + 1) as { n: number };
-  return n > MAX_POINTS;
+  const { n } = db.prepare(sql).get(metric, from, to, max + 1) as { n: number };
+  return n > max;
 }
+
+/** Whether `metric` has more than MAX_POINTS rows at `resolution` in the window. */
+const tooManyPoints = (
+  db: DatabaseSync,
+  metric: string,
+  from: number,
+  to: number,
+  resolution: Resolution
+): boolean => seriesRowsExceed(db, metric, from, to, resolution, MAX_POINTS);
 
 /** The oldest timestamp `metric` has at any resolution, or undefined without data. */
 function oldestTs(db: DatabaseSync, metric: string): number | undefined {

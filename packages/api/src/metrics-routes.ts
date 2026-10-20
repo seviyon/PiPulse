@@ -5,8 +5,10 @@ import {
   getLatest,
   getSeries,
   MAX_RAW_ROWS,
+  MAX_SERIES_ROWS,
   policyOf,
   rawRowsExceed,
+  seriesRowsExceed,
   type PiPulseDb,
   type Resolution
 } from '@pipulse/storage';
@@ -14,6 +16,10 @@ import type { ServerOptions } from './options.js';
 
 /** What /history and raw /series answer (400) when a window holds more than MAX_RAW_ROWS readings. */
 const TOO_MANY_RAW = `That window holds more than ${MAX_RAW_ROWS} raw readings: ask for a shorter window, or resolution=1m, 1h or 1d (or auto).`;
+
+/** What /series answers (400) when a rolled-up window holds more than MAX_SERIES_ROWS points. */
+const tooManySeries = (resolution: string) =>
+  `That window holds more than ${MAX_SERIES_ROWS} points at resolution=${resolution}: ask for a shorter window, a coarser resolution (1h, 1d), or auto.`;
 
 interface HistoryQuery {
   from?: number;
@@ -90,6 +96,12 @@ export function registerMetricsRoutes(
           : requested;
       if (resolution === 'raw' && rawRowsExceed(db, request.params.id, from, to)) {
         return reply.status(400).send({ error: TOO_MANY_RAW });
+      }
+      if (
+        resolution !== 'raw' &&
+        seriesRowsExceed(db, request.params.id, from, to, resolution, MAX_SERIES_ROWS)
+      ) {
+        return reply.status(400).send({ error: tooManySeries(resolution) });
       }
       return { resolution, points: getSeries(db, request.params.id, from, to, resolution) };
     }
