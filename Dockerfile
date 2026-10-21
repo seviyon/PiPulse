@@ -1,5 +1,5 @@
 # Build once on the build machine's CPU: the output is plain JavaScript.
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4 AS build
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS build
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
@@ -11,7 +11,7 @@ RUN mkdir /app && cp package.json package-lock.json /app/ \
  && cd /app && npm ci --omit=dev --ignore-scripts --no-audit --no-fund && find node_modules -type d -empty -delete \
  && printf '{"version":"%s"}\n' "$VERSION" > /app/version.json
 
-FROM node:24-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4
+FROM node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205
 # upgrade: Debian's security fixes (the Node image is rebuilt on its own schedule and can lag
 # behind them, as perl-base did), so each release ships the fixes available on its build day.
 # npm, npx and corepack are removed: nothing in the image runs them, and npm's own bundled
