@@ -1,0 +1,60 @@
+Package: pipulse
+Architecture: arm64
+Version: 0.8.7
+Priority: optional
+Section: admin
+Maintainer: Andres <seviyon@users.noreply.github.com>
+Installed-Size: 154368
+Depends: adduser, libc6, libgcc-s1, libstdc++6, openssl
+Filename: pool/main/pipulse_0.8.7_arm64.deb
+Size: 31913416
+MD5sum: 8c63418374edaef3e7fa2e11e732b907
+SHA1: 6a7d855aacf9352ef5c2e83d30920accf26ce640
+SHA256: d06a9925bba537b912b031c65f06359298d534e56cdcb4f464724276c9b6bf24
+SHA512: c0d54da522f8dceb2eef081038bdcdda05ed90e72e17054addd25b538033d5f6f71e986ab5a0c0f8d7b193d4ea44bb29e6300281e733515963337550e143e4a4
+Homepage: https://github.com/seviyon/PiPulse
+Description: Raspberry Pi system monitor with a live web dashboard
+ PiPulse collects CPU, temperature, memory, disk and network readings into
+ SQLite, checks them against alert rules, sends webhook notifications and
+ serves a live dashboard and history charts. Includes its own Node.js.
+
+Package: pipulse
+Architecture: arm64
+Version: 0.8.8
+Priority: optional
+Section: admin
+Maintainer: Andres <seviyon@users.noreply.github.com>
+Installed-Size: 154368
+Depends: adduser, libc6, libgcc-s1, libstdc++6, openssl
+Filename: pool/main/pipulse_0.8.8_arm64.deb
+Size: 31910716
+MD5sum: 70bac5fe23b1cddbaaa34715377b59bc
+SHA1: f1a5ff49cd24c282ed1fba38b3a172754fa1dae8
+SHA256: 9f56b4a6cf0c09b34c531b00349eb9a18b6b7c854781072cd442f4f9e03824f9
+SHA512: 934986d1dfa8497b7aad7d09ef69f9ec980b8751017b77b446c9bf38a1caa6c063a24e250380d23d58fdcdb9a8a97de73f6e6ab0f5d51bc85e588105a41d5e8d
+Homepage: https://github.com/seviyon/PiPulse
+Description: Raspberry Pi system monitor with a live web dashboard
+ PiPulse collects CPU, temperature, memory, disk and network readings into
+ SQLite, checks them against alert rules, sends webhook notifications and
+ serves a live dashboard and history charts. Includes its own Node.js.
+
+Package: pipulse
+Architecture: arm64
+Version: 0.8.9
+Priority: optional
+Section: admin
+Maintainer: Andres <seviyon@users.noreply.github.com>
+Installed-Size: 154368
+Depends: adduser, libc6, libgcc-s1, libstdc++6, openssl
+Filename: pool/main/pipulse_0.8.9_arm64.deb
+Size: 31910432
+MD5sum: 0a3dfa0aae967134ef3f386c517813a3
+SHA1: ebdad18c0dea3b4b353fad01b4c99aab5033c6a8
+SHA256: 639745775bd61192d93ce5b483f66a7c60d2352bce34d85671878ddb1a9712a8
+SHA512: d5831dc777e974eeb6e5ab188cb5226a3b29306e980dd0c783a2a78bfe4be378f5c52553baf6d0a938ebfd05a4414b66034cb3d3589b6c8fc3aa4e6348a978c2
+Homepage: https://github.com/seviyon/PiPulse
+Description: Raspberry Pi system monitor with a live web dashboard
+ PiPulse collects CPU, temperature, memory, disk and network readings into
+ SQLite, checks them against alert rules, sends webhook notifications and
+ serves a live dashboard and history charts. Includes its own Node.js.
+
