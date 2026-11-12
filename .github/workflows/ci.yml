@@ -62,7 +62,7 @@ jobs:
     # Installs, upgrades, rolls back and removes PiPulse in a clean Debian container.
     runs-on: ubuntu-26.04
     container:
-      image: node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+      image: node:22-bookworm-slim@sha256:18052396bf1d0c6e0a8c58181b5c1457da19409efbd5032a3f4d86974e74d13c
       # The image is pulled before any step runs, so it logs in here (see the docker job).
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
