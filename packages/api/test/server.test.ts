@@ -554,7 +554,10 @@ describe('api server process, PIPULSE_ALLOWED_HOSTS', () => {
   it('answers 421 to a name that is not listed and serves a listed name and the address', async () => {
     const { child, collect, out } = await start('pi.example');
     child.stdout.on('data', collect);
-    await expect.poll(() => /listening on http:\/\/\S+/.exec(out())?.[0]).toBeTruthy();
+    // A real process: on a busy CI machine its start takes longer than expect.poll's 1 s default.
+    await expect
+      .poll(() => /listening on http:\/\/\S+/.exec(out())?.[0], { timeout: 20_000 })
+      .toBeTruthy();
     const base = /listening on (http:\/\/\S+)/.exec(out())![1]!;
     const port = new URL(base).port;
     const ask = (host: string) =>
@@ -574,7 +577,7 @@ describe('api server process, PIPULSE_ALLOWED_HOSTS', () => {
     expect(await ask(`evil.example:${port}`)).toBe(421);
     child.kill('SIGTERM');
     await once(child, 'exit');
-  });
+  }, 30_000);
 
   it('stops with one line naming the setting for an entry that is not a host name', async () => {
     const { child, err } = await start('*.lan');
