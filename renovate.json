@@ -46,8 +46,9 @@
       "groupName": "bundled Node (64-bit)"
     },
     {
-      "description": "Only updates that change what ships make a release: runtime dependencies (bundled into the app or the dashboard).",
+      "description": "Only updates that change what ships make a release: runtime dependencies (bundled into the app or the dashboard). Their ranges are carets, so a new version inside the range would never open a PR; update-lockfile opens a lockfile-only one.",
       "matchDepTypes": ["dependencies"],
+      "rangeStrategy": "update-lockfile",
       "addLabels": ["release:patch"],
       "minimumReleaseAge": "3 days"
     },
