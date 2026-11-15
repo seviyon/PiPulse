@@ -60,7 +60,7 @@ Do these once, before merging the Phase 6 PR.
    **Commit the public half too:** `gpg --export 'PiPulse apt repository' > packaging/apt-key.gpg`. `install.sh` trusts that key and nothing the apt site serves: the release stamps it into the installer (`packaging/stamp-installer.sh`), which writes it to `/usr/share/keyrings/pipulse.gpg` and verifies `SHA256SUMS.asc` with it. The `publish` job refuses to release if the secret key's fingerprint is not the one in `packaging/apt-key.gpg`. The current key is `8D7C 444E F948 DB10 BF46 F1D7 DC0C DCCD B605 4E4A` (expires 2029-09-28).
 
 7. **Keep the signing key and the apt branch out of reach (repository settings).**
-   - Settings → Environments → _New environment_ `release`, limited to the `main` branch (and ideally a required reviewer); move `APT_SIGNING_KEY` and `APT_SIGNING_PASSPHRASE` from repository secrets into it, then add `environment: release` to the `publish` job. Otherwise any workflow run on another branch (a Renovate PR runs its own copy of `release-dry-run.yml`; `workflow_dispatch` takes any branch) can read the key and publish a signed release.
+   - Settings → Environments → _New environment_ `release`, limited to the `main` branch (and ideally a required reviewer); `APT_SIGNING_KEY` and `APT_SIGNING_PASSPHRASE` live in it as environment secrets (not repository secrets), and the `publish` job declares `environment: release`. Otherwise any workflow run on another branch (a Renovate PR runs its own copy of `release-dry-run.yml`; `workflow_dispatch` takes any branch) can read the key and publish a signed release.
    - Settings → Rules → Rulesets: protect `gh-pages` (restrict who can push, and only the `publish` job's token). The apt repository is served from it.
 
 ## Rotating the apt key

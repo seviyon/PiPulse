@@ -139,6 +139,8 @@ jobs:
     # it signs and publishes the files the build job made.
     needs: [version, build, image]
     runs-on: ubuntu-26.04
+    # Secrets live in this environment, limited to main: no other branch can read the key.
+    environment: release
     permissions:
       contents: write
       packages: write
