@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@fastify/static": "10.1.10",
-    "@fastify/websocket": "11.3.1",
+    "@fastify/websocket": "11.3.7",
     "@pipulse/alerts": "*",
     "@pipulse/collector": "*",
     "@pipulse/notify": "*",
