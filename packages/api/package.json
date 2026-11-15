@@ -18,7 +18,7 @@
     "@pipulse/notify": "*",
     "@pipulse/storage": "*",
     "@pipulse/tls": "*",
-    "fastify": "5.12.5"
+    "fastify": "5.12.8"
   },
   "devDependencies": {
     "@types/ws": "8.18.1",
