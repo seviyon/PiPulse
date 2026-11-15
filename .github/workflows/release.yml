@@ -6,7 +6,11 @@ name: Release
 # happen in jobs without secrets or write access, and hand over only files.
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: it runs with the base branch (main) as its ref, which
+  # is what the release environment's branch rule checks. A plain pull_request run reports the
+  # PR's own branch (renovate/...), and the environment refuses it. The jobs only read the merged
+  # commit, never the PR's head, and only a merged PR with a release label gets past `version`.
+  pull_request_target:
     types: [closed]
     branches: [main]
   workflow_dispatch:
