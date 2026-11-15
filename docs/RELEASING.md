@@ -61,7 +61,8 @@ Do these once, before merging the Phase 6 PR.
 
 7. **Keep the signing key and the apt branch out of reach (repository settings).**
    - Settings → Environments → _New environment_ `release`, limited to the `main` branch (and ideally a required reviewer); `APT_SIGNING_KEY` and `APT_SIGNING_PASSPHRASE` live in it as environment secrets (not repository secrets), and the `publish` job declares `environment: release`. Otherwise any workflow run on another branch (a Renovate PR runs its own copy of `release-dry-run.yml`; `workflow_dispatch` takes any branch) can read the key and publish a signed release.
-   - Settings → Rules → Rulesets: protect `gh-pages` (restrict who can push, and only the `publish` job's token). The apt repository is served from it.
+   - `gh-pages`: the default workflow token is read-only and only `publish` has `contents: write`, and `publish` runs only in the `release` environment, so no run on another branch can push it. A ruleset on `gh-pages` is optional; if you add one, the `publish` job force-pushes the branch with the workflow token, so it must be allowed to bypass it.
+   - `release.yml` runs on `pull_request_target`, not `pull_request`: the environment's branch rule sees the PR's own branch under `pull_request` and refuses a Renovate merge.
 
 ## Rotating the apt key
 
