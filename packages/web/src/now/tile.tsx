@@ -85,10 +85,10 @@ export function Tile({
           <span class="value">{text}</span>
           <span class="unit">{unit}</span>
         </p>
-        {stale && <p class="note">No update since {formatAge(now - latest.ts)}</p>}
+        {stale && <p class="tile-note">No update since {formatAge(now - latest.ts)}</p>}
         {alert && (
           <p
-            class="note alert-line"
+            class="tile-note alert-line"
             data-severity={alert.severity}
             data-acknowledged={alert.acknowledgedAt ? 'true' : undefined}
           >
@@ -100,7 +100,7 @@ export function Tile({
       </div>
       <div class="tile-foot">
         {max !== undefined && showsShareOfMax(plugin.id) && (
-          <p class="note">
+          <p class="tile-note">
             {Math.round((latest.value / max) * 100)}% of {formatValue(max, plugin.unit).text}{' '}
             {formatValue(max, plugin.unit).unit}
           </p>
