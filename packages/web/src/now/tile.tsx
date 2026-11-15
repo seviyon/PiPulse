@@ -81,7 +81,7 @@ export function Tile({
         )}
       </div>
       <div>
-        <p class="reading">
+        <p class={isFlags ? 'reading reading-text' : 'reading'}>
           <span class="value">{text}</span>
           <span class="unit">{unit}</span>
         </p>

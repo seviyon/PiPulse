@@ -290,7 +290,9 @@ describe('status', () => {
     expect(text).toContain('IP access: not covered');
     expect(text).toContain('How to change scope: sudo pipulse tls new-ca --subnet 192.168.1.0/24');
     expect(text).toMatch(/names: io, io\.local, localhost, 127\.0\.0\.1, ::1/);
-    expect(text).toMatch(/valid \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d \(89 days left\)/);
+    // The test clock is fixed when the file loads, but openssl stamps the leaf with the real time
+    // it runs, which on a busy machine is seconds later: a fresh 90-day leaf reads 89 or 90.
+    expect(text).toMatch(/valid \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d \((89|90) days left\)/);
   });
 
   it('prints the fingerprint of ca.crt’s own bytes, and flags ca-meta.json describing another CA', async () => {
