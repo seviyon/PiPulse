@@ -60,6 +60,11 @@
       "description": "The Docker image's base (Node and Debian in the image).",
       "matchManagers": ["dockerfile"],
       "addLabels": ["release:patch"]
+    },
+    {
+      "description": "Every npm update waits 3 days after its release, dev dependencies included: they run in CI and build the dashboard, and most compromised releases are pulled within days. Not applied to Actions or Docker digests, which carry no release date.",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "3 days"
     }
   ],
   "customManagers": [
