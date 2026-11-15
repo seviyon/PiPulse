@@ -239,6 +239,13 @@ p {
   letter-spacing: -0.02em;
 }
 
+/* A reading that is words ("Since boot"), not a number: the numeric size would shout. */
+.reading-text .value {
+  font-size: 1.75rem;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
 .reading .unit {
   font-size: 1.125rem;
   font-weight: 600;
@@ -253,6 +260,11 @@ p {
 .tile-note {
   font-size: 0.875rem;
   color: var(--ink-3);
+}
+
+.status,
+.alert-line {
+  text-wrap: balance;
 }
 
 .waiting {
