@@ -8,6 +8,8 @@ export interface WebhookConfig {
   method: 'POST' | 'PUT';
   headers: Record<string, string>;
   body?: unknown;
+  /** What a recovery summary renders instead of `body`, when `body` makes no sense for it. */
+  summaryBody?: unknown;
   events: ('raised' | 'cleared')[];
   minSeverity: 'warning' | 'critical';
   timeoutMs: number;
@@ -71,6 +73,7 @@ const FIELDS = new Set([
   'method',
   'headers',
   'body',
+  'summaryBody',
   'events',
   'minSeverity',
   'timeout'
@@ -194,6 +197,16 @@ function parseWebhook(raw: unknown, where: string): WebhookConfig {
     }
   }
 
+  const summaryBody = r['summaryBody'];
+  if (summaryBody !== undefined) {
+    try {
+      checkTemplate(summaryBody);
+    } catch (error) {
+      if (error instanceof TemplateError) fail(`summaryBody: ${error.message}`);
+      throw error;
+    }
+  }
+
   const webhook: WebhookConfig = {
     id,
     url: url as string,
@@ -204,6 +217,7 @@ function parseWebhook(raw: unknown, where: string): WebhookConfig {
     timeoutMs
   };
   if (body !== undefined) webhook.body = body;
+  if (summaryBody !== undefined) webhook.summaryBody = summaryBody;
   return webhook;
 }
 
