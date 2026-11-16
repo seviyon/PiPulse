@@ -16,6 +16,54 @@ export interface AlertAction {
 
 const MAX_RESPONSE_BYTES = 1024;
 
+/** The longest a Retry-After can defer the next try (the sender applies it). */
+export const MAX_RETRY_AFTER_MS = 15 * 60_000;
+
+export type FailureKind = 'permanent' | 'retryable';
+
+/**
+ * A delivery that failed, and how to treat it. Anything an action rejects with that is
+ * not a DeliveryError is read as a retryable transport failure.
+ */
+export class DeliveryError extends Error {
+  readonly kind: FailureKind;
+  /** True when no HTTP answer came back (timeout, refused, DNS, TLS). */
+  readonly transport: boolean;
+  readonly retryAfterMs: number | null;
+  constructor(
+    message: string,
+    options: { kind: FailureKind; transport: boolean; retryAfterMs?: number | null }
+  ) {
+    super(message);
+    this.name = 'DeliveryError';
+    this.kind = options.kind;
+    this.transport = options.transport;
+    this.retryAfterMs = options.retryAfterMs ?? null;
+  }
+}
+
+/** Permanent: 3xx and 4xx except 408, 425, 429. Retryable: those three and 5xx. */
+export function classifyStatus(status: number): 'ok' | FailureKind {
+  if (status >= 200 && status < 300) return 'ok';
+  if (status === 408 || status === 425 || status === 429) return 'retryable';
+  if (status >= 300 && status < 500) return 'permanent';
+  return 'retryable';
+}
+
+/** Retry-After as milliseconds (whole seconds or an HTTP date); null when absent, past or not usable. */
+export function parseRetryAfter(value: string | null, nowMs: number): number | null {
+  const text = value?.trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text);
+    return seconds > 0 && Number.isSafeInteger(seconds * 1000) ? seconds * 1000 : null;
+  }
+  // Anything else must look like a date, not a number the date parser would guess at.
+  if (!/[A-Za-z]/.test(text) || /^[\d.+-]*e[\d+-]*$/i.test(text)) return null;
+  const at = Date.parse(text);
+  return Number.isNaN(at) || at <= nowMs ? null : at - nowMs;
+}
+
 /** Reads at most 1 KB of a response, so a huge or endless body can't hold the sender. */
 async function drain(response: Response): Promise<void> {
   const reader = response.body?.getReader();
@@ -61,7 +109,7 @@ export function createWebhookAction(
         // Not `{ cause: error }`: the raw undici error can carry the URL (credentials,
         // path, query) or a header value verbatim, and util.inspect prints it whole.
         // eslint-disable-next-line preserve-caught-error -- raw undici errors can carry the URL and header values
-        throw new Error(reasonOf(error, signal));
+        throw new DeliveryError(reasonOf(error, signal), { kind: 'retryable', transport: true });
       }
       try {
         await drain(response);
@@ -69,10 +117,17 @@ export function createWebhookAction(
         // The status is what matters; a broken body after it doesn't change it.
       }
       // A 2xx status counts as delivered even if the body then stalls or breaks (deliberate).
-      if (response.status >= 300 && response.status < 400)
-        throw new Error(`redirect (HTTP ${response.status})`);
-      if (response.status < 200 || response.status >= 300)
-        throw new Error(`HTTP ${response.status}`);
+      const outcome = classifyStatus(response.status);
+      if (outcome === 'ok') return;
+      const message =
+        response.status >= 300 && response.status < 400
+          ? `redirect (HTTP ${response.status})`
+          : `HTTP ${response.status}`;
+      const retryAfterMs =
+        response.status === 429 || response.status === 503
+          ? parseRetryAfter(response.headers.get('retry-after'), Date.now())
+          : null;
+      throw new DeliveryError(message, { kind: outcome, transport: false, retryAfterMs });
     }
   };
 }
