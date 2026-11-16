@@ -193,18 +193,19 @@ describe('the probe, when the endpoint does not take it', () => {
     expect(hasUnsummarized(db, 'a')).toBe(false);
   });
 
-  it('hands the counts to the ordinary path when the endpoint answers with a status that can be retried', async () => {
+  it('keeps waiting when the endpoint answers with a status that can be retried: one request per slot', async () => {
     refused();
     const { action, calls } = scripted([{ message: 'HTTP 503', kind: 'retryable' }, 'ok']);
     start(action);
     await wait(150);
-    expect(calls).toHaveLength(2); // the probe that got a 503, then the summary row compaction queued
+    expect(calls).toHaveLength(1); // no second request a moment later
+    expect(getState(db, 'a')).toMatchObject({ needsAttention: true, nextProbeAt: wall + 5 * MIN });
+    expect(hasUnsummarized(db, 'a')).toBe(true);
+    await advance(5 * MIN);
+    expect(calls).toHaveLength(2);
+    expect(summarySent(calls[1]!)).toContain('2 notifications were rejected by the endpoint');
     expect(getState(db, 'a')).toMatchObject({ needsAttention: false, degradedSince: null });
     expect(hasUnsummarized(db, 'a')).toBe(false);
-    expect(summarySent(calls[1]!)).toContain('2 notifications were rejected by the endpoint');
-    expect(
-      db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE status = 'pending'").get()
-    ).toEqual({ n: 0 });
   });
 
   it('keeps the counts when a shutdown cuts the probe short, and does not try again at once', async () => {
@@ -238,6 +239,28 @@ describe('the probe and the queue', () => {
     expect(JSON.parse(calls[0]!)).toMatchObject({ event: 'raised' });
     expect(calls).toHaveLength(2); // then the summary, through the ordinary path
     expect(hasUnsummarized(db, 'a')).toBe(false);
+  });
+
+  it('does not probe in the same pass that refused the last queued row: that refusal took the slot', async () => {
+    insertNotification(db, {
+      webhookId: 'a',
+      alertId: 1,
+      event: 'raised',
+      ruleId: 'r',
+      metric: 'm',
+      payload: JSON.stringify({ event: 'raised' }),
+      nextAt: wall,
+      createdAt: wall
+    });
+    const { action, calls } = scripted([refusedOnce, 'ok']);
+    start(action);
+    await wait(150);
+    expect(calls).toHaveLength(1); // the row, refused; its counts wait, no second request
+    expect(getState(db, 'a')).toMatchObject({ needsAttention: true, nextProbeAt: wall + 5 * MIN });
+    expect(hasUnsummarized(db, 'a')).toBe(true);
+    await advance(5 * MIN);
+    expect(calls).toHaveLength(2); // the probe, with the summary
+    expect(summarySent(calls[1]!)).toContain('1 notification was rejected by the endpoint');
   });
 
   it('works for a webhook that has a body template, rendering the summary through it', async () => {

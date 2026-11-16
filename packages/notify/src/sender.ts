@@ -150,10 +150,10 @@ export async function sendNext(
  * A webhook that was refused outright has nothing queued to try the endpoint with: its counts
  * wait for the next alert. This tries the endpoint with the recovery summary itself, once per
  * probe slot, and spends the counts only when the endpoint accepts it (a probe is not a
- * notification: a refusal of it is not counted, and nothing is queued for it). A transient HTTP
- * answer ends the refusal and leaves the counts to the ordinary path, which queues the summary
- * with its usual retries; a permanent refusal or a transport failure keeps waiting.
- * Resolves to whether the summary was delivered.
+ * notification: a refusal of it is not counted, and nothing is queued for it). Any failure keeps
+ * waiting for the next slot: a permanent refusal updates the reason, a status that can be
+ * retried (honouring Retry-After) and a transport failure leave it as it was. Only an
+ * accepted summary ends the refusal. Resolves to whether the summary was delivered.
  */
 export async function sendProbe(
   db: PiPulseDb,
@@ -172,10 +172,11 @@ export async function sendProbe(
     }
     if (state.nextProbeAt > t) return false;
   }
+  // The slot is taken before anything else, as for a row: a crash, an abort or a summary that
+  // cannot be rendered cannot allow another try before the next slot.
+  setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
   const payload = build(t);
   if (payload === undefined) return false;
-  // The slot is taken before the request, as for a row: a crash or an abort cannot allow a retry at once.
-  setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
   const signals = [AbortSignal.timeout(timeoutMs)];
   if (options.stopSignal) signals.push(options.stopSignal);
   try {
@@ -194,10 +195,18 @@ export async function sendProbe(
     const at = options.now();
     atomically(db, () => {
       setDegraded(db, action.id, at);
-      if (failure && !failure.transport && failure.kind === 'retryable')
-        clearNeedsAttention(db, action.id);
       if (failure?.kind === 'permanent')
         setNeedsAttention(db, action.id, reason, at + PROBE_INTERVAL_MS);
+      // A status that can be retried (a 503, a 429) is the endpoint's own answer, not a refusal,
+      // but it did not take the summary: keep waiting, for as long as it asked (never less
+      // than a slot, never more than 15 minutes).
+      else if (failure && !failure.transport) {
+        const wait = Math.min(
+          Math.max(PROBE_INTERVAL_MS, failure.retryAfterMs ?? 0),
+          MAX_RETRY_AFTER_MS
+        );
+        setNextProbeAt(db, action.id, at + wait);
+      }
     });
     return false;
   }

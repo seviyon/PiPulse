@@ -88,12 +88,24 @@ describe('sendProbe', () => {
     expect(await probe(a, { now: () => T + PROBE_INTERVAL_MS })).toBe(true);
   });
 
-  it('does nothing when there is nothing to say', async () => {
+  it('takes the slot even when there turns out to be nothing to say, or the summary cannot be built', async () => {
     refused(T - 1000);
     const a = action();
     expect(await probe(a, { make: () => undefined })).toBe(false);
     expect(a.calls).toEqual([]);
-    expect(getState(db, 'a').nextProbeAt).toBe(T - 1000); // the slot was not taken
+    expect(getState(db, 'a').nextProbeAt).toBe(T + PROBE_INTERVAL_MS);
+
+    // A summary that cannot be rendered is tried once per slot, not on every wake.
+    await expect(
+      probe(a, {
+        now: () => T + PROBE_INTERVAL_MS,
+        make: () => {
+          throw new RangeError('cannot render');
+        }
+      })
+    ).rejects.toThrow(RangeError);
+    expect(getState(db, 'a').nextProbeAt).toBe(T + 2 * PROBE_INTERVAL_MS);
+    expect(a.calls).toEqual([]);
   });
 
   it('gives up on a request that takes longer than its timeout, and takes the slot', async () => {
@@ -141,10 +153,27 @@ describe('sendProbe', () => {
     expect(getState(db, 'a').counts.rejected).toBe(2); // a probe is not counted
   });
 
-  it('ends the refusal on a status that can be retried, and keeps the counts for the ordinary path', async () => {
+  it('keeps waiting through a status that can be retried, and honours Retry-After up to 15 minutes', async () => {
     refused();
-    expect(await probe(action(retryable('HTTP 503')))).toBe(false);
-    expect(getState(db, 'a')).toMatchObject({ needsAttention: false, degradedSince: T });
+    const answer = (retryAfterMs: number | null) =>
+      new DeliveryError('HTTP 429', { kind: 'retryable', transport: false, retryAfterMs });
+    expect(await probe(action(answer(null)))).toBe(false);
+    expect(getState(db, 'a')).toMatchObject({
+      needsAttention: true,
+      reason: 'HTTP 401',
+      degradedSince: T,
+      nextProbeAt: T + PROBE_INTERVAL_MS
+    });
+    expect(await probe(action(answer(2 * 60_000)), { now: () => T + PROBE_INTERVAL_MS })).toBe(
+      false
+    );
+    expect(getState(db, 'a').nextProbeAt).toBe(T + 2 * PROBE_INTERVAL_MS); // never sooner than a slot
+    const later = T + 2 * PROBE_INTERVAL_MS;
+    expect(await probe(action(answer(10 * 60_000)), { now: () => later })).toBe(false);
+    expect(getState(db, 'a').nextProbeAt).toBe(later + 10 * 60_000);
+    const last = later + 10 * 60_000;
+    expect(await probe(action(answer(60 * 60_000)), { now: () => last })).toBe(false);
+    expect(getState(db, 'a').nextProbeAt).toBe(last + 15 * 60_000); // capped
     expect(hasUnsummarized(db, 'a')).toBe(true);
   });
 
