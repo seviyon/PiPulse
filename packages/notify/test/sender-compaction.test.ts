@@ -255,3 +255,48 @@ describe('status', () => {
     });
   });
 });
+
+describe('when compaction runs', () => {
+  it('compacts a healthy webhook whose queue is over the cap', async () => {
+    for (let i = 0; i < 51; i++) episode('a', 3 * MIN, 1 * MIN);
+    start([recorder('a', true).action]);
+    await wait();
+    expect(summaryRows()).toHaveLength(1);
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE event <> 'summary'").get()
+    ).toEqual({ n: 0 });
+  });
+
+  it('leaves a healthy webhook with exactly 100 waiting rows alone, however old they are', async () => {
+    for (let i = 0; i < 50; i++) episode('a', 30 * MIN, 20 * MIN);
+    const good = recorder();
+    start([good.action]);
+    await wait(200);
+    expect(good.payloads).toHaveLength(100);
+    expect(summaryRows()).toEqual([]);
+  });
+
+  it('logs a compaction that fails and still delivers what is queued', async () => {
+    episode('a', 30 * MIN, 20 * MIN);
+    setDegraded(db, 'a', wall - 40 * MIN);
+    db.exec(
+      "CREATE TRIGGER boom BEFORE INSERT ON notifications WHEN NEW.event = 'summary' BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    );
+    const logs: string[] = [];
+    const good = recorder();
+    const n = startNotifications(db, {
+      webhooks: [hook()],
+      hostname: 'Io',
+      metrics: [],
+      now: () => wall,
+      monotonic: () => mono,
+      intervalMs: 20,
+      actions: [good.action],
+      log: (message) => logs.push(message)
+    });
+    started.push(n);
+    await wait();
+    expect(logs.some((line) => /^notification compaction failed: .*boom/.test(line))).toBe(true);
+    expect(good.payloads.map((p) => JSON.parse(p).event)).toEqual(['raised', 'cleared']);
+  });
+});

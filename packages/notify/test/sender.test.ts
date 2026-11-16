@@ -11,6 +11,7 @@ import {
 } from '../src/sender.js';
 import { DeliveryError, MAX_RETRY_AFTER_MS, type AlertAction } from '../src/action.js';
 import { getState } from '../src/state.js';
+import { shiftPending } from '../src/outbox.js';
 
 let db: PiPulseDb;
 let now: number;
@@ -107,7 +108,7 @@ describe('sendDue', () => {
     const a = action('a', ['HTTP 500', true]);
     await run([a]); // next_at = now + 5 s
     now -= 3 * 60 * 60_000; // clock jumps back 3 h
-    await run([a]); // next_at is > 5 min ahead: pulled to now + 5 min
+    expect(await run([a])).toBe(0); // next_at is far ahead: pulled in, and nothing is sent
     expect(headOf(db, 'a')!.nextAt).toBe(now + MAX_RETRY_AFTER_MS);
     now += MAX_RETRY_AFTER_MS;
     expect(await run([a])).toBe(1);
@@ -676,7 +677,7 @@ describe('attempts, failure kinds and schedules', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     stop.abort();
-    await pending;
+    expect(await pending).toBe(0);
     expect(rowOf()).toMatchObject({
       status: 'pending',
       attempts: 0,
@@ -693,5 +694,43 @@ describe('attempts, failure kinds and schedules', () => {
       run([typedAction('a', [{ message: 'HTTP 401', kind: 'permanent' }])])
     ).rejects.toThrow();
     expect(rowOf()).toMatchObject({ status: 'pending', failedKind: null });
+  });
+
+  it('has nothing to do for a webhook with an empty queue', async () => {
+    await expect(run([typedAction('a', ['ok'])])).resolves.toBe(0);
+  });
+
+  it('leaves the probe time alone while the webhook does not need attention', async () => {
+    add('a');
+    // A transport failure, because an HTTP answer would clear the probe time by itself.
+    await run([typedAction('a', [{ message: 'timeout', kind: 'retryable', transport: true }])]);
+    expect(getState(db, 'a').nextProbeAt).toBeNull();
+  });
+
+  it('backs off 5 s, then 10 s, across two failures of the same row', async () => {
+    add('a');
+    const a = typedAction('a', [
+      { message: 'HTTP 503', kind: 'retryable' },
+      { message: 'HTTP 503', kind: 'retryable' }
+    ]);
+    await run([a]);
+    now += 5_000;
+    await run([a]);
+    expect(rowOf()).toMatchObject({ attempts: 2, nextAt: now + 10_000 });
+  });
+
+  it('measures the six hours on the row as the clock jump during the attempt left it', async () => {
+    add('a');
+    const jumping: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      async deliver() {
+        shiftPending(db, 6 * 60 * 60_000); // NTP moves the clock 6 h ahead while the request is out
+        now += 6 * 60 * 60_000;
+        throw new DeliveryError('HTTP 503', { kind: 'retryable', transport: false });
+      }
+    };
+    await run([jumping]);
+    expect(rowOf()).toMatchObject({ status: 'pending', failedKind: null, attempts: 1 });
   });
 });

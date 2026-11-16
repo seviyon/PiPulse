@@ -3,7 +3,7 @@ import { openDb, type PiPulseDb } from '@pipulse/storage';
 import { DeliveryError, type AlertAction } from '../src/action.js';
 import { insertNotification, shiftPending } from '../src/outbox.js';
 import { PROBE_INTERVAL_MS, sendDue } from '../src/sender.js';
-import { getState, setNeedsAttention } from '../src/state.js';
+import { getState, setNeedsAttention, setNextProbeAt } from '../src/state.js';
 
 let db: PiPulseDb;
 let now: number;
@@ -194,6 +194,15 @@ describe('across a wall-clock jump', () => {
     expect(await run(ok.action)).toBe(0);
     expect(getState(db, 'a').nextProbeAt).toBe(now + PROBE_INTERVAL_MS);
     now += PROBE_INTERVAL_MS;
+    expect(await run(ok.action)).toBe(1);
+  });
+});
+
+describe('a probe time without needs attention', () => {
+  it('does not hold a row back', async () => {
+    add();
+    setNextProbeAt(db, 'a', now + 3 * 60_000);
+    const ok = scripted(['ok']);
     expect(await run(ok.action)).toBe(1);
   });
 });

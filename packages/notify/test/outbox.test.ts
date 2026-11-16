@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
+import { addCount, getState, setDegraded, setNeedsAttention } from '../src/state.js';
 import {
   deletePendingClears,
   failRemovedWebhooks,
@@ -150,5 +151,24 @@ describe('started rows, failed kinds and head order', () => {
     const after = rowsOf() as { id: number; startedAt: number }[];
     expect(after.find((r) => r.id === a!.id)!.startedAt).toBe(1150);
     expect(after.find((r) => r.id === b!.id)!.startedAt).toBe(240);
+  });
+});
+
+describe('outbox and webhook state together', () => {
+  it('shifts the webhook state with the pending rows on a clock jump', () => {
+    setDegraded(db, 'apprise', 1000);
+    setNeedsAttention(db, 'apprise', 'HTTP 401', 2000);
+    shiftPending(db, 500);
+    expect(getState(db, 'apprise')).toMatchObject({ degradedSince: 1500, nextProbeAt: 2500 });
+  });
+
+  it('forgets the state and counts of a removed webhook when failing its rows', () => {
+    insertNotification(db, row({ webhookId: 'gone' }));
+    insertNotification(db, row({ webhookId: 'kept' }));
+    addCount(db, 'gone', 'rejected', 'r');
+    addCount(db, 'kept', 'rejected', 'r');
+    expect(failRemovedWebhooks(db, ['kept'], 5000)).toBe(1);
+    expect(getState(db, 'gone').counts.rejected).toBe(0);
+    expect(getState(db, 'kept').counts.rejected).toBe(1);
   });
 });

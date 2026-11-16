@@ -4,7 +4,7 @@ import { clearAlert, raiseAlert } from '@pipulse/alerts';
 import type { WebhookConfig } from '../src/config.js';
 import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact } from '../src/compact.js';
 import { insertNotification, markFailed, markSent, markStarted } from '../src/outbox.js';
-import { addCount, getState, hasUnsummarized } from '../src/state.js';
+import { addCount, getState, hasUnsummarized, setDegraded } from '../src/state.js';
 
 const MIN = 60_000;
 const NOW = 100_000_000_000;
@@ -299,5 +299,95 @@ describe('atomicity', () => {
     expect(run().summaryQueued).toBe(true);
     expect(rowsOf().filter((r) => r.alertId === a.alert.id)).toEqual([]);
     expect(summaries()).toHaveLength(1);
+  });
+});
+
+const detailOf = () =>
+  JSON.parse(
+    (
+      db
+        .prepare(
+          "SELECT detail FROM notifications WHERE event = 'summary' ORDER BY id DESC LIMIT 1"
+        )
+        .get() as { detail: string }
+    ).detail
+  ) as { since: number; counts: unknown[] };
+
+describe('boundaries', () => {
+  it('is over the cap at 101 pending rows, not at 100', () => {
+    for (let i = 0; i < 50; i++) episode({ raisedAgo: 3 * MIN, clearedAgo: 1 * MIN });
+    expect(rowsOf()).toHaveLength(100);
+    expect(run().coalesced).toBe(0);
+    episode({ raisedAgo: 3 * MIN }); // an open alert: one more row, now 101
+    expect(run().coalesced).toBe(100);
+    expect(rowsOf()).toHaveLength(1);
+  });
+
+  it('treats a row of exactly 5 minutes as old enough, and one a millisecond younger as not', () => {
+    episode({ raisedAgo: ELIGIBLE_AFTER_MS, clearedAgo: 1 * MIN });
+    expect(run().coalesced).toBe(2);
+    episode({ raisedAgo: ELIGIBLE_AFTER_MS - 1, clearedAgo: 1 * MIN });
+    expect(run().coalesced).toBe(0);
+  });
+});
+
+describe('rows that must stay, for any shape of webhook', () => {
+  it('keeps a started clear of a cleared-only webhook', () => {
+    const a = episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN, raise: false });
+    markStarted(db, rowFor(a.alert.id, 'cleared').id, NOW - 19 * MIN);
+    expect(run(hook({ events: ['cleared'] })).coalesced).toBe(0);
+    expect(events()).toEqual(['cleared']);
+  });
+
+  it('keeps a never-started clear whose raise was started, even for a cleared-only webhook', () => {
+    const a = episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    markStarted(db, rowFor(a.alert.id, 'raised').id, NOW - 25 * MIN);
+    expect(run(hook({ events: ['cleared'] })).coalesced).toBe(0);
+    expect(events()).toEqual(['raised', 'cleared']);
+  });
+
+  it('copes with a started raise that has no clear row, open or cleared', () => {
+    const open = episode({ raisedAgo: 30 * MIN });
+    const over = episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN, clear: false });
+    markStarted(db, rowFor(open.alert.id, 'raised').id, NOW - 25 * MIN);
+    markStarted(db, rowFor(over.alert.id, 'raised').id, NOW - 25 * MIN);
+    for (const events of [['raised', 'cleared'], ['cleared'], ['raised']] as const)
+      expect(() => run(hook({ events: [...events] }))).not.toThrow();
+    expect(rowsOf()).toHaveLength(2);
+  });
+
+  it('counts the clears a cleared-only webhook drops over the cap as dropped', () => {
+    const hooked = hook({ events: ['cleared'] });
+    for (let i = 0; i < 101; i++)
+      episode({ raisedAgo: 3 * MIN, clearedAgo: 1 * MIN, raise: false });
+    expect(run(hooked).coalesced).toBe(101);
+    expect(getState(db, 'w').counts).toMatchObject({ dropped: 101, cleared: 0 });
+  });
+});
+
+describe('the summary window', () => {
+  it('starts when delivery went wrong, or now when it is not known', () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    expect(detailOf().since).toBe(NOW);
+    db.exec('DELETE FROM notifications');
+    setDegraded(db, 'w', NOW - 40 * MIN);
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    expect(detailOf().since).toBe(NOW - 40 * MIN);
+  });
+
+  it('keeps the earliest start when it adds to a pending summary', () => {
+    setDegraded(db, 'w', NOW - 40 * MIN);
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    db.prepare('UPDATE webhook_state SET degraded_since = ? WHERE webhook_id = ?').run(
+      NOW - 10 * MIN,
+      'w'
+    );
+    episode({ raisedAgo: 15 * MIN, clearedAgo: 8 * MIN });
+    run();
+    expect(summaries()).toHaveLength(1);
+    expect(detailOf().since).toBe(NOW - 40 * MIN);
   });
 });

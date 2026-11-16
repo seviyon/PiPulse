@@ -118,3 +118,42 @@ describe('webhook state', () => {
     });
   });
 });
+
+describe('webhook state, edges', () => {
+  it('counts every kind, lifetime and per rule', () => {
+    for (const kind of [
+      'opened_and_cleared',
+      'cleared',
+      'rejected',
+      'abandoned',
+      'dropped'
+    ] as const)
+      addCount(db, 'w', kind, 'r');
+    expect(getState(db, 'w').counts).toEqual({
+      opened_and_cleared: 1,
+      cleared: 1,
+      rejected: 1,
+      abandoned: 1,
+      dropped: 1
+    });
+    expect(takeUnsummarized(db, 'w')).toHaveLength(5);
+  });
+
+  it('refuses a count kind it does not know', () => {
+    expect(() => addCount(db, 'w', 'oops' as never, 'r')).toThrow(/unknown count kind oops/);
+  });
+
+  it('sets a probe time for a webhook that has no state yet', () => {
+    setNextProbeAt(db, 'fresh', 900);
+    expect(getState(db, 'fresh').nextProbeAt).toBe(900);
+  });
+
+  it('keeps several webhooks and forgets the rest', () => {
+    for (const id of ['a', 'b', 'c']) addCount(db, id, 'dropped', 'r');
+    deleteStateExcept(db, ['a', 'b']);
+    expect(getState(db, 'a').counts.dropped).toBe(1);
+    expect(getState(db, 'b').counts.dropped).toBe(1);
+    expect(getState(db, 'c').counts.dropped).toBe(0);
+    expect(hasUnsummarized(db, 'c')).toBe(false);
+  });
+});

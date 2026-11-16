@@ -123,6 +123,21 @@ describe('webhook action', () => {
   });
 });
 
+describe('classifyStatus, at the edges', () => {
+  it('puts 199 and 300 and 399 and 400 and 499 and 500 on the right side', () => {
+    expect(classifyStatus(199)).toBe('retryable');
+    expect(classifyStatus(200)).toBe('ok');
+    expect(classifyStatus(299)).toBe('ok');
+    expect(classifyStatus(300)).toBe('permanent');
+    expect(classifyStatus(399)).toBe('permanent');
+    expect(classifyStatus(400)).toBe('permanent');
+    expect(classifyStatus(499)).toBe('permanent');
+    expect(classifyStatus(500)).toBe('retryable');
+    expect(classifyStatus(407)).toBe('permanent');
+    expect(classifyStatus(409)).toBe('permanent');
+  });
+});
+
 describe('classifyStatus', () => {
   it('splits statuses into ok, permanent and retryable', () => {
     for (const s of [200, 204, 299]) expect(classifyStatus(s)).toBe('ok');
@@ -149,9 +164,16 @@ describe('parseRetryAfter', () => {
       'abc',
       '1e9',
       '1.5',
-      new Date(now - 1000).toUTCString()
+      '2099-01-01',
+      '1/1/2099',
+      new Date(now - 1000).toUTCString(),
+      new Date(now).toUTCString()
     ])
       expect(parseRetryAfter(v, now)).toBeNull();
+  });
+  it('ignores spaces around the value', () => {
+    expect(parseRetryAfter(' 20 ', now)).toBe(20_000);
+    expect(parseRetryAfter(` ${new Date(now + 5000).toUTCString()} `, now)).toBe(5000);
   });
   it('caps nothing itself, and the cap is 15 minutes', () => {
     expect(MAX_RETRY_AFTER_MS).toBe(15 * 60_000);
@@ -206,5 +228,27 @@ describe('typed delivery errors', () => {
       transport: true,
       retryAfterMs: null
     });
+  });
+});
+
+describe('delivery error details', () => {
+  const fail = (status: number) =>
+    createWebhookAction(
+      hook(),
+      (async () => new Response('', { status })) as unknown as typeof fetch
+    )
+      .deliver('{}', AbortSignal.timeout(1000))
+      .then(
+        () => undefined,
+        (e: unknown) => e as DeliveryError
+      );
+
+  it('names itself, so a log line says what it is', async () => {
+    expect((await fail(401))!.name).toBe('DeliveryError');
+  });
+  it('words 300 as a redirect and 400 as a plain HTTP status', async () => {
+    expect((await fail(300))!.message).toBe('redirect (HTTP 300)');
+    expect((await fail(399))!.message).toBe('redirect (HTTP 399)');
+    expect((await fail(400))!.message).toBe('HTTP 400');
   });
 });

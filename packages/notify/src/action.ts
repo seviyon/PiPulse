@@ -58,8 +58,9 @@ export function parseRetryAfter(value: string | null, nowMs: number): number | n
     const seconds = Number(text);
     return seconds > 0 && Number.isSafeInteger(seconds * 1000) ? seconds * 1000 : null;
   }
-  // Anything else must look like a date, not a number the date parser would guess at.
-  if (!/[A-Za-z]/.test(text) || /^[\d.+-]*e[\d+-]*$/i.test(text)) return null;
+  // Anything else must be a date written with a month or weekday name: Date.parse reads
+  // plain numbers such as '2099' or '1.5' as years and months.
+  if (!/[A-Za-z]/.test(text)) return null;
   const at = Date.parse(text);
   return Number.isNaN(at) || at <= nowMs ? null : at - nowMs;
 }
