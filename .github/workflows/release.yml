@@ -95,10 +95,8 @@ jobs:
             lintian --fail-on error --suppress-tags aliased-location "out/pipulse_${V}_${arch}.deb"
           done
           sh packaging/stamp-installer.sh packaging/install.sh out/install.sh
-          cp compose.yaml out/
           # The shipped compose file runs this release's image (the repository copy follows :latest).
-          sed -i "s#ghcr.io/seviyon/pipulse:latest#ghcr.io/seviyon/pipulse:$V#" out/compose.yaml
-          grep -c "ghcr.io/seviyon/pipulse:$V" out/compose.yaml | grep -qx 3
+          sh packaging/stamp-compose.sh compose.yaml out/compose.yaml "$V"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release
@@ -157,7 +155,17 @@ jobs:
         with:
           name: release
           path: out
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils >/dev/null
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.x
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils gpgv >/dev/null
+      - name: Check what the build produced against the commit
+        # The build job runs npm and the project's tooling; this step (no secrets) rebuilds from the
+        # checkout what does not need them and refuses to go on if anything differs. `npm ci` here
+        # uses --ignore-scripts and runs no dependency code. See packaging/verify-release.sh.
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: sh packaging/verify-release.sh "$V" out
       - name: Import the signing key
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
