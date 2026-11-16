@@ -596,7 +596,7 @@ describe('what a trusting device is told', () => {
     const text = consequenceText(constraints).join('\n');
     expect(text).toContain('cover web names and addresses only');
     expect(text).toContain('email addresses');
-    expect(text).toContain('web (TLS server) use only');
+    expect(text).toContain('TLS (web) use only');
   });
 });
 

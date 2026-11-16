@@ -23,7 +23,7 @@ export const TRUST_STEPS = [
   '           (Chrome on Linux: certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n pipulse -i pipulse-ca.crt)',
   '  iPhone/iPad: open the file, install the profile, then Settings → General → About → Certificate Trust Settings → turn it on',
   '  Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate',
-  'Trust it for web (TLS server) use only where the system lets you choose, as the macOS command above does.',
+  'Trust it for TLS (web) use only where the system lets you choose, as the macOS command above does.',
   'Windows and Debian/Ubuntu trust a CA for every purpose: install it only on devices you control.',
   'Before importing, check the fingerprint on that device: openssl x509 -in pipulse-ca.crt -noout -fingerprint -sha256'
 ];

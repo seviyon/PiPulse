@@ -502,4 +502,55 @@ describe('new-ca after the host was renamed', () => {
     expect(none.lines.join('\n')).not.toContain('Keeping the current names');
     rmSync(other, { recursive: true, force: true });
   });
+
+  it('compares the host with the name the CA stores, not with the raw system name', async () => {
+    await main(['init'], ctx);
+    const trailingDot = renamed('IO.'); // what os.hostname() may give: upper case, a trailing dot
+    expect(await main(['new-ca', '--yes'], trailingDot)).toBe(0);
+    expect(trailingDot.lines.join('\n')).not.toContain('dropping the old host name');
+    expect(metaDns()).toEqual(['io', 'io.local', 'localhost']);
+  });
+
+  it('does not say it drops the old host name when --name asks for it', async () => {
+    await main(['init'], renamed('pi.lan'));
+    const asked = renamed('pi2.lan');
+    expect(await main(['new-ca', '--name', 'pi.lan', '--yes'], asked)).toBe(0);
+    expect(asked.lines.join('\n')).not.toContain('dropping the old host name');
+    expect(metaDns()).toContain('pi.lan');
+    expect(metaDns()).not.toContain('pi.lan.local');
+  });
+});
+
+describe('a name that is refused as a public suffix', () => {
+  it('says where it came from and how to get past it', async () => {
+    await main(['init'], ctx);
+    const refused = testContext(dir, {
+      env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_NAMES: 'github.io' }
+    });
+    expect(await main(['new-ca', '--yes'], refused)).toBe(1);
+    const text = refused.errors.join('\n');
+    expect(text).toContain('github.io is a public suffix');
+    expect(text).toContain('PIPULSE_TLS_NAMES');
+    expect(text).toContain('--name none');
+  });
+
+  it('says nothing about where it came from for any other refusal', async () => {
+    await main(['init'], ctx);
+    const other = testContext(dir, { env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_NAMES: 'com' } });
+    expect(await main(['new-ca', '--yes'], other)).toBe(1);
+    expect(other.errors.join('\n')).not.toContain('--name none');
+  });
+});
+
+describe('the scope new-ca prints before replacing a CA', () => {
+  it('shows the current scope as its DNS and IP lines only, then the new scope', async () => {
+    await main(['init'], ctx);
+    const rotation = testContext(dir);
+    expect(await main(['new-ca', '--yes'], rotation)).toBe(0);
+    const at = rotation.lines.indexOf('Current CA scope:');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(rotation.lines[at + 1]).toMatch(/^ {2}DNS: io, io\.local, localhost/);
+    expect(rotation.lines[at + 2]).toMatch(/^ {2}IP: {2}127\.0\.0\.1\/32/);
+    expect(rotation.lines[at + 3]).toBe('New CA scope:');
+  });
 });

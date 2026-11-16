@@ -12,7 +12,7 @@ describe('the steps for trusting the CA on a device', () => {
 
   it('says where the system trusts it for every purpose, and to prefer a web-only choice', () => {
     expect(text).toContain('Windows and Debian/Ubuntu trust a CA for every purpose');
-    expect(text).toContain('web (TLS server) use only');
+    expect(text).toContain('TLS (web) use only');
   });
 
   it('still ends with the fingerprint check', () => {
