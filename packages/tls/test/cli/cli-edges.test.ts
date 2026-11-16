@@ -481,6 +481,15 @@ describe('new-ca after the host was renamed', () => {
     expect(metaDns()).toContain('io.lan');
   });
 
+  it('says why a host name the CA cannot hold is refused, and changes nothing', async () => {
+    await main(['init'], ctx);
+    const before = readFileSync(paths(ctx.layout).publicCa, 'utf8');
+    const bad = renamed('bad_host'); // an underscore is not allowed in a DNS name
+    expect(await main(['new-ca', '--yes'], bad)).toBe(1);
+    expect(bad.errors.join('\n')).toContain('not creating a CA');
+    expect(readFileSync(paths(ctx.layout).publicCa, 'utf8')).toBe(before);
+  });
+
   it('says nothing about a host that kept its name', async () => {
     await main(['init'], ctx);
     const same = testContext(dir);
