@@ -1,5 +1,5 @@
 import type { PiPulseDb } from '@pipulse/storage';
-import { shiftState } from './state.js';
+import { deleteStateExcept, shiftState } from './state.js';
 
 /** Runs `fn` in one write transaction: all its changes land, or none do. Not reentrant. */
 export function atomically<T>(db: PiPulseDb, fn: () => T): T {
@@ -173,7 +173,7 @@ export function createdAtOf(db: PiPulseDb, id: number): number | undefined {
 export function failRemovedWebhooks(db: PiPulseDb, keep: string[], at: number): number {
   const placeholders = keep.map(() => '?').join(', ');
   const notIn = placeholders ? `webhook_id NOT IN (${placeholders})` : '1';
-  return Number(
+  const failed = Number(
     db
       .prepare(
         `UPDATE notifications
@@ -182,6 +182,8 @@ export function failRemovedWebhooks(db: PiPulseDb, keep: string[], at: number): 
       )
       .run(at, ...keep).changes
   );
+  deleteStateExcept(db, keep);
+  return failed;
 }
 
 /** Deletes sent/failed rows that finished before `before`. */

@@ -228,7 +228,12 @@ describe('startNotifications', () => {
       await vi.waitFor(() => expect(headOf(db, 'a')!.attempts).toBe(1));
       mono += 6 * HOUR + 1_000;
       now += 3 * HOUR + 1_000;
-      await vi.waitFor(() => expect(headOf(db, 'a')).toBeUndefined());
+      // The row is abandoned; compaction then queues a summary of it, so the queue isn't empty.
+      await vi.waitFor(() =>
+        expect(
+          db.prepare('SELECT status, failed_kind AS kind FROM notifications WHERE id = 1').get()
+        ).toEqual({ status: 'failed', kind: 'abandoned' })
+      );
       expect(webhookStats(db, 'a').lastFailure).toMatchObject({ reason: 'HTTP 500' });
       expect(logs.join('\n')).toMatch(/clock jumped back/);
       await n.stop();

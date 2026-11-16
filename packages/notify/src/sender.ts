@@ -7,6 +7,7 @@ import {
   type AlertAction
 } from './action.js';
 import { urlHost, type WebhookConfig } from './config.js';
+import { compact, PENDING_CAP } from './compact.js';
 import { createEnqueuer } from './enqueue.js';
 import {
   atomically,
@@ -230,6 +231,31 @@ export function startNotifications(
     now()
   );
 
+  // Before an attempt, a webhook that has been failing (or whose queue outgrew the cap) has
+  // its backlog compacted into a recovery summary, so a recovered endpoint gets the summary
+  // first and not a flood of stale messages. Never throws: a failure is logged and the
+  // attempt goes ahead with the queue as it is.
+  const pendingAlertRows = (id: string) =>
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM notifications WHERE webhook_id = ? AND status = 'pending' AND event <> 'summary'`
+        )
+        .get(id) as { n: number }
+    ).n;
+  const prepare = (webhook: WebhookConfig) => {
+    try {
+      if (
+        getState(db, webhook.id).degradedSince === null &&
+        pendingAlertRows(webhook.id) <= PENDING_CAP
+      )
+        return;
+      compact(db, webhook, { now: now(), hostname: options.hostname, metrics: options.metrics });
+    } catch (error) {
+      log(`notification compaction failed: ${messageOf(error)}`);
+    }
+  };
+
   let lastPrune: number | undefined;
   const maybePrune = () => {
     const t = now();
@@ -267,9 +293,12 @@ export function startNotifications(
     onGiveUp: (id, n, reason) => log(`webhook ${id}: gave up after ${n} attempts (last: ${reason})`)
   };
 
+  for (const webhook of webhooks) prepare(webhook);
+
   // One delivery loop per webhook, so a webhook that hangs until its timeout
   // never holds back another's queue; order only matters within one webhook.
-  const lanes = actions.map((deliverer) => {
+  const lanes = actions.map((deliverer, index) => {
+    const webhook = webhooks[index]!;
     let busy = false;
     let again = false;
     let running: Promise<void> | undefined;
@@ -283,6 +312,7 @@ export function startNotifications(
           again = false;
           sent = false;
           try {
+            prepare(webhook);
             sent = await sendNext(db, deliverer, sendOptions);
           } catch (error) {
             log(`notification delivery failed: ${messageOf(error)}`);
