@@ -330,11 +330,25 @@ describe('boundaries', () => {
     expect(rowsOf()).toHaveLength(1);
   });
 
-  it('treats a row of exactly 5 minutes as old enough, and one a millisecond younger as not', () => {
-    episode({ raisedAgo: ELIGIBLE_AFTER_MS, clearedAgo: 1 * MIN });
+  it('treats a pair as old enough only when both rows are 5 minutes old, to the millisecond', () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: ELIGIBLE_AFTER_MS });
     expect(run().coalesced).toBe(2);
-    episode({ raisedAgo: ELIGIBLE_AFTER_MS - 1, clearedAgo: 1 * MIN });
+    episode({ raisedAgo: 30 * MIN, clearedAgo: ELIGIBLE_AFTER_MS - 1 });
     expect(run().coalesced).toBe(0);
+    episode({ raisedAgo: ELIGIBLE_AFTER_MS - 1, clearedAgo: ELIGIBLE_AFTER_MS - 1 });
+    expect(run().coalesced).toBe(0);
+  });
+
+  it('keeps a pair whose raise is old but whose clear is young, unless over the cap', () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 1 * MIN });
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(events()).toEqual(['raised', 'cleared']);
+  });
+
+  it('counts a pair with a young clear that the cap overrides as dropped, not as opened and cleared', () => {
+    for (let i = 0; i < 51; i++) episode({ raisedAgo: 30 * MIN, clearedAgo: 1 * MIN });
+    expect(run().coalesced).toBe(102);
+    expect(getState(db, 'w').counts).toMatchObject({ dropped: 51, opened_and_cleared: 0 });
   });
 });
 

@@ -103,9 +103,12 @@ export function compact(
         // A never-started raise goes only with an alert that is over and a clear (if any) that
         // was never started either.
         if (alertGoing(alertId) || (clear && clear.startedAt !== null)) continue;
-        if (young(raise) && !over) continue;
+        // Neither row may be younger than five minutes (a short blip stays lossless), unless
+        // the queue is over the cap; a pair the cap overrides is counted as dropped.
+        const anyYoung = young(raise) || (clear !== undefined && young(clear));
+        if (anyYoung && !over) continue;
         const ids = clear ? [raise.id, clear.id] : [raise.id];
-        drop(raise.ruleId, young(raise) ? 'dropped' : 'opened_and_cleared', ...ids);
+        drop(raise.ruleId, anyYoung ? 'dropped' : 'opened_and_cleared', ...ids);
       } else if (!raise && clear && clear.startedAt === null && !getsRaises) {
         // A cleared-only webhook never gets raises: there is no lifecycle to keep.
         if (young(clear) && !over) continue;
