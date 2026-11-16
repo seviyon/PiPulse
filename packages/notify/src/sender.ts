@@ -1,24 +1,34 @@
 import type { PiPulseDb } from '@pipulse/storage';
 import type { AlertEvent } from '@pipulse/alerts';
-import { createWebhookAction, type AlertAction } from './action.js';
+import {
+  createWebhookAction,
+  DeliveryError,
+  MAX_RETRY_AFTER_MS,
+  type AlertAction
+} from './action.js';
 import { urlHost, type WebhookConfig } from './config.js';
 import { createEnqueuer } from './enqueue.js';
 import {
+  atomically,
   createdAtOf,
   failRemovedWebhooks,
   headOf,
   markAttemptFailed,
   markFailed,
   markSent,
+  markStarted,
   pruneNotifications,
   setNextAt,
   shiftPending,
   webhookStats
 } from './outbox.js';
+import { addCount } from './state.js';
 import type { MetricLabel } from './template.js';
 
 export const FIRST_RETRY_MS = 5_000;
 export const MAX_RETRY_MS = 5 * 60_000;
+/** While a webhook needs attention, one attempt in this long. */
+export const PROBE_INTERVAL_MS = 5 * 60_000;
 export const GIVE_UP_AFTER_MS = 6 * 60 * 60_000;
 export const PRUNE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
@@ -54,14 +64,16 @@ export async function sendNext(
   const row = headOf(db, action.id);
   if (!row) return false;
   // The Pi has no RTC: after the clock jumps back, a retry could sit hours
-  // away. Never wait longer than the longest retry delay.
-  if (row.nextAt - t > MAX_RETRY_MS) {
-    setNextAt(db, row.id, t + MAX_RETRY_MS);
+  // away. Never wait longer than the longest wait we ever schedule (a Retry-After).
+  if (row.nextAt - t > MAX_RETRY_AFTER_MS) {
+    setNextAt(db, row.id, t + MAX_RETRY_AFTER_MS);
     return false;
   }
   if (row.nextAt > t) return false;
   const signals = [AbortSignal.timeout(timeoutMs)];
   if (options.stopSignal) signals.push(options.stopSignal);
+  // Marked before the request: from here the receiver may have it, whatever happens next.
+  markStarted(db, row.id, t);
   try {
     await action.deliver(row.payload, AbortSignal.any(signals));
     markSent(db, row.id, options.now());
@@ -70,15 +82,30 @@ export async function sendNext(
     // Cut short by shutdown: not the receiver's fault, so not an attempt.
     if (options.stopSignal?.aborted) return false;
     const reason = error instanceof Error ? error.message : String(error);
+    const failure = error instanceof DeliveryError ? error : undefined;
     const at = options.now();
-    // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
-    const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
-    if (at - createdAt >= GIVE_UP_AFTER_MS) {
-      markFailed(db, row.id, at, reason, 'abandoned');
-      options.onGiveUp?.(action.id, row.attempts + 1, reason);
-    } else {
-      markAttemptFailed(db, row.id, at, reason, at + retryDelay(row.attempts + 1));
-    }
+    // A summary that fails is never counted: that would make summaries about summaries.
+    const count = (kind: 'rejected' | 'abandoned') => {
+      if (row.event !== 'summary') addCount(db, action.id, kind, row.ruleId);
+    };
+    atomically(db, () => {
+      // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
+      const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
+      if (failure?.kind === 'permanent') {
+        markFailed(db, row.id, at, reason, 'rejected');
+        count('rejected');
+      } else if (at - createdAt >= GIVE_UP_AFTER_MS) {
+        markFailed(db, row.id, at, reason, 'abandoned');
+        count('abandoned');
+        options.onGiveUp?.(action.id, row.attempts + 1, reason);
+      } else {
+        const wait = Math.min(
+          Math.max(retryDelay(row.attempts + 1), failure?.retryAfterMs ?? 0),
+          MAX_RETRY_AFTER_MS
+        );
+        markAttemptFailed(db, row.id, at, reason, at + wait);
+      }
+    });
     return false;
   }
 }

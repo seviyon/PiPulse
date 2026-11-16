@@ -9,7 +9,8 @@ import {
   sendDue,
   startNotifications
 } from '../src/sender.js';
-import type { AlertAction } from '../src/action.js';
+import { DeliveryError, MAX_RETRY_AFTER_MS, type AlertAction } from '../src/action.js';
+import { getState } from '../src/state.js';
 
 let db: PiPulseDb;
 let now: number;
@@ -107,8 +108,8 @@ describe('sendDue', () => {
     await run([a]); // next_at = now + 5 s
     now -= 3 * 60 * 60_000; // clock jumps back 3 h
     await run([a]); // next_at is > 5 min ahead: pulled to now + 5 min
-    expect(headOf(db, 'a')!.nextAt).toBe(now + 5 * 60_000);
-    now += 5 * 60_000;
+    expect(headOf(db, 'a')!.nextAt).toBe(now + MAX_RETRY_AFTER_MS);
+    now += MAX_RETRY_AFTER_MS;
     expect(await run([a])).toBe(1);
   });
 });
@@ -531,5 +532,157 @@ describe('startNotifications, wakes while a delivery is in flight', () => {
     });
     expect(n.status()).toHaveLength(1);
     await n.stop();
+  });
+});
+
+type Outcome =
+  | 'ok'
+  | 'hang'
+  | {
+      message: string;
+      kind: 'permanent' | 'retryable';
+      transport?: boolean;
+      retryAfterMs?: number;
+    };
+const typedAction = (id: string, outcomes: Outcome[], inside?: () => void): AlertAction => ({
+  id,
+  apiVersion: 1,
+  async deliver(_payload, signal) {
+    inside?.();
+    const outcome = outcomes.shift() ?? 'ok';
+    if (outcome === 'ok') return;
+    if (outcome === 'hang')
+      return new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(new Error('x')))
+      );
+    throw new DeliveryError(outcome.message, {
+      kind: outcome.kind,
+      transport: outcome.transport ?? false,
+      retryAfterMs: outcome.retryAfterMs ?? null
+    });
+  }
+});
+const addSummary = (webhookId: string) =>
+  db
+    .prepare(
+      "INSERT INTO notifications (webhook_id, alert_id, event, rule_id, metric, payload, next_at, created_at) VALUES (?, 0, 'summary', '', '', '{}', ?, ?)"
+    )
+    .run(webhookId, now, now);
+const rowOf = (id = 1) =>
+  db
+    .prepare(
+      'SELECT status, attempts, started_at AS startedAt, failed_kind AS failedKind, next_at AS nextAt FROM notifications WHERE id = ?'
+    )
+    .get(id);
+
+describe('attempts, failure kinds and schedules', () => {
+  it('marks the row started before the request goes out', async () => {
+    add('a');
+    let seen: unknown;
+    await run([typedAction('a', ['ok'], () => (seen = headOf(db, 'a')?.startedAt))]);
+    expect(seen).toBe(now);
+    expect(rowOf()).toMatchObject({ status: 'sent', startedAt: now });
+  });
+
+  it('schedules a retryable failure on the ladder', async () => {
+    add('a');
+    await run([typedAction('a', [{ message: 'HTTP 503', kind: 'retryable' }])]);
+    expect(rowOf()).toMatchObject({ status: 'pending', attempts: 1, nextAt: now + 5_000 });
+  });
+
+  it('waits for Retry-After when it is longer than the ladder, capped at 15 minutes', async () => {
+    add('a');
+    await run([
+      typedAction('a', [{ message: 'HTTP 503', kind: 'retryable', retryAfterMs: 20_000 }])
+    ]);
+    expect(rowOf()).toMatchObject({ nextAt: now + 20_000 });
+    add('b');
+    await run([
+      typedAction('b', [{ message: 'HTTP 429', kind: 'retryable', retryAfterMs: 3_600_000 }])
+    ]);
+    expect(rowOf(2)).toMatchObject({ nextAt: now + MAX_RETRY_AFTER_MS });
+  });
+
+  it('still uses the ladder when Retry-After is shorter', async () => {
+    add('a');
+    await run([
+      typedAction('a', [{ message: 'HTTP 503', kind: 'retryable', retryAfterMs: 2_000 }])
+    ]);
+    expect(rowOf()).toMatchObject({ nextAt: now + 5_000 });
+  });
+
+  it('fails a permanently rejected row at once and counts it, without a give-up callback', async () => {
+    add('a');
+    const giveUps: unknown[] = [];
+    await run([typedAction('a', [{ message: 'HTTP 401', kind: 'permanent' }])], (...args) =>
+      giveUps.push(args)
+    );
+    expect(rowOf()).toMatchObject({ status: 'failed', failedKind: 'rejected', attempts: 1 });
+    expect(giveUps).toEqual([]);
+    expect(getState(db, 'a').counts.rejected).toBe(1);
+    expect(
+      db
+        .prepare("SELECT n FROM webhook_summary_counts WHERE kind = 'rejected' AND rule_id = 'r'")
+        .get()
+    ).toEqual({ n: 1 });
+  });
+
+  it('abandons a retryable row after 6 hours and counts it', async () => {
+    add('a');
+    now += GIVE_UP_AFTER_MS;
+    await run([typedAction('a', [{ message: 'HTTP 500', kind: 'retryable' }])]);
+    expect(rowOf()).toMatchObject({ status: 'failed', failedKind: 'abandoned' });
+    expect(getState(db, 'a').counts.abandoned).toBe(1);
+  });
+
+  it('counts nothing when a summary row is rejected or abandoned', async () => {
+    addSummary('a');
+    await run([typedAction('a', [{ message: 'HTTP 401', kind: 'permanent' }])]);
+    expect(rowOf()).toMatchObject({ status: 'failed', failedKind: 'rejected' });
+    addSummary('a');
+    now += GIVE_UP_AFTER_MS;
+    await run([typedAction('a', [{ message: 'HTTP 500', kind: 'retryable' }])]);
+    expect(rowOf(2)).toMatchObject({ status: 'failed', failedKind: 'abandoned' });
+    expect(getState(db, 'a').counts).toEqual({
+      opened_and_cleared: 0,
+      cleared: 0,
+      rejected: 0,
+      abandoned: 0,
+      dropped: 0
+    });
+  });
+
+  it('reads a plain Error as a retryable transport failure', async () => {
+    add('a');
+    await run([action('a', ['boom'])]);
+    expect(rowOf()).toMatchObject({ status: 'pending', attempts: 1, nextAt: now + 5_000 });
+  });
+
+  it('leaves an aborted delivery started but uncounted', async () => {
+    add('a');
+    const stop = new AbortController();
+    const pending = sendDue(db, [{ action: typedAction('a', ['hang']), timeoutMs: 60_000 }], {
+      now: () => now,
+      stopSignal: stop.signal
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    stop.abort();
+    await pending;
+    expect(rowOf()).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      startedAt: now,
+      failedKind: null
+    });
+    expect(getState(db, 'a').counts.rejected + getState(db, 'a').counts.abandoned).toBe(0);
+  });
+
+  it('records a failure and its count together or not at all', async () => {
+    add('a');
+    db.exec('DROP TABLE webhook_summary_counts');
+    await expect(
+      run([typedAction('a', [{ message: 'HTTP 401', kind: 'permanent' }])])
+    ).rejects.toThrow();
+    expect(rowOf()).toMatchObject({ status: 'pending', failedKind: null });
   });
 });

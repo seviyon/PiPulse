@@ -1,6 +1,19 @@
 import type { PiPulseDb } from '@pipulse/storage';
 import { shiftState } from './state.js';
 
+/** Runs `fn` in one write transaction: all its changes land, or none do. Not reentrant. */
+export function atomically<T>(db: PiPulseDb, fn: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export type NotificationEvent = 'raised' | 'cleared';
 /** What a row holds: an alert event, or the recovery summary compaction queues. */
 export type OutboxEvent = NotificationEvent | 'summary';
