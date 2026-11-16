@@ -50,10 +50,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 1: Migration 8
 
 **Files:**
+
 - Modify: `packages/storage/src/migrations.ts` (append after migration 7)
 - Test: `packages/storage/test/migrations.test.ts` (follow its existing style)
 
 **Interfaces:**
+
 - Produces: `notifications.started_at INTEGER`, `notifications.failed_kind TEXT`; tables `webhook_state` and `webhook_summary_counts`; `SCHEMA_VERSION` 8.
 
 - [ ] **Step 1: Write failing tests:** (a) a fresh database has `webhook_state` columns `webhook_id, degraded_since, needs_attention, reason, next_probe_at, opened_and_cleared, cleared, rejected, abandoned, dropped, last_summary_at` and `webhook_summary_counts(webhook_id, kind, rule_id, n)` with primary key `(webhook_id, kind, rule_id)`; (b) upgrading a version-7 database that holds a pending row with `attempts = 2`, a sent row, a given-up row (`status='failed'`, `attempts = 6`) and a never-tried pending row gives `started_at` set (to `COALESCE(sent_at, failed_at, created_at)`) on the first three and null on the last, and `failed_kind = 'abandoned'` only on the failed row with attempts.
@@ -67,10 +69,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 2: Typed delivery errors, classification, Retry-After
 
 **Files:**
+
 - Modify: `packages/notify/src/action.ts`
 - Test: `packages/notify/test/action.test.ts`
 
 **Interfaces:**
+
 - Produces: `type FailureKind = 'permanent' | 'retryable'`; `class DeliveryError extends Error { kind: FailureKind; transport: boolean; retryAfterMs: number | null }` (constructor `(message, { kind, transport, retryAfterMs? })`); `classifyStatus(status: number): 'ok' | FailureKind`; `parseRetryAfter(value: string | null, nowMs: number): number | null`; `MAX_RETRY_AFTER_MS = 15 * 60_000`.
 - `AlertAction.deliver` still rejects with an `Error`; a `DeliveryError` is an `Error`, so `ALERT_ACTION_API_VERSION` stays 1 and a non-`DeliveryError` rejection is read as retryable transport.
 
@@ -85,10 +89,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 3: Outbox columns, state store, shift
 
 **Files:**
+
 - Modify: `packages/notify/src/outbox.ts`; Create: `packages/notify/src/state.ts`; export it from `index.ts`
 - Test: `packages/notify/test/outbox.test.ts`, `packages/notify/test/state.test.ts` (new)
 
 **Interfaces:**
+
 - Consumes: migration 8 (Task 1).
 - Produces in `outbox.ts`: `OutboxRow` gains `startedAt: number | null` and `failedKind: 'rejected' | 'abandoned' | null`; `markStarted(db, id, at): void`; `markFailed(db, id, at, reason, kind: 'rejected' | 'abandoned'): void` (replaces `markGivenUp`, which is removed and its callers updated); `headOf` orders `started_at IS NULL, event <> 'summary', id` (started rows first, then a summary, then the rest); `shiftPending` also shifts `started_at` of pending rows and calls `shiftState`.
 - Produces in `state.ts`: `type CountKind = 'opened_and_cleared' | 'cleared' | 'rejected' | 'abandoned' | 'dropped'`; `interface WebhookState { webhookId: string; degradedSince: number | null; needsAttention: boolean; reason: string | null; nextProbeAt: number | null; counts: Record<CountKind, number>; lastSummaryAt: number | null }`; `getState(db, webhookId): WebhookState` (defaults when no row); `setDegraded(db, id, at)` (only if null); `clearDegradedIfIdle(db, id)` (only when no pending row exists); `setNeedsAttention(db, id, reason, nextProbeAt)`; `clearNeedsAttention(db, id)`; `setNextProbeAt(db, id, at)`; `addCount(db, id, kind, ruleId, n = 1)` (lifetime column and the per-rule row, same statement set); `takeUnsummarized(db, id): { kind: CountKind; ruleId: string; n: number }[]` (reads then deletes); `hasUnsummarized(db, id): boolean`; `markSummary(db, id, at)`; `deleteStateExcept(db, keep: string[])` (state and per-rule counts of webhooks not in `keep`); `shiftState(db, ms)` (shifts `degraded_since`, `next_probe_at`, `last_summary_at` where set).
@@ -104,10 +110,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 4: Sender attempt flow and retry schedule
 
 **Files:**
+
 - Modify: `packages/notify/src/sender.ts`
 - Test: `packages/notify/test/sender.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 2 and 3. The test helper `action(id, results)` in `sender.test.ts` gains result values `{ kind: 'permanent' | 'retryable', transport?: boolean, retryAfterMs?: number }` that reject with a `DeliveryError`.
 - Produces: constants `MAX_RETRY_AFTER_MS` (re-exported from `action.ts`) and `PROBE_INTERVAL_MS = 5 * 60_000`; `sendNext` behaviour below. Signatures of `sendNext`, `sendDue`, `startNotifications` are unchanged.
 
@@ -122,10 +130,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 5: Needs-attention gate and degraded flag
 
 **Files:**
+
 - Modify: `packages/notify/src/sender.ts`
 - Test: `packages/notify/test/sender.test.ts` (or `sender-gate.test.ts` if the file gets long)
 
 **Interfaces:**
+
 - Consumes: Tasks 3 and 4.
 - Produces: the attempt rule "allowed when `now >= row.next_at` and (`needs_attention` off or `now >= next_probe_at`)"; no new exports.
 
@@ -140,10 +150,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 6: Summary rendering and `summaryBody`
 
 **Files:**
+
 - Create: `packages/notify/src/summary.ts`; Modify: `packages/notify/src/config.ts`, `template.ts`
 - Test: `packages/notify/test/summary.test.ts` (new), `config.test.ts`, `template.test.ts`
 
 **Interfaces:**
+
 - Produces: `interface SummaryInput { counts: { kind: CountKind; ruleId: string; n: number }[]; open: { ruleId: string; metric: string; severity: 'warning' | 'critical' }[]; since: number; now: number }`; `summaryText(input: SummaryInput, wants: { raised: boolean; cleared: boolean }): string` (at most about 1000 characters; at most 10 rules per kind line, then `and N more`); `renderSummary(webhook: WebhookConfig, input: SummaryInput, context: { hostname: string; metrics: MetricLabel[] }): string`. `WebhookConfig` gains `summaryBody?: unknown`. `PLACEHOLDERS` is unchanged; `event` takes the value `summary`.
 
 - [ ] **Step 1: Write failing tests:** (a) `summaryText` names rules and counts per kind, e.g. `3 alerts opened and cleared: cpu_busy ×2, disk_full ×1`, `2 notifications could not be delivered`, `1 rejected`, `still open: swap_full (critical)`; "still open" is left out when `wants.raised` is false; for a cleared-only webhook the `cleared` kind appears; (b) 25 rules show 10 then `and 15 more`, and the text is at most 1000 characters even with 200-character rule ids (truncate ids); (c) `renderSummary` with no `body` returns the Apprise shape `{ title: '<hostname>: notifications were delayed', body: <text>, type }` with `type` `failure` if any critical alert is open, else `warning`; (d) with a custom `body`, placeholders render `event` = `summary`, `message` = the text, `severity` = highest involved, `raisedAt`/`clearedAt` = the outage window, `hostname`, and `ruleId`, `metric`, `metricLabel`, `value`, `rawValue`, `duration`, `clearedBy` empty or null; (e) `summaryBody` is used instead when present; (f) `config.test.ts`: `summaryBody` is parsed, template-checked like `body` (an unknown placeholder fails startup naming `summaryBody`), and omitted by default.
@@ -157,10 +169,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 7: Compaction
 
 **Files:**
+
 - Create: `packages/notify/src/compact.ts`; export from `index.ts`
 - Test: `packages/notify/test/compact.test.ts` (new)
 
 **Interfaces:**
+
 - Consumes: Tasks 3 and 6.
 - Produces: `ELIGIBLE_AFTER_MS = 5 * 60_000`, `PENDING_CAP = 100`; `compact(db: PiPulseDb, webhook: WebhookConfig, context: { now: number; hostname: string; metrics: MetricLabel[] }): { coalesced: number; summaryQueued: boolean }`. One `BEGIN IMMEDIATE` transaction per call.
 
@@ -184,10 +198,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 8: Wire compaction, ordering, removed webhooks
 
 **Files:**
+
 - Modify: `packages/notify/src/sender.ts` (`startNotifications` and the lane `drain`), `outbox.ts` (`failRemovedWebhooks`)
 - Test: `packages/notify/test/sender.test.ts`, `outbox.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 3–7. `startNotifications` options unchanged; internally it builds, per webhook, a `prepare()` that runs `compact` when the webhook is degraded (`degraded_since` set) or pending exceeds `PENDING_CAP`, called **before every attempt** in the lane and once per webhook at startup before lanes start.
 
 - [ ] **Step 1: Write failing tests:** (a) a recent under-cap backlog after a permanent-error period (needs attention, then the endpoint answers 200): compaction runs before the first attempt and the summary is delivered **before** the remaining rows (assert delivery order); (b) a restart (second `startNotifications` on the same db) with `degraded_since` set compacts at startup before any attempt; (c) a crash and restart between summary insert and delivery sends exactly one summary (the unsummarized counts are gone, `last_summary_at` set); (d) a healthy webhook (no `degraded_since`, under the cap) never compacts and sends in order; (e) **Review Focus 2:** a webhook removed from the file has its pending rows failed `webhook removed`, its `webhook_state` and per-rule counts deleted, and a pending summary row failed, never sent; (f) clock jump during an outage: no rows coalesced early or late (ages shift with the jump).
@@ -201,10 +217,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 9: Visibility on `/api/notify` and Settings
 
 **Files:**
+
 - Modify: `packages/notify/src/sender.ts` (`WebhookStatus`, `status()`), `packages/web/src/core/types.ts`, `packages/web/src/settings/notifications.tsx`
 - Test: `packages/notify/test/sender.test.ts`, `packages/api/test/notify-routes.test.ts` (existing style), `packages/web/test/settings/notifications.test.tsx`, `e2e/` only if a notification spec already exists
 
 **Interfaces:**
+
 - Produces: `WebhookStatus` gains `needsAttention: { reason: string } | null`, `degradedSince: number | null`, `counts: { openedAndCleared: number; cleared: number; rejected: number; abandoned: number; dropped: number }`, `lastSummaryAt: number | null`. The API returns `status()` unchanged, so the route needs no logic.
 
 - [ ] **Step 1: Write failing tests:** `status()` reports the new fields from state; the route returns them (host only, still no URL or header); the Settings section shows a warning line `Needs attention: HTTP 401, check URL and credentials` (with `StatusIcon`, words and not colour alone), a quieter `Delivery delayed since <time>` line, and the five lifetime counts and `last summary` when non-zero; an old server's body without the new fields still renders (treat missing as null/zero).
@@ -218,10 +236,12 @@ Inputs and conditions the spec implies but the main tests don't exercise; each h
 ### Task 10: Bound test, docs, mutation, review
 
 **Files:**
+
 - Create: `packages/notify/test/bound.test.ts`
 - Modify: `docs/alerts.md`, `CLAUDE.md`
 
 **Interfaces:**
+
 - Consumes: everything above.
 
 - [ ] **Step 1: Write the randomized bound test** (seeded PRNG such as mulberry32, fixed seeds, at least 200 steps each for all three subscription shapes): random sequences of alert raise, alert clear, successful delivery, outage, permanent rejection, retry exhaustion (advance the clock 6 h), restart (new `startNotifications`) and clock jump. After every step assert the completed-prefix invariant (sent or failed rows form a prefix of the webhook's alert rows by id) and, after every `compact`, that pending alert rows are at most `2 × P + 3` for `P` the distinct (rule, metric) pairs used (plus summaries counted as the `+1`). Run it first and see a deliberately wrong bound (`P`) fail.
