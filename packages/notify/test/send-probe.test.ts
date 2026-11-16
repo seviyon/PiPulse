@@ -199,4 +199,24 @@ describe('sendProbe', () => {
     expect(await probe(nothing)).toBe(false);
     expect(nothing.calls).toEqual([]);
   });
+
+  it('probes at once when needs attention was set without a probe time', async () => {
+    db.prepare("INSERT INTO webhook_state (webhook_id, needs_attention) VALUES ('a', 1)").run();
+    addCount(db, 'a', 'rejected', 'cpu_busy');
+    const a = action();
+    expect(await probe(a)).toBe(true);
+    expect(a.calls).toHaveLength(1);
+  });
+
+  it('treats something thrown that is not an Error like any other failure', async () => {
+    refused();
+    const a = action('not an error' as unknown as Error);
+    expect(await probe(a)).toBe(false);
+    expect(getState(db, 'a')).toMatchObject({
+      needsAttention: true,
+      reason: 'HTTP 401',
+      degradedSince: T
+    });
+    expect(hasUnsummarized(db, 'a')).toBe(true);
+  });
 });
