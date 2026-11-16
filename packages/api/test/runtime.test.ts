@@ -35,10 +35,14 @@ afterEach(async () => {
  * Every built-in id has to be known (the built-in rules name them); cpu_load is the one tests
  * drive, polled every 50 ms, and the others answer 1 on their own schedule.
  */
-const plugin = (collect: () => Promise<number | null> = async () => 1): CollectorPlugin[] =>
+/** The built-ins with a fake collect; cpu_load polls every `intervalMs` (the scheduler gives up on a read after three). */
+const plugin = (
+  collect: () => Promise<number | null> = async () => 1,
+  intervalMs = 50
+): CollectorPlugin[] =>
   builtinPlugins.map((builtin) =>
     builtin.id === 'cpu_load'
-      ? { ...builtin, intervalMs: 50, collect }
+      ? { ...builtin, intervalMs, collect }
       : { ...builtin, collect: async () => 1 }
   );
 const device = { hostname: 'test', platform: 'linux', arch: 'arm' };
@@ -189,13 +193,17 @@ describe('startServer', () => {
   });
 
   it('does not wait for a read that never settles: drained is false', async () => {
+    // A long poll interval: the scheduler gives up on a read after three intervals, so a short one
+    // (50 ms) lets a slow start (a busy CI runner) find the read already abandoned and nothing in
+    // flight, now and then.
     const server = await start(
       {},
-      plugin(() => new Promise<number | null>(() => {})),
+      plugin(() => new Promise<number | null>(() => {}), 60_000),
       {
         shutdownTimeoutMs: 50
       }
     );
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await expect(server.stop()).resolves.toEqual({ drained: false });
   });
 
