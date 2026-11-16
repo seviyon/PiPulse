@@ -9,6 +9,7 @@ import {
   addCount,
   getState,
   hasUnsummarized,
+  markSummary,
   setDegraded,
   setNeedsAttention
 } from '../src/state.js';
@@ -217,5 +218,40 @@ describe('a wall-clock jump during an outage', () => {
     expect(
       db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE event <> 'summary'").get()
     ).toEqual({ n: 2 });
+  });
+});
+
+describe('status', () => {
+  it('reports needs attention, the degraded time, the lifetime counts and the last summary', () => {
+    expect(start([recorder().action]).status()[0]).toMatchObject({
+      needsAttention: null,
+      degradedSince: null,
+      counts: { openedAndCleared: 0, cleared: 0, rejected: 0, abandoned: 0, dropped: 0 },
+      lastSummaryAt: null
+    });
+    setNeedsAttention(db, 'a', 'HTTP 401', wall + 5 * MIN);
+    setDegraded(db, 'a', wall - MIN);
+    addCount(db, 'a', 'opened_and_cleared', 'r', 3);
+    addCount(db, 'a', 'cleared', 'r', 1);
+    addCount(db, 'a', 'rejected', 'r', 2);
+    addCount(db, 'a', 'abandoned', 'r', 4);
+    addCount(db, 'a', 'dropped', 'r', 5);
+    markSummary(db, 'a', wall);
+    const n = startNotifications(db, {
+      webhooks: [hook()],
+      hostname: 'Io',
+      metrics: [],
+      now: () => wall,
+      intervalMs: 1e9,
+      actions: [recorder('a', true).action],
+      log: () => {}
+    });
+    started.push(n);
+    expect(n.status()[0]).toMatchObject({
+      needsAttention: { reason: 'HTTP 401' },
+      degradedSince: wall - MIN,
+      counts: { openedAndCleared: 3, cleared: 1, rejected: 2, abandoned: 4, dropped: 5 },
+      lastSummaryAt: wall
+    });
   });
 });

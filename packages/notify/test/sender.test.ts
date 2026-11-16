@@ -146,7 +146,11 @@ describe('startNotifications', () => {
         minSeverity: 'critical',
         pending: 0,
         lastSuccessAt: null,
-        lastFailure: null
+        lastFailure: null,
+        needsAttention: null,
+        degradedSince: null,
+        counts: { openedAndCleared: 0, cleared: 0, rejected: 0, abandoned: 0, dropped: 0 },
+        lastSummaryAt: null
       }
     ]);
     expect(JSON.stringify(status)).not.toMatch(/notify\/key|u:p|x=1/);

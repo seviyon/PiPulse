@@ -119,3 +119,54 @@ describe('NotificationsSection', () => {
     );
   });
 });
+
+describe('NotificationsSection, a webhook in trouble', () => {
+  const troubled: WebhookStatus = {
+    ...webhooks[1]!,
+    needsAttention: { reason: 'HTTP 401' },
+    degradedSince: at(8, 15),
+    counts: { openedAndCleared: 3, cleared: 1, rejected: 2, abandoned: 1, dropped: 4 },
+    lastSummaryAt: at(8, 50)
+  };
+
+  it('shows needs attention with its reason and a hint, with an icon and words', async () => {
+    answer = () => Response.json([troubled]);
+    await show();
+    const ntfy = row('ntfy');
+    expect(ntfy.textContent).toContain('Needs attention: HTTP 401. Check the URL and credentials.');
+    expect(ntfy.querySelectorAll('svg').length).toBeGreaterThan(0);
+  });
+
+  it('shows how long delivery has been delayed, the counts that are not zero and the last summary', async () => {
+    answer = () => Response.json([troubled]);
+    await show();
+    const text = row('ntfy').textContent!;
+    expect(text).toContain(`Delivery delayed since ${formatDateTime(at(8, 15))}`);
+    expect(text).toContain('3 opened and cleared, 1 cleared, 2 rejected, 1 abandoned, 4 dropped');
+    expect(text).toContain(`Last summary ${formatDateTime(at(8, 50))}`);
+  });
+
+  it('leaves out counts that are zero, and the whole line when all are', async () => {
+    answer = () =>
+      Response.json([
+        {
+          ...troubled,
+          counts: { openedAndCleared: 0, cleared: 0, rejected: 2, abandoned: 0, dropped: 0 }
+        },
+        {
+          ...webhooks[0],
+          counts: { openedAndCleared: 0, cleared: 0, rejected: 0, abandoned: 0, dropped: 0 }
+        }
+      ]);
+    await show();
+    expect(row('ntfy').textContent).toContain('2 rejected');
+    expect(row('ntfy').textContent).not.toContain('opened and cleared');
+    expect(row('apprise').textContent).not.toContain('Suppressed or lost');
+  });
+
+  it('still renders an answer from a server that has none of the new fields', async () => {
+    await show();
+    expect(row('apprise').textContent).not.toContain('Needs attention');
+    expect(row('apprise').textContent).not.toContain('Delivery delayed');
+  });
+});

@@ -69,7 +69,11 @@ describe('GET /api/notify', () => {
         minSeverity: 'warning',
         pending: 0,
         lastSuccessAt: null,
-        lastFailure: null
+        lastFailure: null,
+        needsAttention: null,
+        degradedSince: null,
+        counts: { openedAndCleared: 0, cleared: 0, rejected: 0, abandoned: 0, dropped: 0 },
+        lastSummaryAt: null
       }
     ]);
     expect(JSON.stringify(res.json())).not.toMatch(/user|pass|notify\/key|x=1|Bearer/);

@@ -162,6 +162,19 @@ export interface WebhookStatus {
   pending: number;
   lastSuccessAt: number | null;
   lastFailure: { at: number; reason: string } | null;
+  /** Set while the endpoint rejects requests outright (3xx/4xx); the reason is the last answer. */
+  needsAttention: { reason: string } | null;
+  /** When delivery first failed in the current stretch; null when it is going fine. */
+  degradedSince: number | null;
+  /** Lifetime totals of what was coalesced, rejected, abandoned or dropped. */
+  counts: {
+    openedAndCleared: number;
+    cleared: number;
+    rejected: number;
+    abandoned: number;
+    dropped: number;
+  };
+  lastSummaryAt: number | null;
 }
 
 export interface Notifications {
@@ -270,14 +283,27 @@ export function startNotifications(
   };
 
   const status = (): WebhookStatus[] =>
-    webhooks.map((w) => ({
-      id: w.id,
-      host: urlHost(w.url),
-      method: w.method,
-      events: w.events,
-      minSeverity: w.minSeverity,
-      ...webhookStats(db, w.id)
-    }));
+    webhooks.map((w) => {
+      const state = getState(db, w.id);
+      return {
+        id: w.id,
+        host: urlHost(w.url),
+        method: w.method,
+        events: w.events,
+        minSeverity: w.minSeverity,
+        ...webhookStats(db, w.id),
+        needsAttention: state.needsAttention ? { reason: state.reason ?? 'unknown' } : null,
+        degradedSince: state.degradedSince,
+        counts: {
+          openedAndCleared: state.counts.opened_and_cleared,
+          cleared: state.counts.cleared,
+          rejected: state.counts.rejected,
+          abandoned: state.counts.abandoned,
+          dropped: state.counts.dropped
+        },
+        lastSummaryAt: state.lastSummaryAt
+      };
+    });
 
   if (webhooks.length === 0) {
     // Nothing to deliver, but rows from webhooks removed since the last run still age out.
