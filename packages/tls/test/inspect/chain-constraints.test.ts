@@ -37,6 +37,8 @@ interface Options {
   /** number of intermediates between root and leaf (default 1) */
   depth?: number;
   rootPathLen?: number;
+  /** subject CN of intermediate i, default `Int ${i}` (the same CN twice makes a self-issued one) */
+  subject?: (i: number) => string;
 }
 
 /** root → (intermediates) → leaf, written to the temp folder; returns what inspectMaterial takes. */
@@ -106,7 +108,7 @@ function chain(options: Options) {
   for (let i = 0; i < depth; i++) {
     const name = `int${i}`;
     key(name);
-    sign(name, issuer, `Int ${i}`, [
+    sign(name, issuer, options.subject ? options.subject(i) : `Int ${i}`, [
       'basicConstraints=critical,CA:TRUE',
       'keyUsage=keyCertSign',
       ...(i === 0 ? (options.intermediate ?? []) : [])
@@ -335,18 +337,29 @@ describe('the subtree matchers', () => {
   });
 });
 
-describe('DER the parser does not understand reads as "no constraint"', () => {
+describe('DER the parser cannot walk', () => {
   const fake = (bytes: number[]) => ({ raw: Buffer.from(bytes) }) as unknown as X509Certificate;
-  const cases: [string, number[]][] = [
+
+  // A client enforces what OpenSSL accepts, so a certificate this reader cannot follow must not
+  // read as "no constraint": it reads as unreadable, and the chain is degraded for it.
+  const unreadable: [string, number[]][] = [
     ['empty', []],
     ['a length that runs past the end', [0x30, 0x10, 0x30, 0x00]],
     ['a length of more than four bytes', [0x30, 0x85, 1, 2, 3, 4, 5, 6]],
     ['an indefinite length', [0x30, 0x80, 0x00, 0x00]],
-    ['a certificate with an empty body', [0x30, 0x00]],
+    ['a certificate with an empty body', [0x30, 0x00]]
+  ];
+  it.each(unreadable)('%s reads as unreadable', (_name, bytes) => {
+    expect(pathLength(fake(bytes))).toBe('unreadable');
+    expect(nameConstraints(fake(bytes))).toBe('unreadable');
+    expect(leafNames(fake(bytes))).toEqual({ dns: [], ip: [], unreadable: true });
+  });
+
+  const none: [string, number[]][] = [
     ['a tbs with no extensions', [0x30, 0x04, 0x30, 0x02, 0x02, 0x00]],
     ['an empty extensions wrapper', [0x30, 0x06, 0x30, 0x04, 0xa3, 0x02, 0x30, 0x00]]
   ];
-  it.each(cases)('%s', (_name, bytes) => {
+  it.each(none)('%s has no constraint', (_name, bytes) => {
     expect(pathLength(fake(bytes))).toBeUndefined();
     expect(nameConstraints(fake(bytes))).toBeUndefined();
     expect(leafNames(fake(bytes))).toEqual({ dns: [], ip: [] });
@@ -368,16 +381,23 @@ describe('odd but well-formed DER', () => {
   const extension = (oidHex: string, value: Buffer, critical = false) =>
     der(0x30, oid(oidHex), ...(critical ? [der(0x01, Buffer.from([0xff]))] : []), der(0x04, value));
 
-  it('an item that claims more bytes than its parent holds ends the walk quietly', () => {
+  it('an item that claims more bytes than its parent holds is unreadable', () => {
     const cert = {
       raw: Buffer.from([0x30, 0x04, 0x30, 0x02, 0x04, 0x09])
     } as unknown as X509Certificate;
-    expect(pathLength(cert)).toBeUndefined();
+    expect(pathLength(cert)).toBe('unreadable');
   });
 
-  it('an extension whose value is not an OCTET STRING reads as absent', () => {
+  it('an extension whose value is not an OCTET STRING is unreadable', () => {
     const broken = der(0x30, oid('551d13'), der(0x02, Buffer.from([5])));
-    expect(pathLength(withExtension(broken))).toBeUndefined();
+    expect(pathLength(withExtension(broken))).toBe('unreadable');
+  });
+
+  it('a negative pathLen, or one written twice, is unreadable', () => {
+    const negative = extension('551d13', der(0x30, der(0x02, Buffer.from([0xff]))));
+    expect(pathLength(withExtension(negative))).toBe('unreadable');
+    const one = extension('551d13', der(0x30, der(0x02, Buffer.from([1]))));
+    expect(pathLength(withExtension(one, one))).toBe('unreadable');
   });
 
   it('a pathLen of the critical-flag form is read, and a huge one is ignored', () => {
@@ -393,24 +413,52 @@ describe('odd but well-formed DER', () => {
     expect(pathLength(withExtension(none))).toBeUndefined();
   });
 
-  it('name constraints keep DNS and address subtrees and skip the kinds and sizes they do not use', () => {
-    const subtree = (base: Buffer) => der(0x30, base);
+  const subtree = (base: Buffer) => der(0x30, base);
+  const constraintsOf = (value: Buffer) =>
+    nameConstraints(withExtension(extension('551d1e', value, true)));
+
+  it('name constraints keep DNS and address subtrees and skip the name kinds they do not check', () => {
     const value = der(
       0x30,
-      der(0xa5, subtree(der(0x82, Buffer.from('ignored')))), // not permitted/excluded
       der(
         0xa0,
-        der(0x30), // a subtree with no base
-        subtree(der(0x81, Buffer.from('a@b'))), // an e-mail constraint
-        subtree(der(0x87, Buffer.from([1, 2, 3, 4, 5]))), // an address of an odd size
+        subtree(der(0x81, Buffer.from('a@b'))), // an e-mail constraint: not checked, by design
         subtree(der(0x82, Buffer.from('Example.COM')))
       ),
       der(0xa1, subtree(der(0x87, Buffer.from([10, 0, 0, 0, 255, 0, 0, 0]))))
     );
-    const read = nameConstraints(withExtension(extension('551d1e', value, true)))!;
-    expect(read.permitted).toEqual({ dns: ['example.com'], ip: [] });
-    expect(read.excluded.ip).toHaveLength(1);
-    expect(read.excluded.dns).toEqual([]);
+    const read = constraintsOf(value);
+    expect(read).not.toBe('unreadable');
+    const constraints = read as NonNullable<Exclude<typeof read, 'unreadable'>>;
+    expect(constraints.permitted).toEqual({ dns: ['example.com'], ip: [] });
+    expect(constraints.excluded.ip).toHaveLength(1);
+    expect(constraints.excluded.dns).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a group that is neither permitted nor excluded',
+      der(0x30, der(0xa5, subtree(der(0x82, Buffer.from('x')))))
+    ],
+    ['a subtree with no base', der(0x30, der(0xa0, der(0x30)))],
+    [
+      'an address of an odd size',
+      der(0x30, der(0xa0, subtree(der(0x87, Buffer.from([1, 2, 3, 4, 5])))))
+    ]
+  ])('%s is unreadable, not skipped', (_name, value) => {
+    expect(constraintsOf(value)).toBe('unreadable');
+  });
+
+  it('names that could not be read violate any constraint on their type, and none when there is none', () => {
+    const unreadableNames = { dns: [], ip: [], unreadable: true };
+    const none = { permitted: { dns: [], ip: [] }, excluded: { dns: [], ip: [] } };
+    expect(violatesNameConstraints(unreadableNames, none)).toBe(false);
+    expect(
+      violatesNameConstraints(unreadableNames, { ...none, permitted: { dns: ['a.test'], ip: [] } })
+    ).toBe(true);
+    expect(
+      violatesNameConstraints(unreadableNames, { ...none, excluded: { dns: ['b.test'], ip: [] } })
+    ).toBe(true);
   });
 
   it('subject alternative names of other kinds, or addresses of odd sizes, are left out', () => {
@@ -424,5 +472,88 @@ describe('odd but well-formed DER', () => {
       )
     );
     expect(leafNames(withExtension(san))).toEqual({ dns: ['ok.test'], ip: [] });
+  });
+});
+
+describe('self-issued intermediates', () => {
+  it('do not count towards a path length (a key rollover under the same name)', () => {
+    // root (pathlen 1) -> Int A -> Int A again, new key (self-issued, but not self-signed) -> leaf
+    const result = inspect(
+      chain({ san: 'DNS:a.test', rootPathLen: 1, depth: 2, subject: () => 'Int' })
+    );
+    expect(result.reasons).not.toContain('path-length');
+    expect(result.class).toBe('valid');
+  });
+
+  it('still count when the names differ', () => {
+    const result = inspect(chain({ san: 'DNS:a.test', rootPathLen: 1, depth: 2 }));
+    expect(result.reasons).toContain('path-length');
+  });
+});
+
+describe('a wildcard against an excluded subtree', () => {
+  const excluded = (name: string) => [`nameConstraints=critical,excluded;DNS:${name}`];
+
+  it('violates when the wildcard could expand to the excluded name itself', () => {
+    const result = inspect(
+      chain({ san: 'DNS:*.example.test', intermediate: excluded('bad.example.test') })
+    );
+    expect(result.class).toBe('degraded-untrusted');
+    expect(result.reasons).toContain('name-constraint');
+  });
+
+  it('does not violate for a leading-dot exclusion below that name, which leaves the name itself', () => {
+    expect(
+      inspect(chain({ san: 'DNS:*.example.test', intermediate: excluded('.bad.example.test') }))
+        .class
+    ).toBe('valid');
+  });
+
+  it('does not violate for an exclusion more than one label below, or elsewhere', () => {
+    for (const name of ['a.bad.example.test', 'bad.other.test', 'example.org']) {
+      expect(
+        inspect(chain({ san: 'DNS:*.example.test', intermediate: excluded(name) })).class
+      ).toBe('valid');
+    }
+  });
+
+  it('still violates for the old cases: the wildcard base itself and everything above it', () => {
+    for (const name of ['example.test', 'test']) {
+      expect(
+        inspect(chain({ san: 'DNS:*.example.test', intermediate: excluded(name) })).class
+      ).toBe('degraded-untrusted');
+    }
+  });
+});
+
+describe('what counts as a root, and what is counted once', () => {
+  it('a certificate that is self-issued but not self-signed is not taken for a root', () => {
+    // Int under Int: same name, signed by another key. Nothing trusts it, and its own issuer is
+    // not in the chain, so the chain is incomplete rather than ending at an untrusted root.
+    const made = chain({ san: 'DNS:a.test', depth: 2, subject: () => 'Int' });
+    const result = inspectMaterial({
+      source: 'operator',
+      keyPem: made.keyPem,
+      certPems: made.certPems.slice(0, 2),
+      trust: { anchors: [], system: false },
+      names: []
+    });
+    expect(result).toMatchObject({
+      class: 'degraded-incomplete-chain',
+      reasons: ['incomplete-chain']
+    });
+  });
+
+  it('an intermediate that is both sent and an anchor counts once towards a path length', () => {
+    // root (pathlen 1) -> Int, with Int listed in the trust file as well as sent
+    const made = chain({ san: 'DNS:a.test', rootPathLen: 1 });
+    const result = inspectMaterial({
+      source: 'operator',
+      keyPem: made.keyPem,
+      certPems: made.certPems,
+      trust: { anchors: [made.certPems[1]!, made.rootPem], system: false },
+      names: []
+    });
+    expect(result).toMatchObject({ class: 'valid', reasons: [] });
   });
 });

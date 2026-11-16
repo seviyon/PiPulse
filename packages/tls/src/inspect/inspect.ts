@@ -105,11 +105,47 @@ const issuedBy = (child: X509Certificate, parent: X509Certificate) =>
   child.checkIssued(parent) && child.verify(parent.publicKey);
 
 /**
+ * RFC 5280 "self-issued": the issuer and the subject are the same name. Not enough to be a
+ * root (a key rollover is self-issued too), but it is the test for a path length, which
+ * self-issued certificates do not count towards.
+ */
+const selfIssued = (cert: X509Certificate) => cert.subject === cert.issuer;
+
+/**
+ * Signed by its own key. OpenSSL's own test (`checkIssued`) is not used: it refuses a
+ * certificate whose keyUsage lacks keyCertSign as its own issuer, and a self-signed server
+ * certificate with only digitalSignature (what Go, PowerShell and most appliances make) is
+ * self-signed all the same.
+ */
+const selfSigned = (cert: X509Certificate) => selfIssued(cert) && cert.verify(cert.publicKey);
+
+/**
  * Checks certificate + key the way startup and every reload do. Refuses
  * (throws CertificateRefused) what must never be served; otherwise returns
  * the material with its class — the worst that applies — and reasons.
  */
 export function inspectMaterial(input: {
+  source: 'operator' | 'generated';
+  keyPem: string;
+  certPems: string[];
+  trust: Trust;
+  names: string[];
+}): LoadedCertificate {
+  try {
+    return inspectChecked(input);
+  } catch (error) {
+    // The crypto library parsed the certificate but cannot work with it (a key type it does
+    // not know): say so, naming no content, instead of letting a bare crypto error reach the
+    // startup line. Anything else is a bug and stays loud.
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && /^ERR_(OSSL|CRYPTO)/.test(code)) {
+      throw new CertificateRefused(`the certificate or key can't be checked (${code})`);
+    }
+    throw error;
+  }
+}
+
+function inspectChecked(input: {
   source: 'operator' | 'generated';
   keyPem: string;
   certPems: string[];
@@ -193,7 +229,7 @@ export function inspectMaterial(input: {
   }
   if (!anchor) {
     // A self-signed end is a root nobody configured; otherwise the issuer is missing.
-    if (last.checkIssued(last)) degrade('degraded-untrusted', 'untrusted');
+    if (selfSigned(last)) degrade('degraded-untrusted', 'untrusted');
     else degrade('degraded-incomplete-chain', 'incomplete-chain');
   }
 
@@ -204,7 +240,7 @@ export function inspectMaterial(input: {
   const served = new Set(certs.map((cert) => cert.fingerprint256));
   const climbed: X509Certificate[] = [];
   let root = anchor;
-  while (root && !issuedBy(root, root)) {
+  while (root && !selfSigned(root)) {
     climbed.push(root);
     if (!served.has(root.fingerprint256)) degrade('degraded-incomplete-chain', 'incomplete-chain');
     const below = root;
@@ -226,13 +262,18 @@ export function inspectMaterial(input: {
   const names = leafNames(leaf);
   let intermediates = 0;
   for (const ca of issuers) {
+    // A limit that cannot be read counts as broken: a client may well enforce it.
     const limit = pathLength(ca);
-    if (limit !== undefined && intermediates > limit) degrade('degraded-untrusted', 'path-length');
+    if (limit === 'unreadable' || (limit !== undefined && intermediates > limit))
+      degrade('degraded-untrusted', 'path-length');
     const constraints = nameConstraints(ca);
-    if (constraints && violatesNameConstraints(names, constraints))
+    if (
+      constraints === 'unreadable' ||
+      (constraints && violatesNameConstraints(names, constraints))
+    )
       degrade('degraded-untrusted', 'name-constraint');
     // A self-issued certificate (a root, a rollover) does not count towards a path length.
-    if (!issuedBy(ca, ca)) intermediates++;
+    if (!selfIssued(ca)) intermediates++;
   }
 
   // A client checks the dates of every certificate it is sent except a trusted

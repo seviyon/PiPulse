@@ -1,6 +1,6 @@
 import { X509Certificate } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import {
@@ -600,5 +600,74 @@ describe('review fixes: what a server certificate must allow', () => {
 
   it('ranks a wrong-purpose certificate with the untrusted ones', () => {
     expect(CLASS_RANK['degraded-purpose']).toBe(CLASS_RANK['degraded-untrusted']);
+  });
+});
+
+describe('a self-signed server certificate whose keyUsage lacks keyCertSign', () => {
+  // Go, PowerShell and most appliances make these: CA:FALSE, digitalSignature only. OpenSSL
+  // will not treat such a certificate as its own issuer, but it is self-signed all the same.
+  const make = () => {
+    const tmp = tempDir();
+    onTestFinished(() => rmSync(tmp, { recursive: true, force: true }));
+    const key = join(tmp, 'k.pem');
+    const crt = join(tmp, 'c.pem');
+    execFileSync(TEST_OPENSSL, [
+      'ecparam',
+      '-name',
+      'prime256v1',
+      '-genkey',
+      '-noout',
+      '-out',
+      key
+    ]);
+    execFileSync(
+      TEST_OPENSSL,
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-key',
+        key,
+        '-sha256',
+        '-days',
+        '30',
+        '-subj',
+        '/CN=solo',
+        '-out',
+        crt,
+        '-addext',
+        'basicConstraints=critical,CA:FALSE',
+        '-addext',
+        'keyUsage=critical,digitalSignature',
+        '-addext',
+        'subjectAltName=DNS:solo'
+      ],
+      { stdio: 'ignore' }
+    );
+    return { pem: readFileSync(crt, 'utf8'), keyPem: readFileSync(key, 'utf8') };
+  };
+  const inspectWith = (trust: { anchors: string[]; system: boolean }) => {
+    const { pem, keyPem } = make();
+    return inspectMaterial({
+      source: 'operator',
+      keyPem,
+      certPems: [pem],
+      trust: trust.anchors.length > 0 ? { ...trust, anchors: [pem] } : trust,
+      names: []
+    });
+  };
+
+  it('is valid when it is trusted directly', () => {
+    expect(inspectWith({ anchors: ['x'], system: false })).toMatchObject({
+      class: 'valid',
+      reasons: []
+    });
+  });
+
+  it('is untrusted, not an incomplete chain, when nothing trusts it', () => {
+    expect(inspectWith({ anchors: [], system: true })).toMatchObject({
+      class: 'degraded-untrusted',
+      reasons: ['untrusted']
+    });
   });
 });
