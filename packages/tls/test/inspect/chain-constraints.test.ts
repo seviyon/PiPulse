@@ -485,6 +485,43 @@ describe('self-issued intermediates', () => {
     expect(result.class).toBe('valid');
   });
 
+  it('also when the two names differ only in case (names match without regard to case)', () => {
+    const result = inspect(
+      chain({
+        san: 'DNS:a.test',
+        rootPathLen: 1,
+        depth: 2,
+        subject: (i) => (i === 0 ? 'Int' : 'INT')
+      })
+    );
+    expect(result.reasons).not.toContain('path-length');
+    expect(result.class).toBe('valid');
+  });
+
+  it('also when the names differ only in the runs of white space between words', () => {
+    const result = inspect(
+      chain({
+        san: 'DNS:a.test',
+        rootPathLen: 1,
+        depth: 2,
+        subject: (i) => (i === 0 ? 'Int A' : 'int   a')
+      })
+    );
+    expect(result.reasons).not.toContain('path-length');
+  });
+
+  it('but not when a word is run together with the next: that is another name', () => {
+    const result = inspect(
+      chain({
+        san: 'DNS:a.test',
+        rootPathLen: 1,
+        depth: 2,
+        subject: (i) => (i === 0 ? 'Int A' : 'inta')
+      })
+    );
+    expect(result.reasons).toContain('path-length');
+  });
+
   it('still count when the names differ', () => {
     const result = inspect(chain({ san: 'DNS:a.test', rootPathLen: 1, depth: 2 }));
     expect(result.reasons).toContain('path-length');

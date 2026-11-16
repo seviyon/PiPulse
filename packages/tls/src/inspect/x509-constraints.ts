@@ -135,6 +135,10 @@ export function nameConstraints(cert: X509Certificate): NameConstraints | Unread
       const kids = children(der, subtree);
       const base = kids && kids[0];
       if (!base) return 'unreadable';
+      // minimum and maximum: OpenSSL refuses a subtree that carries either (X509_V_ERR_SUBTREE_MINMAX),
+      // so a client would reject the chain; this reader does not apply them, and must not read the
+      // subtree as if it were a plain one.
+      if (kids.length > 1) return 'unreadable';
       if (base.tag === 0x82) {
         target.dns.push(der.toString('latin1', base.start, base.end).toLowerCase());
       } else if (base.tag === 0x87) {

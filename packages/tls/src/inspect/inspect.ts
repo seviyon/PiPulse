@@ -105,11 +105,21 @@ const issuedBy = (child: X509Certificate, parent: X509Certificate) =>
   child.checkIssued(parent) && child.verify(parent.publicKey);
 
 /**
+ * Names match without regard to case or runs of white space (RFC 5280). Node gives a name as
+ * text, so this is that rule on the text: exact for what CA tooling writes, which copies a name
+ * byte for byte, and enough for a name that differs only in case or spacing.
+ */
+const sameName = (a: string, b: string) => {
+  const canonical = (name: string) => name.toLowerCase().replace(/\s+/g, ' ');
+  return canonical(a) === canonical(b);
+};
+
+/**
  * RFC 5280 "self-issued": the issuer and the subject are the same name. Not enough to be a
  * root (a key rollover is self-issued too), but it is the test for a path length, which
  * self-issued certificates do not count towards.
  */
-const selfIssued = (cert: X509Certificate) => cert.subject === cert.issuer;
+const selfIssued = (cert: X509Certificate) => sameName(cert.subject, cert.issuer);
 
 /**
  * Signed by its own key. OpenSSL's own test (`checkIssued`) is not used: it refuses a

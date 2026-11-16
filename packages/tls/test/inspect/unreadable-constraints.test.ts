@@ -236,6 +236,36 @@ describe('name constraints PiPulse cannot read', () => {
         )
     ],
     [
+      'a subtree with a minimum (OpenSSL refuses a bound, so a client would too)',
+      (extensions) =>
+        replacing(
+          extensions,
+          OID_NAME_CONSTRAINTS,
+          extensionWith(
+            OID_NAME_CONSTRAINTS,
+            tlv(
+              0x30,
+              tlv(0xa0, tlv(0x30, tlv(0x82, Buffer.from('good.test')), tlv(0x80, Buffer.from([1]))))
+            )
+          )
+        )
+    ],
+    [
+      'a subtree with a maximum',
+      (extensions) =>
+        replacing(
+          extensions,
+          OID_NAME_CONSTRAINTS,
+          extensionWith(
+            OID_NAME_CONSTRAINTS,
+            tlv(
+              0x30,
+              tlv(0xa0, tlv(0x30, tlv(0x82, Buffer.from('good.test')), tlv(0x81, Buffer.from([5]))))
+            )
+          )
+        )
+    ],
+    [
       'bytes after the sequence inside the extension',
       (extensions) =>
         replacing(
@@ -369,5 +399,53 @@ describe('a certificate the crypto library cannot check', () => {
       throw new TypeError('a bug');
     });
     expect(attempt).toThrow(TypeError);
+  });
+});
+
+describe('a root whose issuer name differs from its subject only in case', () => {
+  // Names match without regard to case (RFC 5280), so OpenSSL calls this root self-issued, and
+  // it is signed by its own key: self-signed all the same.
+  function recased(): X509Certificate {
+    const der = new X509Certificate(made.rootPem).raw;
+    const cert = parse(der);
+    const tbs = cert.kids![0]!;
+    // version, serial, signature algorithm, ISSUER, validity, subject, ...
+    const issuerIndex = tbs.kids!.findIndex(
+      (k) => k.tag === 0x30 && k.raw.includes(Buffer.from('Root'))
+    );
+    const issuer = tbs.kids![issuerIndex]!;
+    const at = issuer.raw.indexOf(Buffer.from('Root'));
+    const changed = Buffer.from(issuer.raw);
+    changed.write('ROOT', at);
+    const newTbs = tlv(0x30, ...tbs.kids!.map((k, i) => (i === issuerIndex ? changed : k.raw)));
+    const signature = sign('sha256', newTbs, createPrivateKey(made.rootKey));
+    return new X509Certificate(
+      pemOf(tlv(0x30, newTbs, cert.kids![1]!.raw, tlv(0x03, Buffer.from([0]), signature)))
+    );
+  }
+  const inspectWith = (trust: { anchors: string[]; system: boolean }, certPems: string[]) =>
+    inspectMaterial({ source: 'operator', keyPem: made.leafKey, certPems, trust, names: [] });
+
+  it('really differs in case, as the fixture intends', () => {
+    const root = recased();
+    expect(root.subject).toBe('CN=Root');
+    expect(root.issuer).toBe('CN=ROOT');
+  });
+
+  it('is its own root when it is trusted: the chain is valid, not incomplete', () => {
+    const root = recased();
+    expect(
+      inspectWith({ anchors: [root.toString()], system: false }, [made.leafPem])
+    ).toMatchObject({
+      class: 'valid',
+      reasons: []
+    });
+  });
+
+  it('is an untrusted root, not an incomplete chain, when nothing trusts it', () => {
+    const root = recased();
+    expect(
+      inspectWith({ anchors: [], system: false }, [made.leafPem, root.toString()])
+    ).toMatchObject({ class: 'degraded-untrusted', reasons: ['untrusted'] });
   });
 });
