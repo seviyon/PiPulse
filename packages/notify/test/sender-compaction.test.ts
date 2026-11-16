@@ -260,6 +260,14 @@ describe('status', () => {
   });
 });
 
+describe('status, from a state row that has no reason', () => {
+  it('still reports needs attention, with an unknown reason', () => {
+    db.prepare("INSERT INTO webhook_state (webhook_id, needs_attention) VALUES ('a', 1)").run();
+    const n = start([recorder('a', true).action]);
+    expect(n.status()[0]!.needsAttention).toEqual({ reason: 'unknown' });
+  });
+});
+
 describe('when compaction runs', () => {
   it('compacts a healthy webhook whose queue is over the cap', async () => {
     for (let i = 0; i < 51; i++) episode('a', 3 * MIN, 1 * MIN);
