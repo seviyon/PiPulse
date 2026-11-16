@@ -6,12 +6,13 @@ name: Release
 # happen in jobs without secrets or write access, and hand over only files.
 
 on:
-  # pull_request_target, not pull_request: it runs with the base branch (main) as its ref, which
-  # is what the release environment's branch rule checks. A plain pull_request run reports the
-  # PR's own branch (renovate/...), and the environment refuses it. The jobs only read the merged
-  # commit, never the PR's head, and only a merged PR with a release label gets past `version`.
-  pull_request_target:
-    types: [closed]
+  # push to main, not pull_request or pull_request_target: GitHub's default policy for
+  # pull_request_target (enforced from 2026-12-02) blocks it in public repositories, and a plain
+  # pull_request run reports the PR's own branch (renovate/...) to the release environment's
+  # branch rule, which refuses it. A push to main runs on main, which is what that rule checks.
+  # `version` finds the PR merged as the pushed commit and reads its labels; a push that is no
+  # merged PR, or whose PR has no release label, ends there.
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -26,12 +27,6 @@ concurrency: release
 
 jobs:
   version:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged &&
-       (contains(github.event.pull_request.labels.*.name, 'release:patch') ||
-        contains(github.event.pull_request.labels.*.name, 'release:minor') ||
-        contains(github.event.pull_request.labels.*.name, 'release:major')))
     runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -41,16 +36,21 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          # The merge commit itself, even if main moved on since.
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          # The pushed commit itself, even if main moved on since.
+          ref: ${{ github.sha }}
       - name: Version
         id: version
         env:
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+          GH_TOKEN: ${{ github.token }}
           INPUT: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
           if [ -n "$INPUT" ]; then v=$INPUT; else
-            bump=$(printf '%s' "$LABELS" | tr ' ' '\n' | sed -n 's/^release://p' | sort | tail -n 1)
+            # Fetched on its own line: if the API call fails the step fails, instead of reading as "no release".
+            pulls=$(gh api "repos/$REPO/commits/$SHA/pulls")
+            bump=$(printf '%s' "$pulls" | sh packaging/pr-bump.sh "$SHA")
+            if [ -z "$bump" ]; then echo "not a merged PR with a release label: nothing to release"; exit 0; fi
             v=$(sh packaging/next-version.sh "$(git tag -l 'v*' --sort=-v:refname | head -n 1)" "$bump")
           fi
           sh packaging/next-version.sh --check "$v"
@@ -60,7 +60,9 @@ jobs:
 
   build:
     # No secrets, read-only token not kept in the checkout: npm and the build run here.
+    # image, publish and verify need this job, so they are skipped with it when `version` found nothing to release.
     needs: version
+    if: needs.version.outputs.version != ''
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
