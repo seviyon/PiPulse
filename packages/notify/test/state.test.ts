@@ -157,3 +157,15 @@ describe('webhook state, edges', () => {
     expect(hasUnsummarized(db, 'c')).toBe(false);
   });
 });
+
+describe('ending the degraded period', () => {
+  it('waits while counts are still unreported, so they reach a summary first', () => {
+    setDegraded(db, 'w', 100);
+    addCount(db, 'w', 'rejected', 'r');
+    clearDegradedIfIdle(db, 'w'); // queue empty, but the count has not been summarized
+    expect(getState(db, 'w').degradedSince).toBe(100);
+    takeUnsummarized(db, 'w');
+    clearDegradedIfIdle(db, 'w');
+    expect(getState(db, 'w').degradedSince).toBeNull();
+  });
+});

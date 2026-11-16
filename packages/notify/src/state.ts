@@ -74,13 +74,17 @@ export function setDegraded(db: PiPulseDb, webhookId: string, at: number): void 
   ).run(at, webhookId);
 }
 
-/** Ends the degraded period, but only when nothing is left to deliver. */
+/**
+ * Ends the degraded period, but only when nothing is left to deliver and nothing is left to
+ * report: counts not yet in a summary keep it open, so the next compaction makes that summary.
+ */
 export function clearDegradedIfIdle(db: PiPulseDb, webhookId: string): void {
   db.prepare(
     `UPDATE webhook_state SET degraded_since = NULL
-     WHERE webhook_id = ? AND NOT EXISTS (
-       SELECT 1 FROM notifications WHERE webhook_id = ? AND status = 'pending')`
-  ).run(webhookId, webhookId);
+     WHERE webhook_id = ?
+       AND NOT EXISTS (SELECT 1 FROM notifications WHERE webhook_id = ? AND status = 'pending')
+       AND NOT EXISTS (SELECT 1 FROM webhook_summary_counts WHERE webhook_id = ?)`
+  ).run(webhookId, webhookId, webhookId);
 }
 
 export function setNeedsAttention(

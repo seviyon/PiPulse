@@ -60,9 +60,23 @@ export function compact(
     const young = (row: PendingRow) => now - row.createdAt < ELIGIBLE_AFTER_MS;
     const getsRaises = webhook.events.includes('raised');
 
-    const alertOpen = (alertId: number) =>
-      db.prepare(`SELECT 1 FROM alerts WHERE id = ? AND cleared_at IS NULL`).get(alertId) !==
-      undefined;
+    // An alert is still going when it is open, or when an unchanged rule edit closed it and
+    // reopened it as another alert that has no raise of its own here (the enqueuer leaves
+    // that raise out on purpose: the first one stands for both).
+    const alertGoing = (alertId: number) =>
+      db
+        .prepare(
+          `SELECT 1 FROM alerts a WHERE a.id = ? AND (
+             a.cleared_at IS NULL OR (
+               a.cleared_by = 'rule_changed' AND EXISTS (
+                 SELECT 1 FROM alerts b
+                 WHERE b.rule_id = a.rule_id AND b.metric = a.metric
+                   AND b.cleared_at IS NULL AND b.raised_at = a.cleared_at
+                   AND NOT EXISTS (
+                     SELECT 1 FROM notifications n
+                     WHERE n.webhook_id = ? AND n.alert_id = b.id AND n.event = 'raised'))))`
+        )
+        .get(alertId, webhook.id) !== undefined;
 
     const byAlert = new Map<number, { raise?: PendingRow; clear?: PendingRow }>();
     for (const row of rows) {
@@ -81,7 +95,7 @@ export function compact(
       if (raise && raise.startedAt === null) {
         // A never-started raise goes only with an alert that is over and a clear (if any) that
         // was never started either.
-        if (alertOpen(alertId) || (clear && clear.startedAt !== null)) continue;
+        if (alertGoing(alertId) || (clear && clear.startedAt !== null)) continue;
         if (young(raise) && !over) continue;
         const ids = clear ? [raise.id, clear.id] : [raise.id];
         drop(raise.ruleId, young(raise) ? 'dropped' : 'opened_and_cleared', ...ids);
@@ -97,6 +111,11 @@ export function compact(
       const marks = doomed.map(() => '?').join(', ');
       db.prepare(`DELETE FROM notifications WHERE id IN (${marks})`).run(...doomed);
     }
+
+    // An endpoint that rejects every request would reject the summary too, and the summary's
+    // counts would be spent: keep counting, and report everything once it answers again.
+    if (getState(db, webhook.id).needsAttention)
+      return { coalesced: doomed.length, summaryQueued: false };
 
     const counts = takeUnsummarized(db, webhook.id);
     if (counts.length === 0) return { coalesced: doomed.length, summaryQueued: false };

@@ -4,7 +4,14 @@ import { clearAlert, raiseAlert } from '@pipulse/alerts';
 import type { WebhookConfig } from '../src/config.js';
 import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact } from '../src/compact.js';
 import { insertNotification, markFailed, markSent, markStarted } from '../src/outbox.js';
-import { addCount, getState, hasUnsummarized, setDegraded } from '../src/state.js';
+import {
+  addCount,
+  clearNeedsAttention,
+  getState,
+  hasUnsummarized,
+  setDegraded,
+  setNeedsAttention
+} from '../src/state.js';
 
 const MIN = 60_000;
 const NOW = 100_000_000_000;
@@ -389,5 +396,74 @@ describe('the summary window', () => {
     run();
     expect(summaries()).toHaveLength(1);
     expect(detailOf().since).toBe(NOW - 40 * MIN);
+  });
+});
+
+describe('an alert that a rule edit closed and reopened unchanged', () => {
+  /** A was raised and closed by an edit at the moment B (the same rule and metric) opened. */
+  function edited(opts: { raiseForB: boolean }) {
+    const raisedAt = NOW - 20 * MIN;
+    const editedAt = NOW - 10 * MIN;
+    const a = raiseAlert(db, {
+      ruleId: 'cpu_busy',
+      metric: 'cpu_load',
+      severity: 'warning',
+      message: 'busy',
+      value: 1,
+      raisedAt
+    });
+    clearAlert(db, a.id, editedAt, 'rule_changed');
+    const b = raiseAlert(db, {
+      ruleId: 'cpu_busy',
+      metric: 'cpu_load',
+      severity: 'warning',
+      message: 'busy',
+      value: 1,
+      raisedAt: editedAt
+    });
+    const add = (alertId: number, at: number) =>
+      insertNotification(db, {
+        webhookId: 'w',
+        alertId,
+        event: 'raised',
+        ruleId: 'cpu_busy',
+        metric: 'cpu_load',
+        payload: '{}',
+        nextAt: at,
+        createdAt: at
+      });
+    add(a.id, raisedAt);
+    if (opts.raiseForB) add(b.id, editedAt);
+    return { a, b };
+  }
+
+  it("keeps A's raise, which stands for B, so an alert that is still open is not lost", () => {
+    const { a } = edited({ raiseForB: false });
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(rowFor(a.id, 'raised')).toBeDefined();
+    expect(getState(db, 'w').counts.opened_and_cleared).toBe(0);
+  });
+
+  it("drops A's raise when B has a raise of its own, as for any alert that ended", () => {
+    const { a, b } = edited({ raiseForB: true });
+    expect(run().coalesced).toBe(1);
+    expect(rowsOf().map((r) => r.alertId)).toEqual([b.id]);
+    expect(rowsOf().some((r) => r.alertId === a.id)).toBe(false);
+  });
+});
+
+describe('while the endpoint rejects requests outright', () => {
+  it('keeps counting, and makes one summary with all of it once the endpoint answers again', () => {
+    setNeedsAttention(db, 'w', 'HTTP 401', NOW + 5 * MIN);
+    addCount(db, 'w', 'rejected', 'cpu_busy', 3);
+    episode({ rule: 'gone', raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    expect(run()).toEqual({ coalesced: 2, summaryQueued: false });
+    expect(summaries()).toEqual([]);
+    expect(hasUnsummarized(db, 'w')).toBe(true);
+    clearNeedsAttention(db, 'w');
+    expect(run().summaryQueued).toBe(true);
+    const body = JSON.parse(summaries()[0]!.payload).body as string;
+    expect(body).toContain('3 notifications were rejected by the endpoint');
+    expect(body).toContain('1 alert opened and cleared: gone ×1');
   });
 });

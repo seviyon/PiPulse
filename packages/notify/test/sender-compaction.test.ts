@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
 import { clearAlert, raiseAlert } from '@pipulse/alerts';
-import type { AlertAction } from '../src/action.js';
+import { DeliveryError, type AlertAction } from '../src/action.js';
 import type { WebhookConfig } from '../src/config.js';
 import { insertNotification } from '../src/outbox.js';
 import { startNotifications, type Notifications } from '../src/sender.js';
@@ -118,15 +118,19 @@ describe('compaction before delivery', () => {
   it('sends the summary before the rest of a recovered backlog, even for a recent under-cap queue', async () => {
     episode('a', 30 * MIN, 20 * MIN); // opened and cleared during the outage
     episode('a', 8 * MIN); // still open
+    episode('a', 7 * MIN); // still open
     setNeedsAttention(db, 'a', 'HTTP 401', wall - MIN); // the endpoint rejected us a moment ago...
     setDegraded(db, 'a', wall - 40 * MIN);
     const good = recorder();
     start([good.action]);
-    await wait();
-    expect(good.payloads).toHaveLength(2);
-    expect(isSummary(good.payloads[0]!)).toBe(true);
-    expect(JSON.parse(good.payloads[1]!)).toMatchObject({ event: 'raised' });
-    expect(JSON.parse(good.payloads[0]!).body).toContain('1 alert opened and cleared');
+    await wait(150);
+    // The first raise is the probe (counting is held while the endpoint rejects); once it
+    // answers, the summary goes ahead of the second raise.
+    expect(good.payloads).toHaveLength(3);
+    expect(JSON.parse(good.payloads[0]!)).toMatchObject({ event: 'raised' });
+    expect(isSummary(good.payloads[1]!)).toBe(true);
+    expect(JSON.parse(good.payloads[1]!).body).toContain('1 alert opened and cleared');
+    expect(JSON.parse(good.payloads[2]!)).toMatchObject({ event: 'raised' });
     expect(getState(db, 'a').degradedSince).toBeNull(); // queue drained after a success
   });
 
@@ -298,5 +302,41 @@ describe('when compaction runs', () => {
     await wait();
     expect(logs.some((line) => /^notification compaction failed: .*boom/.test(line))).toBe(true);
     expect(good.payloads.map((p) => JSON.parse(p).event)).toEqual(['raised', 'cleared']);
+  });
+});
+
+describe('a webhook whose endpoint keeps rejecting, then recovers', () => {
+  it('gets one summary with the whole count, before the rest, and none while it was rejecting', async () => {
+    for (let i = 0; i < 5; i++) episode('a', (3 + i) * MIN); // five open alerts: five raises that stay
+    const outcomes: ('permanent' | 'ok')[] = ['permanent', 'permanent', 'permanent'];
+    const delivered: string[] = [];
+    const action: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      async deliver(payload) {
+        if (outcomes.shift() === 'permanent')
+          throw new DeliveryError('HTTP 401', { kind: 'permanent', transport: false });
+        delivered.push(payload);
+      }
+    };
+    start([action]);
+    await wait(); // first rejection at start
+    for (let i = 0; i < 2; i++) {
+      wall += 5 * MIN; // the next probe slot
+      mono += 5 * MIN;
+      await wait();
+    }
+    expect(summaryRows()).toEqual([]); // nothing to send to an endpoint that rejects everything
+    expect(getState(db, 'a').counts.rejected).toBe(3);
+    wall += 5 * MIN;
+    mono += 5 * MIN;
+    await wait(150);
+    expect(delivered).toHaveLength(3); // the probe that got through, the summary, the last raise
+    expect(isSummary(delivered[0]!)).toBe(false);
+    expect(isSummary(delivered[1]!)).toBe(true);
+    expect(isSummary(delivered[2]!)).toBe(false);
+    expect(JSON.parse(delivered[1]!).body).toContain(
+      '3 notifications were rejected by the endpoint'
+    );
   });
 });
