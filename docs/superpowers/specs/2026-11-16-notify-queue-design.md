@@ -88,8 +88,6 @@ Why the clears kept for known raises are ≤ _P_, not one per historical episode
 
 **While the endpoint rejects requests outright** (`needs_attention` set), compaction still deletes rows and keeps counting, but queues no summary: it would be rejected too and its counts spent. The first compaction after the endpoint answers again makes one summary with everything. The degraded period also stays open while counts are unreported, so a success that empties the queue still leads to that summary. A rule edit that closed an alert and reopened it unchanged leaves the first alert's unsent raise in place when the reopened alert has none of its own (the enqueuer leaves it out on purpose), so compaction never counts it as an alert that ended.
 
-**While the endpoint rejects requests outright** (`needs_attention` set), compaction still deletes rows and keeps counting, but queues no summary: it would be rejected too and its counts spent. The first compaction after the endpoint answers again makes one summary with everything. The degraded period also stays open while counts are unreported, so a success that empties the queue still leads to that summary. A rule edit that closed an alert and reopened it unchanged leaves the first alert's unsent raise in place when the reopened alert has none of its own (the enqueuer leaves it out on purpose), so compaction never counts it as an alert that ended.
-
 **Order.** The head query orders: possibly-delivered rows first, then the summary, then the rest by id. So the summary always goes out before the remaining backlog drains.
 
 ### Recovery summary
