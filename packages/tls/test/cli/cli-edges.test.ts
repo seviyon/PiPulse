@@ -541,6 +541,13 @@ describe('new-ca after a rename, with the old host asked for in another spelling
     }
   );
 
+  it('refuses a --name that is not a valid name, after saying nothing about the old host', async () => {
+    await main(['init'], testContext(dir, { hostname: () => 'pi.lan' }));
+    const bad = testContext(dir, { hostname: () => 'pi2.lan' });
+    expect(await main(['new-ca', '--name', 'not a name!', '--yes'], bad)).toBe(1);
+    expect(bad.errors.join('\n')).toContain('is not a valid host name');
+  });
+
   it('reports something thrown that is not an Error as text', async () => {
     await main(['init'], ctx);
     let calls = 0;
