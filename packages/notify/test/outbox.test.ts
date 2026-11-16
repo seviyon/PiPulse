@@ -6,7 +6,9 @@ import {
   headOf,
   insertNotification,
   markAttemptFailed,
-  markGivenUp,
+  markFailed,
+  markStarted,
+  shiftPending,
   markSent,
   pruneNotifications,
   setNextAt,
@@ -55,7 +57,7 @@ describe('outbox', () => {
     });
     setNextAt(db, head.id, 7000);
     expect(headOf(db, 'apprise')!.nextAt).toBe(7000);
-    markGivenUp(db, head.id, 9000, 'timeout');
+    markFailed(db, head.id, 9000, 'timeout', 'abandoned');
     expect(headOf(db, 'apprise')).toBeUndefined();
     expect(webhookStats(db, 'apprise')).toEqual({
       pending: 0,
@@ -96,5 +98,57 @@ describe('outbox', () => {
     markSent(db, headOf(db, 'apprise')!.id, 6000);
     expect(pruneNotifications(db, 5500)).toBe(1); // the 'gone' row finished at 5000
     expect(pruneNotifications(db, 7000)).toBe(1);
+  });
+});
+
+describe('started rows, failed kinds and head order', () => {
+  const rowsOf = () =>
+    db
+      .prepare(
+        'SELECT id, event, status, started_at AS startedAt, failed_kind AS failedKind, last_error AS lastError FROM notifications ORDER BY id'
+      )
+      .all();
+
+  it('puts a started row first, then a summary, then the rest by id', () => {
+    insertNotification(db, row({ createdAt: 1 }));
+    insertNotification(db, row({ createdAt: 2 }));
+    insertNotification(db, row({ createdAt: 3 }));
+    db.prepare(
+      "INSERT INTO notifications (webhook_id, alert_id, event, rule_id, metric, payload, next_at, created_at) VALUES ('apprise', 0, 'summary', '', '', '{}', 1, 4)"
+    ).run();
+    expect(headOf(db, 'apprise')).toMatchObject({ event: 'summary' });
+    const [first, second, third] = rowsOf() as { id: number }[];
+    markStarted(db, third!.id, 10);
+    expect(headOf(db, 'apprise')).toMatchObject({ id: third!.id, startedAt: 10 });
+    markStarted(db, third!.id, 20);
+    expect(headOf(db, 'apprise')!.startedAt).toBe(20); // set again, never cleared
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(third!.id);
+    expect(headOf(db, 'apprise')).toMatchObject({ event: 'summary' });
+    expect([first, second]).toHaveLength(2);
+  });
+
+  it('marks a failed row with its kind and reason', () => {
+    insertNotification(db, row());
+    const head = headOf(db, 'apprise')!;
+    markFailed(db, head.id, 5000, 'HTTP 401', 'rejected');
+    expect(rowsOf()[0]).toMatchObject({
+      status: 'failed',
+      failedKind: 'rejected',
+      lastError: 'HTTP 401'
+    });
+    expect(headOf(db, 'apprise')).toBeUndefined();
+  });
+
+  it('shifts started_at of pending rows with a clock jump, and leaves finished rows alone', () => {
+    insertNotification(db, row({ createdAt: 100, nextAt: 100 }));
+    insertNotification(db, row({ createdAt: 200, nextAt: 200 }));
+    const [a, b] = rowsOf() as { id: number }[];
+    markStarted(db, a!.id, 150);
+    markSent(db, b!.id, 250);
+    markStarted(db, b!.id, 240);
+    expect(shiftPending(db, 1000)).toBe(1);
+    const after = rowsOf() as { id: number; startedAt: number }[];
+    expect(after.find((r) => r.id === a!.id)!.startedAt).toBe(1150);
+    expect(after.find((r) => r.id === b!.id)!.startedAt).toBe(240);
   });
 });

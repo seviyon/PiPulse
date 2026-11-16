@@ -108,7 +108,6 @@ export function createWebhookAction(
       } catch (error) {
         // Not `{ cause: error }`: the raw undici error can carry the URL (credentials,
         // path, query) or a header value verbatim, and util.inspect prints it whole.
-        // eslint-disable-next-line preserve-caught-error -- raw undici errors can carry the URL and header values
         throw new DeliveryError(reasonOf(error, signal), { kind: 'retryable', transport: true });
       }
       try {

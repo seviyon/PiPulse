@@ -8,7 +8,7 @@ import {
   failRemovedWebhooks,
   headOf,
   markAttemptFailed,
-  markGivenUp,
+  markFailed,
   markSent,
   pruneNotifications,
   setNextAt,
@@ -74,7 +74,7 @@ export async function sendNext(
     // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
     const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
     if (at - createdAt >= GIVE_UP_AFTER_MS) {
-      markGivenUp(db, row.id, at, reason);
+      markFailed(db, row.id, at, reason, 'abandoned');
       options.onGiveUp?.(action.id, row.attempts + 1, reason);
     } else {
       markAttemptFailed(db, row.id, at, reason, at + retryDelay(row.attempts + 1));
