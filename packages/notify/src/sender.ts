@@ -22,7 +22,15 @@ import {
   shiftPending,
   webhookStats
 } from './outbox.js';
-import { addCount } from './state.js';
+import {
+  addCount,
+  clearDegradedIfIdle,
+  clearNeedsAttention,
+  getState,
+  setDegraded,
+  setNeedsAttention,
+  setNextProbeAt
+} from './state.js';
 import type { MetricLabel } from './template.js';
 
 export const FIRST_RETRY_MS = 5_000;
@@ -70,13 +78,31 @@ export async function sendNext(
     return false;
   }
   if (row.nextAt > t) return false;
+  // While the endpoint rejects requests outright, one attempt per probe interval: the gate
+  // is persisted, so it holds across restarts and for rows that arrive later.
+  const state = getState(db, action.id);
+  if (state.needsAttention && state.nextProbeAt !== null) {
+    if (state.nextProbeAt - t > PROBE_INTERVAL_MS) {
+      setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS); // a clock that jumped back
+      return false;
+    }
+    if (state.nextProbeAt > t) return false;
+  }
   const signals = [AbortSignal.timeout(timeoutMs)];
   if (options.stopSignal) signals.push(options.stopSignal);
   // Marked before the request: from here the receiver may have it, whatever happens next.
-  markStarted(db, row.id, t);
+  // The probe slot is taken now too, so a crash or an abort can't allow an immediate retry.
+  atomically(db, () => {
+    markStarted(db, row.id, t);
+    if (state.needsAttention) setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
+  });
   try {
     await action.deliver(row.payload, AbortSignal.any(signals));
-    markSent(db, row.id, options.now());
+    atomically(db, () => {
+      markSent(db, row.id, options.now());
+      clearNeedsAttention(db, action.id);
+      clearDegradedIfIdle(db, action.id);
+    });
     return true;
   } catch (error) {
     // Cut short by shutdown: not the receiver's fault, so not an attempt.
@@ -91,9 +117,15 @@ export async function sendNext(
     atomically(db, () => {
       // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
       const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
+      setDegraded(db, action.id, at);
+      // An HTTP answer that isn't a permanent rejection means the endpoint no longer rejects
+      // outright; a transport failure says nothing either way.
+      if (failure && !failure.transport && failure.kind === 'retryable')
+        clearNeedsAttention(db, action.id);
       if (failure?.kind === 'permanent') {
         markFailed(db, row.id, at, reason, 'rejected');
         count('rejected');
+        setNeedsAttention(db, action.id, reason, at + PROBE_INTERVAL_MS);
       } else if (at - createdAt >= GIVE_UP_AFTER_MS) {
         markFailed(db, row.id, at, reason, 'abandoned');
         count('abandoned');
