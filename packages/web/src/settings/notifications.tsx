@@ -14,6 +14,22 @@ function filtersText(webhook: WebhookStatus): string {
   return `${events}, ${severity}`;
 }
 
+/** "3 opened and cleared, 2 rejected": the counts that are not zero, in a fixed order. */
+function countsText(counts: NonNullable<WebhookStatus['counts']>): string {
+  return (
+    [
+      [counts.openedAndCleared, 'opened and cleared'],
+      [counts.cleared, 'cleared'],
+      [counts.rejected, 'rejected'],
+      [counts.abandoned, 'abandoned'],
+      [counts.dropped, 'dropped']
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, label]) => `${n} ${label}`)
+    .join(', ');
+}
+
 /** Failing while the newest attempt on record failed. */
 function isFailing(webhook: WebhookStatus): boolean {
   return (
@@ -76,6 +92,21 @@ export function NotificationsSection() {
                 </span>
               )}
               {webhook.pending > 0 && <span>{webhook.pending} waiting</span>}
+              {webhook.needsAttention && (
+                <span class="alert-severity">
+                  <StatusIcon level="warning" />
+                  Needs attention: {webhook.needsAttention.reason}. Check the URL and credentials.
+                </span>
+              )}
+              {webhook.degradedSince != null && (
+                <span>Delivery delayed since {formatDateTime(webhook.degradedSince)}</span>
+              )}
+              {webhook.counts && countsText(webhook.counts) !== '' && (
+                <span>Suppressed or lost: {countsText(webhook.counts)}</span>
+              )}
+              {webhook.lastSummaryAt != null && (
+                <span>Last summary {formatDateTime(webhook.lastSummaryAt)}</span>
+              )}
             </li>
           ))}
         </ul>

@@ -1,24 +1,46 @@
 import type { PiPulseDb } from '@pipulse/storage';
 import type { AlertEvent } from '@pipulse/alerts';
-import { createWebhookAction, type AlertAction } from './action.js';
+import {
+  createWebhookAction,
+  DeliveryError,
+  MAX_RETRY_AFTER_MS,
+  type AlertAction
+} from './action.js';
 import { urlHost, type WebhookConfig } from './config.js';
+import { compact, PENDING_CAP, pendingSummary } from './compact.js';
 import { createEnqueuer } from './enqueue.js';
 import {
+  atomically,
   createdAtOf,
   failRemovedWebhooks,
   headOf,
   markAttemptFailed,
-  markGivenUp,
+  markFailed,
   markSent,
+  markStarted,
   pruneNotifications,
   setNextAt,
   shiftPending,
   webhookStats
 } from './outbox.js';
+import {
+  addCount,
+  clearDegradedIfIdle,
+  clearNeedsAttention,
+  getState,
+  hasUnsummarized,
+  markSummary,
+  setDegraded,
+  setNeedsAttention,
+  setNextProbeAt,
+  takeUnsummarized
+} from './state.js';
 import type { MetricLabel } from './template.js';
 
 export const FIRST_RETRY_MS = 5_000;
 export const MAX_RETRY_MS = 5 * 60_000;
+/** While a webhook needs attention, one attempt in this long. */
+export const PROBE_INTERVAL_MS = 5 * 60_000;
 export const GIVE_UP_AFTER_MS = 6 * 60 * 60_000;
 export const PRUNE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
@@ -54,31 +76,138 @@ export async function sendNext(
   const row = headOf(db, action.id);
   if (!row) return false;
   // The Pi has no RTC: after the clock jumps back, a retry could sit hours
-  // away. Never wait longer than the longest retry delay.
-  if (row.nextAt - t > MAX_RETRY_MS) {
-    setNextAt(db, row.id, t + MAX_RETRY_MS);
+  // away. Never wait longer than the longest wait we ever schedule (a Retry-After).
+  if (row.nextAt - t > MAX_RETRY_AFTER_MS) {
+    setNextAt(db, row.id, t + MAX_RETRY_AFTER_MS);
     return false;
   }
   if (row.nextAt > t) return false;
+  // While the endpoint rejects requests outright, one attempt per probe interval: the gate
+  // is persisted, so it holds across restarts and for rows that arrive later.
+  const state = getState(db, action.id);
+  if (state.needsAttention && state.nextProbeAt !== null) {
+    if (state.nextProbeAt - t > PROBE_INTERVAL_MS) {
+      setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS); // a clock that jumped back
+      return false;
+    }
+    if (state.nextProbeAt > t) return false;
+  }
   const signals = [AbortSignal.timeout(timeoutMs)];
   if (options.stopSignal) signals.push(options.stopSignal);
+  // Marked before the request: from here the receiver may have it, whatever happens next.
+  // The probe slot is taken now too, so a crash or an abort can't allow an immediate retry.
+  atomically(db, () => {
+    markStarted(db, row.id, t);
+    if (state.needsAttention) setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
+  });
   try {
     await action.deliver(row.payload, AbortSignal.any(signals));
-    markSent(db, row.id, options.now());
+    atomically(db, () => {
+      markSent(db, row.id, options.now());
+      clearNeedsAttention(db, action.id);
+      clearDegradedIfIdle(db, action.id);
+    });
     return true;
   } catch (error) {
     // Cut short by shutdown: not the receiver's fault, so not an attempt.
     if (options.stopSignal?.aborted) return false;
     const reason = error instanceof Error ? error.message : String(error);
+    const failure = error instanceof DeliveryError ? error : undefined;
     const at = options.now();
-    // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
-    const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
-    if (at - createdAt >= GIVE_UP_AFTER_MS) {
-      markGivenUp(db, row.id, at, reason);
-      options.onGiveUp?.(action.id, row.attempts + 1, reason);
-    } else {
-      markAttemptFailed(db, row.id, at, reason, at + retryDelay(row.attempts + 1));
+    // A summary that fails is never counted: that would make summaries about summaries.
+    const count = (kind: 'rejected' | 'abandoned') => {
+      if (row.event !== 'summary') addCount(db, action.id, kind, row.ruleId);
+    };
+    atomically(db, () => {
+      // Re-read: the clock may have jumped (and the row been shifted) during the attempt.
+      const createdAt = createdAtOf(db, row.id) ?? row.createdAt;
+      setDegraded(db, action.id, at);
+      // An HTTP answer that isn't a permanent rejection means the endpoint no longer rejects
+      // outright; a transport failure says nothing either way.
+      if (failure && !failure.transport && failure.kind === 'retryable')
+        clearNeedsAttention(db, action.id);
+      if (failure?.kind === 'permanent') {
+        markFailed(db, row.id, at, reason, 'rejected');
+        count('rejected');
+        setNeedsAttention(db, action.id, reason, at + PROBE_INTERVAL_MS);
+      } else if (at - createdAt >= GIVE_UP_AFTER_MS) {
+        markFailed(db, row.id, at, reason, 'abandoned');
+        count('abandoned');
+        options.onGiveUp?.(action.id, row.attempts + 1, reason);
+      } else {
+        const wait = Math.min(
+          Math.max(retryDelay(row.attempts + 1), failure?.retryAfterMs ?? 0),
+          MAX_RETRY_AFTER_MS
+        );
+        markAttemptFailed(db, row.id, at, reason, at + wait);
+      }
+    });
+    return false;
+  }
+}
+
+/**
+ * A webhook that was refused outright has nothing queued to try the endpoint with: its counts
+ * wait for the next alert. This tries the endpoint with the recovery summary itself, once per
+ * probe slot, and spends the counts only when the endpoint accepts it (a probe is not a
+ * notification: a refusal of it is not counted, and nothing is queued for it). Any failure keeps
+ * waiting for the next slot: a permanent refusal updates the reason, a status that can be
+ * retried (honouring Retry-After) and a transport failure leave it as it was. Only an
+ * accepted summary ends the refusal. Resolves to whether the summary was delivered.
+ */
+export async function sendProbe(
+  db: PiPulseDb,
+  { action, timeoutMs }: Deliverer,
+  build: (now: number) => string | undefined,
+  options: SendOptions
+): Promise<boolean> {
+  const t = options.now();
+  if (headOf(db, action.id) !== undefined) return false; // a waiting row is the probe
+  const state = getState(db, action.id);
+  if (!state.needsAttention || !hasUnsummarized(db, action.id)) return false;
+  if (state.nextProbeAt !== null) {
+    if (state.nextProbeAt - t > PROBE_INTERVAL_MS) {
+      setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS); // a clock that jumped back
+      return false;
     }
+    if (state.nextProbeAt > t) return false;
+  }
+  // The slot is taken before anything else, as for a row: a crash, an abort or a summary that
+  // cannot be rendered cannot allow another try before the next slot.
+  setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
+  const payload = build(t);
+  if (payload === undefined) return false;
+  const signals = [AbortSignal.timeout(timeoutMs)];
+  if (options.stopSignal) signals.push(options.stopSignal);
+  try {
+    await action.deliver(payload, AbortSignal.any(signals));
+    atomically(db, () => {
+      takeUnsummarized(db, action.id);
+      markSummary(db, action.id, options.now());
+      clearNeedsAttention(db, action.id);
+      clearDegradedIfIdle(db, action.id);
+    });
+    return true;
+  } catch (error) {
+    if (options.stopSignal?.aborted) return false;
+    const reason = error instanceof Error ? error.message : String(error);
+    const failure = error instanceof DeliveryError ? error : undefined;
+    const at = options.now();
+    atomically(db, () => {
+      setDegraded(db, action.id, at);
+      if (failure?.kind === 'permanent')
+        setNeedsAttention(db, action.id, reason, at + PROBE_INTERVAL_MS);
+      // A status that can be retried (a 503, a 429) is the endpoint's own answer, not a refusal,
+      // but it did not take the summary: keep waiting, for as long as it asked (never less
+      // than a slot, never more than 15 minutes).
+      else if (failure && !failure.transport) {
+        const wait = Math.min(
+          Math.max(PROBE_INTERVAL_MS, failure.retryAfterMs ?? 0),
+          MAX_RETRY_AFTER_MS
+        );
+        setNextProbeAt(db, action.id, at + wait);
+      }
+    });
     return false;
   }
 }
@@ -102,6 +231,19 @@ export interface WebhookStatus {
   pending: number;
   lastSuccessAt: number | null;
   lastFailure: { at: number; reason: string } | null;
+  /** Set while the endpoint rejects requests outright (3xx/4xx); the reason is the last answer. */
+  needsAttention: { reason: string } | null;
+  /** When delivery first failed in the current stretch; null when it is going fine. */
+  degradedSince: number | null;
+  /** Lifetime totals of what was coalesced, rejected, abandoned or dropped. */
+  counts: {
+    openedAndCleared: number;
+    cleared: number;
+    rejected: number;
+    abandoned: number;
+    dropped: number;
+  };
+  lastSummaryAt: number | null;
 }
 
 export interface Notifications {
@@ -171,6 +313,31 @@ export function startNotifications(
     now()
   );
 
+  // Before an attempt, a webhook that has been failing (or whose queue outgrew the cap) has
+  // its backlog compacted into a recovery summary, so a recovered endpoint gets the summary
+  // first and not a flood of stale messages. Never throws: a failure is logged and the
+  // attempt goes ahead with the queue as it is.
+  const pendingAlertRows = (id: string) =>
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM notifications WHERE webhook_id = ? AND status = 'pending' AND event <> 'summary'`
+        )
+        .get(id) as { n: number }
+    ).n;
+  const prepare = (webhook: WebhookConfig) => {
+    try {
+      if (
+        getState(db, webhook.id).degradedSince === null &&
+        pendingAlertRows(webhook.id) <= PENDING_CAP
+      )
+        return;
+      compact(db, webhook, { now: now(), hostname: options.hostname, metrics: options.metrics });
+    } catch (error) {
+      log(`notification compaction failed: ${messageOf(error)}`);
+    }
+  };
+
   let lastPrune: number | undefined;
   const maybePrune = () => {
     const t = now();
@@ -185,14 +352,27 @@ export function startNotifications(
   };
 
   const status = (): WebhookStatus[] =>
-    webhooks.map((w) => ({
-      id: w.id,
-      host: urlHost(w.url),
-      method: w.method,
-      events: w.events,
-      minSeverity: w.minSeverity,
-      ...webhookStats(db, w.id)
-    }));
+    webhooks.map((w) => {
+      const state = getState(db, w.id);
+      return {
+        id: w.id,
+        host: urlHost(w.url),
+        method: w.method,
+        events: w.events,
+        minSeverity: w.minSeverity,
+        ...webhookStats(db, w.id),
+        needsAttention: state.needsAttention ? { reason: state.reason ?? 'unknown' } : null,
+        degradedSince: state.degradedSince,
+        counts: {
+          openedAndCleared: state.counts.opened_and_cleared,
+          cleared: state.counts.cleared,
+          rejected: state.counts.rejected,
+          abandoned: state.counts.abandoned,
+          dropped: state.counts.dropped
+        },
+        lastSummaryAt: state.lastSummaryAt
+      };
+    });
 
   if (webhooks.length === 0) {
     // Nothing to deliver, but rows from webhooks removed since the last run still age out.
@@ -208,9 +388,12 @@ export function startNotifications(
     onGiveUp: (id, n, reason) => log(`webhook ${id}: gave up after ${n} attempts (last: ${reason})`)
   };
 
+  for (const webhook of webhooks) prepare(webhook);
+
   // One delivery loop per webhook, so a webhook that hangs until its timeout
   // never holds back another's queue; order only matters within one webhook.
-  const lanes = actions.map((deliverer) => {
+  const lanes = actions.map((deliverer, index) => {
+    const webhook = webhooks[index]!;
     let busy = false;
     let again = false;
     let running: Promise<void> | undefined;
@@ -224,7 +407,20 @@ export function startNotifications(
           again = false;
           sent = false;
           try {
+            prepare(webhook);
             sent = await sendNext(db, deliverer, sendOptions);
+            if (!sent)
+              sent = await sendProbe(
+                db,
+                deliverer,
+                (at) =>
+                  pendingSummary(db, webhook, {
+                    now: at,
+                    hostname: options.hostname,
+                    metrics: options.metrics
+                  }),
+                sendOptions
+              );
           } catch (error) {
             log(`notification delivery failed: ${messageOf(error)}`);
           }

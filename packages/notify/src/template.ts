@@ -122,6 +122,31 @@ export function fieldsFor(
   };
 }
 
+/** The fields a recovery summary fills: its text and window; the alert-specific ones stay empty. */
+export function fieldsForSummary(
+  text: string,
+  severity: 'warning' | 'critical',
+  since: number,
+  now: number,
+  hostname: string
+): Fields {
+  return {
+    event: 'summary',
+    ruleId: '',
+    metric: '',
+    metricLabel: '',
+    severity,
+    message: text,
+    value: null,
+    rawValue: null,
+    raisedAt: formatLocalTime(since),
+    clearedAt: formatLocalTime(now),
+    duration: null,
+    clearedBy: null,
+    hostname
+  };
+}
+
 /** The Apprise-shaped default body: a title, a body line, and a type per event/severity. */
 export function defaultBody(
   event: 'raised' | 'cleared' | 'test',

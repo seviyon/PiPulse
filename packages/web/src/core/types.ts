@@ -134,6 +134,20 @@ export interface WebhookStatus {
   pending: number;
   lastSuccessAt: number | null;
   lastFailure: { at: number; reason: string } | null;
+  // The fields below are absent from a server that predates them.
+  /** Set while the endpoint rejects requests outright; the reason is its last answer. */
+  needsAttention?: { reason: string } | null;
+  /** When delivery first failed in the current stretch. */
+  degradedSince?: number | null;
+  /** Lifetime totals of what was coalesced, rejected, abandoned or dropped. */
+  counts?: {
+    openedAndCleared: number;
+    cleared: number;
+    rejected: number;
+    abandoned: number;
+    dropped: number;
+  };
+  lastSummaryAt?: number | null;
 }
 
 /** /api/config `tls`; mirrors packages/api/src/tls-status.ts. */

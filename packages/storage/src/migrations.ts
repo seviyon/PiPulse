@@ -199,6 +199,54 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       );
       CREATE INDEX idx_notifications_queue ON notifications(webhook_id, status, id);
     `);
+  },
+  // 8: notification queue hardening. started_at is set before every delivery
+  // attempt and never cleared: a row with it may have reached the receiver.
+  // failed_kind says why a row failed ('rejected' by a permanent HTTP answer,
+  // 'abandoned' after the retry window). webhook_state is per webhook what the
+  // sender remembers across restarts (degraded, needs attention, probe time,
+  // lifetime counts); webhook_summary_counts is what compaction took out of
+  // the queue and has not yet reported, per rule, for the recovery summary;
+  // detail holds a pending summary row's own counts so a later compaction can
+  // add to it. Rows that were already attempted are marked started, and so is the oldest
+  // pending row of every webhook (the one the old sender may have had in flight when it
+  // stopped, and it never wrote a marker), so an upgrade never treats a possibly delivered
+  // row as untouched. A webhook with attempted rows pending was retrying: it starts degraded,
+  // from its earliest attempt.
+  (db) => {
+    db.exec(`
+      ALTER TABLE notifications ADD COLUMN started_at INTEGER;
+      ALTER TABLE notifications ADD COLUMN failed_kind TEXT;
+      ALTER TABLE notifications ADD COLUMN detail TEXT;
+      CREATE TABLE webhook_state (
+        webhook_id         TEXT PRIMARY KEY,
+        degraded_since     INTEGER,
+        needs_attention    INTEGER NOT NULL DEFAULT 0,
+        reason             TEXT,
+        next_probe_at      INTEGER,
+        opened_and_cleared INTEGER NOT NULL DEFAULT 0,
+        cleared            INTEGER NOT NULL DEFAULT 0,
+        rejected           INTEGER NOT NULL DEFAULT 0,
+        abandoned          INTEGER NOT NULL DEFAULT 0,
+        dropped            INTEGER NOT NULL DEFAULT 0,
+        last_summary_at    INTEGER
+      );
+      CREATE TABLE webhook_summary_counts (
+        webhook_id TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        rule_id    TEXT NOT NULL,
+        n          INTEGER NOT NULL,
+        PRIMARY KEY (webhook_id, kind, rule_id)
+      );
+      UPDATE notifications SET started_at = COALESCE(sent_at, failed_at, created_at) WHERE attempts > 0;
+      UPDATE notifications SET failed_kind = 'abandoned' WHERE status = 'failed' AND attempts > 0;
+      INSERT INTO webhook_state (webhook_id, degraded_since)
+        SELECT webhook_id, MIN(started_at) FROM notifications
+        WHERE status = 'pending' AND attempts > 0 GROUP BY webhook_id;
+      UPDATE notifications SET started_at = created_at
+        WHERE status = 'pending' AND started_at IS NULL
+          AND id IN (SELECT MIN(id) FROM notifications WHERE status = 'pending' GROUP BY webhook_id);
+    `);
   }
 ];
 

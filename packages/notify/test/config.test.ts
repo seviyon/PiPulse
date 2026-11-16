@@ -56,6 +56,17 @@ describe('parseNotifyConfig', () => {
     });
   });
 
+  it('keeps a summaryBody template and checks its placeholders like a body', () => {
+    const [hook] = parse([
+      { id: 'a', url: 'http://x', summaryBody: { text: '{{message}} on {{hostname}}' } }
+    ]);
+    expect(hook).toMatchObject({ summaryBody: { text: '{{message}} on {{hostname}}' } });
+    expect(parse([{ id: 'a', url: 'http://x' }])[0]).not.toHaveProperty('summaryBody');
+    expect(() => parse([{ id: 'a', url: 'http://x', summaryBody: { t: '{{nope}}' } }])).toThrow(
+      /\("a"\): summaryBody: unknown placeholder \{\{nope\}\}/
+    );
+  });
+
   it('refuses headers fetch rejects when sending, in any letter case', () => {
     for (const name of ['Transfer-Encoding', 'keep-alive', 'Upgrade', 'expect', 'Content-Length']) {
       fails(

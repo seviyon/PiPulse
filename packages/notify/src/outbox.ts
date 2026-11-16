@@ -1,12 +1,29 @@
 import type { PiPulseDb } from '@pipulse/storage';
+import { deleteStateExcept, shiftState } from './state.js';
+
+/** Runs `fn` in one write transaction: all its changes land, or none do. Not reentrant. */
+export function atomically<T>(db: PiPulseDb, fn: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 export type NotificationEvent = 'raised' | 'cleared';
+/** What a row holds: an alert event, or the recovery summary compaction queues. */
+export type OutboxEvent = NotificationEvent | 'summary';
+export type FailedKind = 'rejected' | 'abandoned';
 
 export interface OutboxRow {
   id: number;
   webhookId: string;
   alertId: number;
-  event: NotificationEvent;
+  event: OutboxEvent;
   ruleId: string;
   metric: string;
   payload: string;
@@ -17,11 +34,15 @@ export interface OutboxRow {
   createdAt: number;
   sentAt: number | null;
   failedAt: number | null;
+  /** Set before every delivery attempt and never cleared: the row may have reached the receiver. */
+  startedAt: number | null;
+  failedKind: FailedKind | null;
 }
 
 const COLUMNS = `id, webhook_id AS webhookId, alert_id AS alertId, event, rule_id AS ruleId,
   metric, payload, status, attempts, next_at AS nextAt, last_error AS lastError,
-  created_at AS createdAt, sent_at AS sentAt, failed_at AS failedAt`;
+  created_at AS createdAt, sent_at AS sentAt, failed_at AS failedAt,
+  started_at AS startedAt, failed_kind AS failedKind`;
 
 /** Enqueues one notification for one webhook, pending delivery. */
 export function insertNotification(
@@ -46,11 +67,15 @@ export function insertNotification(
   );
 }
 
-/** The webhook's oldest pending row: later rows wait behind it, so order holds per webhook. */
+/**
+ * The webhook's next row: a row that was already started first (it may have been delivered, so
+ * it settles before anything else), then a recovery summary (it goes before the backlog),
+ * then the rest by id. Later rows wait behind it, so order holds per webhook.
+ */
 export function headOf(db: PiPulseDb, webhookId: string): OutboxRow | undefined {
   return db
     .prepare(
-      `SELECT ${COLUMNS} FROM notifications WHERE webhook_id = ? AND status = 'pending' ORDER BY id LIMIT 1`
+      `SELECT ${COLUMNS} FROM notifications WHERE webhook_id = ? AND status = 'pending' ORDER BY started_at IS NULL, event <> 'summary', id LIMIT 1`
     )
     .get(webhookId) as unknown as OutboxRow | undefined;
 }
@@ -77,13 +102,24 @@ export function markAttemptFailed(
   ).run(reason, at, nextAt, id);
 }
 
-/** Gives up on a row after retries are exhausted. */
-export function markGivenUp(db: PiPulseDb, id: number, at: number, reason: string): void {
+/** Records that the sender is about to try this row; kept for good (see `startedAt`). */
+export function markStarted(db: PiPulseDb, id: number, at: number): void {
+  db.prepare(`UPDATE notifications SET started_at = ? WHERE id = ?`).run(at, id);
+}
+
+/** Fails a row for good: rejected by a permanent answer, or abandoned once retries ran out. */
+export function markFailed(
+  db: PiPulseDb,
+  id: number,
+  at: number,
+  reason: string,
+  kind: FailedKind
+): void {
   db.prepare(
     `UPDATE notifications
-     SET status = 'failed', attempts = attempts + 1, last_error = ?, failed_at = ?
+     SET status = 'failed', attempts = attempts + 1, last_error = ?, failed_at = ?, failed_kind = ?
      WHERE id = ?`
-  ).run(reason, at, id);
+  ).run(reason, at, kind, id);
 }
 
 /** Reschedules a pending row without recording it as a failed attempt. */
@@ -113,13 +149,22 @@ export function deletePendingClears(db: PiPulseDb, alertId: number, webhookIds: 
  * much, so retry schedules and the give-up age follow real elapsed time.
  */
 export function shiftPending(db: PiPulseDb, ms: number): number {
-  return Number(
+  const moved = Number(
     db
       .prepare(
-        `UPDATE notifications SET created_at = created_at + ?, next_at = next_at + ? WHERE status = 'pending'`
+        `UPDATE notifications SET created_at = created_at + ?, next_at = next_at + ?,
+           started_at = started_at + ? WHERE status = 'pending'`
       )
-      .run(ms, ms).changes
+      .run(ms, ms, ms).changes
   );
+  // A waiting summary keeps its outage start in `detail`: it moves too, or a later compaction
+  // that adds to it would take the older of two starts that are on different clocks.
+  db.prepare(
+    `UPDATE notifications SET detail = json_set(detail, '$.since', json_extract(detail, '$.since') + ?)
+     WHERE event = 'summary' AND status = 'pending' AND detail IS NOT NULL`
+  ).run(ms);
+  shiftState(db, ms);
+  return moved;
 }
 
 /** A row's creation time, as last shifted; undefined once it is gone. */
@@ -134,7 +179,7 @@ export function createdAtOf(db: PiPulseDb, id: number): number | undefined {
 export function failRemovedWebhooks(db: PiPulseDb, keep: string[], at: number): number {
   const placeholders = keep.map(() => '?').join(', ');
   const notIn = placeholders ? `webhook_id NOT IN (${placeholders})` : '1';
-  return Number(
+  const failed = Number(
     db
       .prepare(
         `UPDATE notifications
@@ -143,6 +188,8 @@ export function failRemovedWebhooks(db: PiPulseDb, keep: string[], at: number): 
       )
       .run(at, ...keep).changes
   );
+  deleteStateExcept(db, keep);
+  return failed;
 }
 
 /** Deletes sent/failed rows that finished before `before`. */
