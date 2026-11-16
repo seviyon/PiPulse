@@ -1,7 +1,14 @@
 import type { PiPulseDb } from '@pipulse/storage';
 import type { WebhookConfig } from './config.js';
 import { atomically } from './outbox.js';
-import { getState, markSummary, addCount, takeUnsummarized, type CountKind } from './state.js';
+import {
+  addCount,
+  getState,
+  markSummary,
+  peekUnsummarized,
+  takeUnsummarized,
+  type CountKind
+} from './state.js';
 import { renderSummary, type SummaryInput } from './summary.js';
 import type { MetricLabel } from './template.js';
 
@@ -24,6 +31,37 @@ interface PendingRow {
 interface SummaryDetail {
   since: number;
   counts: { kind: CountKind; ruleId: string; n: number }[];
+}
+
+/** The alerts open now that this webhook would hear about (by its minimum severity). */
+function openAlerts(db: PiPulseDb, webhook: WebhookConfig): SummaryInput['open'] {
+  return (
+    db
+      .prepare(
+        `SELECT rule_id AS ruleId, metric, severity FROM alerts WHERE cleared_at IS NULL ORDER BY id`
+      )
+      .all() as unknown as SummaryInput['open']
+  ).filter((a) => RANK[a.severity] >= RANK[webhook.minSeverity]);
+}
+
+/**
+ * The recovery summary the held counts would make right now, rendered for this webhook, with
+ * the counts left where they are: the probe sends it, and spends them only if it is accepted.
+ * Undefined when there is nothing to report.
+ */
+export function pendingSummary(
+  db: PiPulseDb,
+  webhook: WebhookConfig,
+  context: { now: number; hostname: string; metrics: MetricLabel[] }
+): string | undefined {
+  const counts = peekUnsummarized(db, webhook.id);
+  if (counts.length === 0) return undefined;
+  const since = getState(db, webhook.id).degradedSince ?? context.now;
+  return renderSummary(
+    webhook,
+    { counts, open: openAlerts(db, webhook), since, now: context.now },
+    context
+  );
 }
 
 export interface CompactResult {
@@ -151,13 +189,7 @@ export function compact(
     }
     counts.forEach(add);
 
-    const open = (
-      db
-        .prepare(
-          `SELECT rule_id AS ruleId, metric, severity FROM alerts WHERE cleared_at IS NULL ORDER BY id`
-        )
-        .all() as unknown as SummaryInput['open']
-    ).filter((a) => RANK[a.severity] >= RANK[webhook.minSeverity]);
+    const open = openAlerts(db, webhook);
     const input: SummaryInput = { counts: [...merged.values()], open, since, now };
     const payload = renderSummary(webhook, input, context);
     const detail = JSON.stringify({ since, counts: input.counts } satisfies SummaryDetail);

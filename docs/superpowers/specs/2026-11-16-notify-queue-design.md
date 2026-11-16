@@ -88,6 +88,8 @@ Why the clears kept for known raises are ≤ _P_, not one per historical episode
 
 **While the endpoint rejects requests outright** (`needs_attention` set), compaction still deletes rows and keeps counting, but queues no summary: it would be rejected too and its counts spent. The first compaction after the endpoint answers again makes one summary with everything. The degraded period also stays open while counts are unreported, so a success that empties the queue still leads to that summary. A rule edit that closed an alert and reopened it unchanged leaves the first alert's unsent raise in place when the reopened alert has none of its own (the enqueuer leaves it out on purpose), so compaction never counts it as an alert that ended.
 
+**The probe.** A webhook in needs attention with nothing queued has no row to try the endpoint with, yet its counts would wait for the next alert. So, when it has counts held, it is tried with the recovery summary itself (built from the counts, which stay where they are) once per probe slot (`next_probe_at`, taken before the request like for a row). The counts are spent, and needs attention and the degraded flag cleared, only when the endpoint accepts it. A permanent refusal or a transport failure keeps waiting for the next slot; a transient HTTP answer (503, 429) ends needs attention and leaves the held counts to the ordinary path, which queues the summary row with its retries. A probe is not a notification: a refusal of it is counted nowhere and queues nothing. A waiting row is always the probe and goes first.
+
 **Order.** The head query orders: possibly-delivered rows first, then the summary, then the rest by id. So the summary always goes out before the remaining backlog drains.
 
 ### Recovery summary

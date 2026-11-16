@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type PiPulseDb } from '@pipulse/storage';
 import { clearAlert, raiseAlert } from '@pipulse/alerts';
 import type { WebhookConfig } from '../src/config.js';
-import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact } from '../src/compact.js';
+import { formatLocalTime } from '../src/template.js';
+import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact, pendingSummary } from '../src/compact.js';
 import {
   insertNotification,
   markFailed,
@@ -588,5 +589,37 @@ describe('a clock jump while a summary waits', () => {
     db.prepare("UPDATE notifications SET status = 'sent' WHERE event = 'summary'").run();
     shiftPending(db, 1000);
     expect(detailOf().since).toBe(before.since + 1000); // a sent summary does not move again
+  });
+});
+
+describe('the summary the held counts would make', () => {
+  const context = { now: NOW, hostname: 'Io', metrics: [] };
+
+  it('is undefined with nothing to report', () => {
+    expect(pendingSummary(db, hook(), context)).toBeUndefined();
+  });
+
+  it('is what compaction would send, and leaves the counts alone', () => {
+    setDegraded(db, 'w', NOW - 40 * MIN);
+    addCount(db, 'w', 'rejected', 'cpu_busy', 2);
+    episode({ rule: 'swap_full', severity: 'critical' });
+    const payload = pendingSummary(db, hook(), context)!;
+    expect(JSON.parse(payload).body).toContain('2 notifications were rejected by the endpoint');
+    expect(JSON.parse(payload).body).toContain('still open: swap_full (critical)');
+    expect(hasUnsummarized(db, 'w')).toBe(true);
+    expect(summaries()).toEqual([]);
+    // Taking the same counts through compaction gives the same text.
+    run();
+    expect(JSON.parse(summaries()[0]!.payload).body).toEqual(JSON.parse(payload).body);
+  });
+
+  it("starts the outage when the webhook's delivery went wrong, or now when that is not known", () => {
+    addCount(db, 'w', 'rejected', 'r');
+    const custom = hook({ body: { from: '{{raisedAt}}' } });
+    expect(JSON.parse(pendingSummary(db, custom, context)!).from).toBe(formatLocalTime(NOW));
+    setDegraded(db, 'w', NOW - 40 * MIN);
+    expect(JSON.parse(pendingSummary(db, custom, context)!).from).toBe(
+      formatLocalTime(NOW - 40 * MIN)
+    );
   });
 });

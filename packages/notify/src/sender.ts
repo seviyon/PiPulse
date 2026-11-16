@@ -7,7 +7,7 @@ import {
   type AlertAction
 } from './action.js';
 import { urlHost, type WebhookConfig } from './config.js';
-import { compact, PENDING_CAP } from './compact.js';
+import { compact, PENDING_CAP, pendingSummary } from './compact.js';
 import { createEnqueuer } from './enqueue.js';
 import {
   atomically,
@@ -28,9 +28,12 @@ import {
   clearDegradedIfIdle,
   clearNeedsAttention,
   getState,
+  hasUnsummarized,
+  markSummary,
   setDegraded,
   setNeedsAttention,
-  setNextProbeAt
+  setNextProbeAt,
+  takeUnsummarized
 } from './state.js';
 import type { MetricLabel } from './template.js';
 
@@ -138,6 +141,63 @@ export async function sendNext(
         );
         markAttemptFailed(db, row.id, at, reason, at + wait);
       }
+    });
+    return false;
+  }
+}
+
+/**
+ * A webhook that was refused outright has nothing queued to try the endpoint with: its counts
+ * wait for the next alert. This tries the endpoint with the recovery summary itself, once per
+ * probe slot, and spends the counts only when the endpoint accepts it (a probe is not a
+ * notification: a refusal of it is not counted, and nothing is queued for it). A transient HTTP
+ * answer ends the refusal and leaves the counts to the ordinary path, which queues the summary
+ * with its usual retries; a permanent refusal or a transport failure keeps waiting.
+ * Resolves to whether the summary was delivered.
+ */
+export async function sendProbe(
+  db: PiPulseDb,
+  { action, timeoutMs }: Deliverer,
+  build: (now: number) => string | undefined,
+  options: SendOptions
+): Promise<boolean> {
+  const t = options.now();
+  if (headOf(db, action.id) !== undefined) return false; // a waiting row is the probe
+  const state = getState(db, action.id);
+  if (!state.needsAttention || !hasUnsummarized(db, action.id)) return false;
+  if (state.nextProbeAt !== null) {
+    if (state.nextProbeAt - t > PROBE_INTERVAL_MS) {
+      setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS); // a clock that jumped back
+      return false;
+    }
+    if (state.nextProbeAt > t) return false;
+  }
+  const payload = build(t);
+  if (payload === undefined) return false;
+  // The slot is taken before the request, as for a row: a crash or an abort cannot allow a retry at once.
+  setNextProbeAt(db, action.id, t + PROBE_INTERVAL_MS);
+  const signals = [AbortSignal.timeout(timeoutMs)];
+  if (options.stopSignal) signals.push(options.stopSignal);
+  try {
+    await action.deliver(payload, AbortSignal.any(signals));
+    atomically(db, () => {
+      takeUnsummarized(db, action.id);
+      markSummary(db, action.id, options.now());
+      clearNeedsAttention(db, action.id);
+      clearDegradedIfIdle(db, action.id);
+    });
+    return true;
+  } catch (error) {
+    if (options.stopSignal?.aborted) return false;
+    const reason = error instanceof Error ? error.message : String(error);
+    const failure = error instanceof DeliveryError ? error : undefined;
+    const at = options.now();
+    atomically(db, () => {
+      setDegraded(db, action.id, at);
+      if (failure && !failure.transport && failure.kind === 'retryable')
+        clearNeedsAttention(db, action.id);
+      if (failure?.kind === 'permanent')
+        setNeedsAttention(db, action.id, reason, at + PROBE_INTERVAL_MS);
     });
     return false;
   }
@@ -340,6 +400,18 @@ export function startNotifications(
           try {
             prepare(webhook);
             sent = await sendNext(db, deliverer, sendOptions);
+            if (!sent)
+              sent = await sendProbe(
+                db,
+                deliverer,
+                (at) =>
+                  pendingSummary(db, webhook, {
+                    now: at,
+                    hostname: options.hostname,
+                    metrics: options.metrics
+                  }),
+                sendOptions
+              );
           } catch (error) {
             log(`notification delivery failed: ${messageOf(error)}`);
           }

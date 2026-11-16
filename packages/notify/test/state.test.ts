@@ -9,6 +9,7 @@ import {
   getState,
   hasUnsummarized,
   markSummary,
+  peekUnsummarized,
   setDegraded,
   setNeedsAttention,
   setNextProbeAt,
@@ -167,5 +168,22 @@ describe('ending the degraded period', () => {
     takeUnsummarized(db, 'w');
     clearDegradedIfIdle(db, 'w');
     expect(getState(db, 'w').degradedSince).toBeNull();
+  });
+});
+
+describe('peeking at the unreported counts', () => {
+  it('reads them in a fixed order and leaves them where they are', () => {
+    addCount(db, 'w', 'rejected', 'b', 2);
+    addCount(db, 'w', 'dropped', 'a');
+    addCount(db, 'other', 'rejected', 'a', 9);
+    const seen = peekUnsummarized(db, 'w');
+    expect(seen).toEqual([
+      { kind: 'dropped', ruleId: 'a', n: 1 },
+      { kind: 'rejected', ruleId: 'b', n: 2 }
+    ]);
+    expect(peekUnsummarized(db, 'w')).toEqual(seen); // nothing was taken
+    expect(takeUnsummarized(db, 'w')).toEqual(seen);
+    expect(peekUnsummarized(db, 'w')).toEqual([]);
+    expect(peekUnsummarized(db, 'other')).toHaveLength(1);
   });
 });

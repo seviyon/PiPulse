@@ -141,16 +141,24 @@ export function hasUnsummarized(db: PiPulseDb, webhookId: string): boolean {
   );
 }
 
+/** The per-rule counts not yet reported, left where they are. */
+export function peekUnsummarized(
+  db: PiPulseDb,
+  webhookId: string
+): { kind: CountKind; ruleId: string; n: number }[] {
+  return db
+    .prepare(
+      `SELECT kind, rule_id AS ruleId, n FROM webhook_summary_counts WHERE webhook_id = ? ORDER BY kind, rule_id`
+    )
+    .all(webhookId) as unknown as { kind: CountKind; ruleId: string; n: number }[];
+}
+
 /** Reads and removes the per-rule counts not yet reported (call inside the summary's transaction). */
 export function takeUnsummarized(
   db: PiPulseDb,
   webhookId: string
 ): { kind: CountKind; ruleId: string; n: number }[] {
-  const rows = db
-    .prepare(
-      `SELECT kind, rule_id AS ruleId, n FROM webhook_summary_counts WHERE webhook_id = ? ORDER BY kind, rule_id`
-    )
-    .all(webhookId) as unknown as { kind: CountKind; ruleId: string; n: number }[];
+  const rows = peekUnsummarized(db, webhookId);
   db.prepare(`DELETE FROM webhook_summary_counts WHERE webhook_id = ?`).run(webhookId);
   return rows;
 }
