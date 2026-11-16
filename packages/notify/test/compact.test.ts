@@ -1,0 +1,303 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { openDb, type PiPulseDb } from '@pipulse/storage';
+import { clearAlert, raiseAlert } from '@pipulse/alerts';
+import type { WebhookConfig } from '../src/config.js';
+import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact } from '../src/compact.js';
+import { insertNotification, markFailed, markSent, markStarted } from '../src/outbox.js';
+import { addCount, getState, hasUnsummarized } from '../src/state.js';
+
+const MIN = 60_000;
+const NOW = 100_000_000_000;
+let db: PiPulseDb;
+beforeEach(() => {
+  db = openDb(':memory:');
+});
+afterEach(() => db.close());
+
+const hook = (over: Partial<WebhookConfig> = {}): WebhookConfig => ({
+  id: 'w',
+  url: 'http://x',
+  method: 'POST',
+  headers: {},
+  events: ['raised', 'cleared'],
+  minSeverity: 'warning',
+  timeoutMs: 1000,
+  ...over
+});
+const context = { now: NOW, hostname: 'Io', metrics: [] };
+const run = (webhook = hook(), now = NOW) => compact(db, webhook, { ...context, now });
+
+let n = 0;
+/** An alert (cleared when `clearedAgo` is given) and the rows a webhook would have queued for it. */
+function episode(
+  opts: {
+    webhook?: string;
+    rule?: string;
+    severity?: 'warning' | 'critical';
+    raisedAgo?: number;
+    clearedAgo?: number | null;
+    raise?: boolean;
+    clear?: boolean;
+  } = {}
+) {
+  const webhook = opts.webhook ?? 'w';
+  const rule = opts.rule ?? `rule_${n++}`;
+  const raisedAt = NOW - (opts.raisedAgo ?? 10 * MIN);
+  const alert = raiseAlert(db, {
+    ruleId: rule,
+    metric: `m_${rule}`,
+    severity: opts.severity ?? 'warning',
+    message: rule,
+    value: 1,
+    raisedAt
+  });
+  const cleared = opts.clearedAgo !== undefined && opts.clearedAgo !== null;
+  if (cleared) clearAlert(db, alert.id, NOW - opts.clearedAgo!, 'condition');
+  const add = (event: 'raised' | 'cleared', at: number) =>
+    insertNotification(db, {
+      webhookId: webhook,
+      alertId: alert.id,
+      event,
+      ruleId: rule,
+      metric: alert.metric,
+      payload: '{}',
+      nextAt: at,
+      createdAt: at
+    });
+  if (opts.raise !== false) add('raised', raisedAt);
+  if (cleared && opts.clear !== false) add('cleared', NOW - opts.clearedAgo!);
+  return { alert, rule };
+}
+const rowsOf = (webhook = 'w') =>
+  db
+    .prepare(
+      `SELECT id, event, status, alert_id AS alertId, rule_id AS ruleId, started_at AS startedAt FROM notifications WHERE webhook_id = ? AND event <> 'summary' ORDER BY id`
+    )
+    .all(webhook) as {
+    id: number;
+    event: string;
+    status: string;
+    alertId: number;
+    ruleId: string;
+    startedAt: number | null;
+  }[];
+const events = (webhook = 'w') => rowsOf(webhook).map((r) => r.event);
+const summaries = (webhook = 'w') =>
+  db
+    .prepare(
+      "SELECT id, payload, status, started_at AS startedAt FROM notifications WHERE webhook_id = ? AND event = 'summary'"
+    )
+    .all(webhook) as { id: number; payload: string; status: string; startedAt: number | null }[];
+const rowFor = (alertId: number, event: string) =>
+  rowsOf().find((r) => r.alertId === alertId && r.event === event)!;
+
+describe('constants', () => {
+  it('uses the spec values', () => {
+    expect(ELIGIBLE_AFTER_MS).toBe(5 * MIN);
+    expect(PENDING_CAP).toBe(100);
+  });
+});
+
+describe('coalescing never-started rows', () => {
+  it('drops a raise and its clear for an alert that opened and cleared, and queues one summary', () => {
+    const a = episode({ rule: 'cpu_busy', raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    const open = episode({ rule: 'swap_full', severity: 'critical' });
+    const result = run();
+    expect(result).toEqual({ coalesced: 2, summaryQueued: true });
+    expect(rowsOf().filter((r) => r.alertId === a.alert.id)).toEqual([]);
+    expect(rowFor(open.alert.id, 'raised')).toBeDefined();
+    const [summary] = summaries();
+    expect(JSON.parse(summary!.payload).body).toContain('1 alert opened and cleared: cpu_busy ×1');
+    expect(JSON.parse(summary!.payload).body).toContain('still open: swap_full (critical)');
+    expect(getState(db, 'w').counts.opened_and_cleared).toBe(1);
+    expect(hasUnsummarized(db, 'w')).toBe(false);
+    expect(getState(db, 'w').lastSummaryAt).toBe(NOW);
+  });
+
+  it('keeps rows younger than 5 minutes', () => {
+    episode({ raisedAgo: 4 * MIN, clearedAgo: 1 * MIN });
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(events()).toEqual(['raised', 'cleared']);
+  });
+
+  it('ignores the age protection above the cap, and counts those rows as dropped', () => {
+    for (let i = 0; i < 51; i++) episode({ raisedAgo: 3 * MIN, clearedAgo: 1 * MIN });
+    expect(rowsOf()).toHaveLength(102);
+    expect(run().coalesced).toBe(102);
+    expect(getState(db, 'w').counts).toMatchObject({ dropped: 51, opened_and_cleared: 0 });
+    expect(JSON.parse(summaries()[0]!.payload).body).toContain('51 notifications were dropped');
+  });
+
+  it('keeps the raise of an alert that is still open', () => {
+    const open = episode({ raisedAgo: 30 * MIN });
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(rowFor(open.alert.id, 'raised')).toBeDefined();
+  });
+
+  it('treats an alert missing from the alerts table as cleared, without throwing', () => {
+    const a = episode({ raisedAgo: 20 * MIN });
+    db.prepare('DELETE FROM alerts WHERE id = ?').run(a.alert.id);
+    expect(() => run()).not.toThrow();
+    expect(rowsOf()).toEqual([]);
+    expect(getState(db, 'w').counts.opened_and_cleared).toBe(1);
+  });
+
+  it('never touches another webhook', () => {
+    episode({ webhook: 'other', raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    run();
+    expect(events('other')).toEqual(['raised', 'cleared']);
+    expect(summaries('other')).toEqual([]);
+  });
+});
+
+describe('rows that may have reached the receiver', () => {
+  it('never coalesces a started raise, and keeps its clear', () => {
+    const a = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    markStarted(db, rowFor(a.alert.id, 'raised').id, NOW - 15 * MIN);
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(events()).toEqual(['raised', 'cleared']);
+  });
+
+  it('keeps a clear whose raise was sent', () => {
+    const a = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    const raise = rowFor(a.alert.id, 'raised');
+    markStarted(db, raise.id, NOW - 19 * MIN);
+    markSent(db, raise.id, NOW - 19 * MIN);
+    expect(run().coalesced).toBe(0);
+    expect(
+      rowsOf()
+        .filter((r) => r.status === 'pending')
+        .map((r) => r.event)
+    ).toEqual(['cleared']);
+  });
+
+  it('keeps a clear whose raise was rejected or abandoned', () => {
+    const a = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    const b = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    for (const [alert, kind] of [
+      [a, 'rejected'],
+      [b, 'abandoned']
+    ] as const) {
+      const raise = rowFor(alert.alert.id, 'raised');
+      markStarted(db, raise.id, NOW - 19 * MIN);
+      markFailed(db, raise.id, NOW - 18 * MIN, 'x', kind);
+    }
+    expect(run().coalesced).toBe(0);
+    expect(
+      rowsOf()
+        .filter((r) => r.status === 'pending')
+        .map((r) => r.event)
+    ).toEqual(['cleared', 'cleared']);
+  });
+
+  it('keeps a pending clear when its raise row no longer exists (pruned long ago)', () => {
+    episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN, raise: false });
+    expect(run().coalesced).toBe(0);
+    expect(events()).toEqual(['cleared']);
+  });
+
+  it('keeps both rows when the clear was started even though the raise was not', () => {
+    const a = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    markStarted(db, rowFor(a.alert.id, 'cleared').id, NOW - 5 * MIN);
+    expect(run().coalesced).toBe(0);
+    expect(events()).toEqual(['raised', 'cleared']);
+  });
+});
+
+describe('subscription shapes', () => {
+  it('summarizes and deletes eligible clears for a cleared-only webhook, keeps young ones', () => {
+    const hooked = hook({ events: ['cleared'] });
+    episode({ rule: 'cpu_busy', raisedAgo: 30 * MIN, clearedAgo: 20 * MIN, raise: false });
+    episode({ raisedAgo: 4 * MIN, clearedAgo: 2 * MIN, raise: false });
+    expect(run(hooked).coalesced).toBe(1);
+    expect(events()).toEqual(['cleared']);
+    expect(getState(db, 'w').counts).toMatchObject({ cleared: 1, opened_and_cleared: 0 });
+    const body = JSON.parse(summaries()[0]!.payload).body as string;
+    expect(body).toContain('1 alert cleared: cpu_busy ×1');
+    expect(body).not.toContain('still open');
+  });
+
+  it('drops an unsent raise of a now-cleared alert for a raised-only webhook', () => {
+    const hooked = hook({ events: ['raised'] });
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN, clear: false });
+    expect(run(hooked).coalesced).toBe(1);
+    expect(events()).toEqual([]);
+    expect(getState(db, 'w').counts.opened_and_cleared).toBe(1);
+  });
+});
+
+describe('the summary row', () => {
+  it('lists what is open from the alerts table, filtered by minSeverity', () => {
+    episode({ rule: 'gone', raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    episode({ rule: 'minor', severity: 'warning', raisedAgo: 3 * MIN, clear: false });
+    episode({ rule: 'major', severity: 'critical', raisedAgo: 3 * MIN });
+    run(hook({ minSeverity: 'critical' }));
+    const body = JSON.parse(summaries()[0]!.payload).body as string;
+    expect(body).toContain('still open: major (critical)');
+    expect(body).not.toContain('minor');
+  });
+
+  it('merges into an unstarted pending summary, adding the counts', () => {
+    episode({ rule: 'cpu_busy', raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    episode({ rule: 'cpu_busy', raisedAgo: 15 * MIN, clearedAgo: 8 * MIN });
+    episode({ rule: 'disk_full', raisedAgo: 15 * MIN, clearedAgo: 8 * MIN });
+    run();
+    expect(summaries()).toHaveLength(1);
+    const body = JSON.parse(summaries()[0]!.payload).body as string;
+    expect(body).toContain('3 alerts opened and cleared: cpu_busy ×2, disk_full ×1');
+  });
+
+  it('leaves a started summary alone and queues a new one', () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    markStarted(db, summaries()[0]!.id, NOW);
+    episode({ raisedAgo: 15 * MIN, clearedAgo: 8 * MIN });
+    run();
+    expect(summaries()).toHaveLength(2);
+    expect(summaries().filter((s) => s.startedAt === null)).toHaveLength(1);
+  });
+
+  it('turns counts from rejected and abandoned rows into a summary even when nothing is coalesced', () => {
+    addCount(db, 'w', 'rejected', 'cpu_busy', 2);
+    addCount(db, 'w', 'abandoned', 'cpu_busy', 1);
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: true });
+    const body = JSON.parse(summaries()[0]!.payload).body as string;
+    expect(body).toContain('2 notifications were rejected by the endpoint');
+    expect(body).toContain('1 notification could not be delivered');
+  });
+
+  it('queues no second summary when nothing new happened, and never coalesces or counts summaries', () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(summaries()).toHaveLength(1);
+    for (let i = 0; i < 101; i++)
+      db.prepare(
+        "INSERT INTO notifications (webhook_id, alert_id, event, rule_id, metric, payload, next_at, created_at) VALUES ('w', 0, 'summary', '', '', '{}', 1, 1)"
+      ).run();
+    expect(run().coalesced).toBe(0);
+    expect(summaries()).toHaveLength(102);
+  });
+});
+
+describe('atomicity', () => {
+  it('changes nothing if the summary cannot be written, and succeeds on the next run', () => {
+    const a = episode({ raisedAgo: 20 * MIN, clearedAgo: 10 * MIN });
+    addCount(db, 'w', 'rejected', 'cpu_busy');
+    db.exec(
+      "CREATE TRIGGER boom BEFORE INSERT ON notifications WHEN NEW.event = 'summary' BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    );
+    const before = getState(db, 'w').counts;
+    expect(() => run()).toThrow(/boom/);
+    expect(rowsOf().filter((r) => r.alertId === a.alert.id)).toHaveLength(2);
+    expect(getState(db, 'w').counts).toEqual(before);
+    expect(hasUnsummarized(db, 'w')).toBe(true);
+    expect(summaries()).toEqual([]);
+    db.exec('DROP TRIGGER boom');
+    expect(run().summaryQueued).toBe(true);
+    expect(rowsOf().filter((r) => r.alertId === a.alert.id)).toEqual([]);
+    expect(summaries()).toHaveLength(1);
+  });
+});

@@ -250,7 +250,8 @@ describe('schema migrations', () => {
       'sent_at',
       'failed_at',
       'started_at',
-      'failed_kind'
+      'failed_kind',
+      'detail'
     ]);
     db.close();
   });

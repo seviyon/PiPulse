@@ -206,13 +206,15 @@ const migrations: ((db: DatabaseSync) => void)[] = [
   // 'abandoned' after the retry window). webhook_state is per webhook what the
   // sender remembers across restarts (degraded, needs attention, probe time,
   // lifetime counts); webhook_summary_counts is what compaction took out of
-  // the queue and has not yet reported, per rule, for the recovery summary.
-  // Rows that were already attempted are marked started, so an upgrade never
+  // the queue and has not yet reported, per rule, for the recovery summary;
+  // detail holds a pending summary row's own counts so a later compaction can
+  // add to it. Rows that were already attempted are marked started, so an upgrade never
   // treats a possibly delivered row as untouched.
   (db) => {
     db.exec(`
       ALTER TABLE notifications ADD COLUMN started_at INTEGER;
       ALTER TABLE notifications ADD COLUMN failed_kind TEXT;
+      ALTER TABLE notifications ADD COLUMN detail TEXT;
       CREATE TABLE webhook_state (
         webhook_id         TEXT PRIMARY KEY,
         degraded_since     INTEGER,
