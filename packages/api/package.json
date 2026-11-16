@@ -11,7 +11,7 @@
     "dev": "PIPULSE_TLS=${PIPULSE_TLS:-off} NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server.ts"
   },
   "dependencies": {
-    "@fastify/static": "10.1.10",
+    "@fastify/static": "10.1.11",
     "@fastify/websocket": "11.3.7",
     "@pipulse/alerts": "*",
     "@pipulse/collector": "*",
