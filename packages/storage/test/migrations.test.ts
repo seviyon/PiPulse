@@ -226,14 +226,14 @@ describe('schema migrations', () => {
 
   it('adds acknowledged_at and rule_hash to alerts (migration 6)', () => {
     const db = openDb(join(dir, 'six.db'));
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(6);
     expect(columns(db, 'alerts')).toEqual(expect.arrayContaining(['acknowledged_at', 'rule_hash']));
     db.close();
   });
 
   it('adds the notifications outbox (migration 7)', () => {
     const db = openDb(join(dir, 'seven.db'));
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(7);
     expect(columns(db, 'notifications')).toEqual([
       'id',
       'webhook_id',
@@ -248,7 +248,73 @@ describe('schema migrations', () => {
       'last_error',
       'created_at',
       'sent_at',
-      'failed_at'
+      'failed_at',
+      'started_at',
+      'failed_kind'
+    ]);
+    db.close();
+  });
+
+  it('adds the webhook state and per-rule count tables (migration 8)', () => {
+    const db = openDb(join(dir, 'eight.db'));
+    expect(SCHEMA_VERSION).toBe(8);
+    expect(columns(db, 'webhook_state')).toEqual([
+      'webhook_id',
+      'degraded_since',
+      'needs_attention',
+      'reason',
+      'next_probe_at',
+      'opened_and_cleared',
+      'cleared',
+      'rejected',
+      'abandoned',
+      'dropped',
+      'last_summary_at'
+    ]);
+    expect(columns(db, 'webhook_summary_counts')).toEqual(['webhook_id', 'kind', 'rule_id', 'n']);
+    const key = (
+      db.prepare('PRAGMA table_info(webhook_summary_counts)').all() as {
+        name: string;
+        pk: number;
+      }[]
+    )
+      .filter((c) => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map((c) => c.name);
+    expect(key).toEqual(['webhook_id', 'kind', 'rule_id']);
+    db.close();
+  });
+
+  it('marks rows from a version-7 database that were attempted as started (migration 8)', () => {
+    const path = join(dir, 'v7.db');
+    const v7 = new DatabaseSync(path);
+    v7.exec(`
+      CREATE TABLE notifications (
+        id INTEGER PRIMARY KEY, webhook_id TEXT NOT NULL, alert_id INTEGER NOT NULL, event TEXT NOT NULL,
+        rule_id TEXT NOT NULL, metric TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL,
+        sent_at INTEGER, failed_at INTEGER
+      );
+      INSERT INTO notifications (id, webhook_id, alert_id, event, rule_id, metric, payload, status, attempts, next_at, created_at, sent_at, failed_at)
+      VALUES (1, 'w', 1, 'raised', 'r', 'm', '{}', 'pending', 2, 9, 100, NULL, 150),
+             (2, 'w', 2, 'raised', 'r', 'm', '{}', 'sent', 1, 9, 200, 250, NULL),
+             (3, 'w', 3, 'raised', 'r', 'm', '{}', 'failed', 6, 9, 300, NULL, 350),
+             (4, 'w', 4, 'raised', 'r', 'm', '{}', 'pending', 0, 9, 400, NULL, NULL);
+      PRAGMA user_version = 7;
+    `);
+    v7.close();
+
+    const db = openDb(path);
+    const rows = db
+      .prepare(
+        'SELECT id, started_at AS startedAt, failed_kind AS failedKind FROM notifications ORDER BY id'
+      )
+      .all();
+    expect(rows).toEqual([
+      { id: 1, startedAt: 150, failedKind: null },
+      { id: 2, startedAt: 250, failedKind: null },
+      { id: 3, startedAt: 350, failedKind: 'abandoned' },
+      { id: 4, startedAt: null, failedKind: null }
     ]);
     db.close();
   });
