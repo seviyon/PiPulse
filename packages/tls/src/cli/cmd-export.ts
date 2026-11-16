@@ -15,7 +15,7 @@ import { usage, type Context } from './cli-common.js';
 /** Per-OS steps. The wording is always "trust this certificate authority", never "accept this certificate". */
 export const TRUST_STEPS = [
   'Trust this certificate authority on each device that opens PiPulse (not a single certificate):',
-  '  macOS (Safari, Chrome): sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain pipulse-ca.crt',
+  '  macOS (Safari, Chrome): sudo security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain pipulse-ca.crt',
   '  Firefox: Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import (tick "identify websites");',
   '           on macOS and Windows, setting security.enterprise_roots.enabled to true in about:config makes it use the system store',
   '  Windows (administrator prompt): certutil -addstore -f Root pipulse-ca.crt',
@@ -23,6 +23,8 @@ export const TRUST_STEPS = [
   '           (Chrome on Linux: certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n pipulse -i pipulse-ca.crt)',
   '  iPhone/iPad: open the file, install the profile, then Settings → General → About → Certificate Trust Settings → turn it on',
   '  Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate',
+  'Trust it for TLS (web) use only where the system lets you choose, as the macOS command above does.',
+  'Windows and Debian/Ubuntu trust a CA for every purpose: install it only on devices you control.',
   'Before importing, check the fingerprint on that device: openssl x509 -in pipulse-ca.crt -noout -fingerprint -sha256'
 ];
 

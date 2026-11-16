@@ -198,6 +198,85 @@ export function checkSubnet(text: string): Cidr {
  */
 export const EXCLUDE_BELOW_SINGLE_LABEL = true;
 
+/**
+ * Names that many unrelated sites sit below: a CA limited to one could vouch for all of them.
+ * A short list of the common ones (not the full public suffix list, which would be a
+ * dependency): the second-level registries of the larger country domains, shared hosting
+ * domains, and reverse DNS. `home.arpa` is not here: RFC 8375 sets it aside for home networks.
+ */
+export const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
+  'co.uk',
+  'org.uk',
+  'me.uk',
+  'ac.uk',
+  'gov.uk',
+  'ltd.uk',
+  'plc.uk',
+  'net.uk',
+  'sch.uk',
+  'com.au',
+  'net.au',
+  'org.au',
+  'edu.au',
+  'gov.au',
+  'co.nz',
+  'net.nz',
+  'org.nz',
+  'govt.nz',
+  'co.jp',
+  'ne.jp',
+  'or.jp',
+  'ac.jp',
+  'go.jp',
+  'com.br',
+  'net.br',
+  'org.br',
+  'gov.br',
+  'co.za',
+  'org.za',
+  'co.in',
+  'net.in',
+  'org.in',
+  'gov.in',
+  'com.cn',
+  'net.cn',
+  'org.cn',
+  'gov.cn',
+  'co.kr',
+  'or.kr',
+  'com.mx',
+  'com.ar',
+  'com.tr',
+  'com.sg',
+  'com.hk',
+  'com.tw',
+  'github.io',
+  'gitlab.io',
+  'herokuapp.com',
+  'appspot.com',
+  'blogspot.com',
+  'azurewebsites.net',
+  'cloudfront.net',
+  'amazonaws.com',
+  'netlify.app',
+  'vercel.app',
+  'pages.dev',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'arpa',
+  'in-addr.arpa',
+  'ip6.arpa'
+]);
+
+function refuseIfPublicSuffix(canonical: string): void {
+  if (PUBLIC_SUFFIXES.has(canonical)) {
+    throw new ConstraintError(
+      `${canonical} is a public suffix (every name below it belongs to someone else), so a CA limited to it could vouch for sites you do not own; use a name below it, such as host.${canonical}`
+    );
+  }
+}
+
 export function buildConstraints(
   input: { hostname: string; names: string[]; subnets: string[] },
   options: { excludeBelowSingleLabel?: boolean } = {}
@@ -208,6 +287,7 @@ export function buildConstraints(
   const exclude = options.excludeBelowSingleLabel ?? EXCLUDE_BELOW_SINGLE_LABEL;
   const warnings: string[] = [];
   const host = canonicalName(input.hostname);
+  refuseIfPublicSuffix(host);
   const extra: string[] = [];
   for (const name of input.names) {
     if (isIP(name.trim()) !== 0) {
@@ -216,6 +296,7 @@ export function buildConstraints(
       );
     } else {
       const canonical = canonicalName(name);
+      refuseIfPublicSuffix(canonical);
       // "com" permitted would let the CA key vouch for every *.com site on every device that
       // trusts it (RFC 5280 matches the whole subtree). Only the host itself and localhost
       // may be single-label; an alias needs a dotted form (pi.local, pi.lan).
@@ -354,14 +435,24 @@ export function defaultRouteAddresses(
   const found: string[] = [];
   const usable = (iface?: string) => (iface && !SKIPPED_INTERFACE.test(iface) ? iface : undefined);
   const [v4, v6] = [usable(route.v4), usable(route.v6)];
+  // An address this reader refuses (libuv prints ::a.b.c.d with a dotted tail for a 6in4
+  // tunnel) is left out: one odd address must not stop every renewal.
+  const readable = (text: string): Address | undefined => {
+    try {
+      return parseAddress(text);
+    } catch {
+      return undefined;
+    }
+  };
   for (const info of v4 ? (interfaces[v4] ?? []) : []) {
-    if (info.family === 'IPv4' && !info.internal)
-      found.push(formatAddress(parseAddress(info.address)));
+    if (info.family !== 'IPv4' || info.internal) continue;
+    const address = readable(info.address);
+    if (address) found.push(formatAddress(address));
   }
   for (const info of v6 ? (interfaces[v6] ?? []) : []) {
     if (info.family !== 'IPv6' || info.internal) continue;
-    const address = parseAddress(info.address.split('%')[0]!);
-    if (!contains(LINK_LOCAL_6, address)) found.push(formatAddress(address));
+    const address = readable(info.address.split('%')[0]!);
+    if (address && !contains(LINK_LOCAL_6, address)) found.push(formatAddress(address));
   }
   return unique(found);
 }
@@ -407,7 +498,7 @@ export function subnetWarning(cidrText: string, interfaces: Interfaces): string 
  * The names the CA allows beyond the host's own: the dotted ones (an alias added with
  * `new-ca --name`), leaving out `<host>.local` pairs, which follow the current host name.
  */
-function caNames(constraints: Constraints): string[] {
+export function caNames(constraints: Constraints): string[] {
   return constraints.dns.filter(
     (name) =>
       name.includes('.') &&
@@ -480,6 +571,7 @@ export function consequenceText(constraints: Constraints): string[] {
   const below = constraints.excludedDns.map((name) => name.slice(1));
   const lines = [
     'This CA will be trusted for the following DNS names and IP ranges. Anyone holding its private key can impersonate hosts within those ranges.',
+    'These name limits cover web names and addresses only. A device that trusts this CA for every purpose would also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.',
     `  DNS: ${constraints.dns.join(', ')} (and names below them${below.length ? `, except below ${below.join(', ')}` : ''})`,
     `  IP:  ${[...FIXED_IP_RANGES, ...constraints.subnets].join(', ')}`
   ];

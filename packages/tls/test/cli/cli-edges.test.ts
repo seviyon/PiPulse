@@ -439,3 +439,159 @@ describe('remaining branches of the review fixes', () => {
     expect(typeof real.ask).toBe('function');
   });
 });
+
+describe('new-ca after the host was renamed', () => {
+  const metaDns = () => readMeta(ctx.layout)!.constraints.dns;
+  const renamed = (hostname: string, overrides: Parameters<typeof testContext>[1] = {}) =>
+    testContext(dir, { hostname: () => hostname, ...overrides });
+
+  it('drops the old host name and its .local, and says so', async () => {
+    await main(['init'], ctx);
+    expect(metaDns()).toEqual(['io', 'io.local', 'localhost']);
+    const after = renamed('ganymede');
+    expect(await main(['new-ca', '--yes'], after)).toBe(0);
+    expect(metaDns()).toEqual(['ganymede', 'ganymede.local', 'localhost']);
+    expect(after.lines.join('\n')).toContain('ganymede');
+    expect(after.lines.join('\n')).toContain('dropping the old host name io');
+    expect(
+      new X509Certificate(readFileSync(paths(ctx.layout).leafCrt)).subjectAltName
+    ).not.toContain('io.local');
+  });
+
+  it('does the same for a dotted host name', async () => {
+    const first = renamed('pi.lan');
+    await main(['init'], first);
+    expect(metaDns()).toEqual(['pi.lan', 'pi.lan.local', 'localhost']);
+    expect(await main(['new-ca', '--yes'], renamed('pi2.lan'))).toBe(0);
+    expect(metaDns()).toEqual(['pi2.lan', 'pi2.lan.local', 'localhost']);
+  });
+
+  it('keeps an alias the operator added with --name, and lets --name bring the old host back', async () => {
+    await main(['init'], ctx);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], testContext(dir))).toBe(0);
+    expect(await main(['new-ca', '--yes'], renamed('ganymede'))).toBe(0);
+    expect(metaDns()).toEqual(['ganymede', 'ganymede.local', 'localhost', 'nas.lan']);
+    const oldest = readMeta(ctx.layout)!.backups[0]!.name; // two backups exist: the third rotation needs one pruned
+    expect(
+      await main(
+        ['new-ca', '--name', 'io.lan', '--yes', '--prune-oldest', oldest],
+        renamed('ganymede')
+      )
+    ).toBe(0);
+    expect(metaDns()).toContain('io.lan');
+  });
+
+  it('says why a host name the CA cannot hold is refused, and changes nothing', async () => {
+    await main(['init'], ctx);
+    const before = readFileSync(paths(ctx.layout).publicCa, 'utf8');
+    const bad = renamed('bad_host'); // an underscore is not allowed in a DNS name
+    expect(await main(['new-ca', '--yes'], bad)).toBe(1);
+    expect(bad.errors.join('\n')).toContain('not creating a CA');
+    expect(readFileSync(paths(ctx.layout).publicCa, 'utf8')).toBe(before);
+  });
+
+  it('says nothing about a host that kept its name', async () => {
+    await main(['init'], ctx);
+    const same = testContext(dir);
+    expect(await main(['new-ca', '--yes'], same)).toBe(0);
+    expect(same.lines.join('\n')).not.toContain('dropping the old host name');
+  });
+
+  it('says it keeps a name that was asked for again, and says nothing when there are none to keep', async () => {
+    await main(['init'], ctx);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], testContext(dir))).toBe(0);
+    const again = testContext(dir);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], again)).toBe(0);
+    expect(again.lines.join('\n')).toContain('Keeping the current names (nas.lan)');
+
+    const other = tempDir();
+    await main(['init'], testContext(other));
+    const none = testContext(other);
+    expect(await main(['new-ca', '--yes'], none)).toBe(0);
+    expect(none.lines.join('\n')).not.toContain('Keeping the current names');
+    rmSync(other, { recursive: true, force: true });
+  });
+
+  it('compares the host with the name the CA stores, not with the raw system name', async () => {
+    await main(['init'], ctx);
+    const trailingDot = renamed('IO.'); // what os.hostname() may give: upper case, a trailing dot
+    expect(await main(['new-ca', '--yes'], trailingDot)).toBe(0);
+    expect(trailingDot.lines.join('\n')).not.toContain('dropping the old host name');
+    expect(metaDns()).toEqual(['io', 'io.local', 'localhost']);
+  });
+
+  it('does not say it drops the old host name when --name asks for it', async () => {
+    await main(['init'], renamed('pi.lan'));
+    const asked = renamed('pi2.lan');
+    expect(await main(['new-ca', '--name', 'pi.lan', '--yes'], asked)).toBe(0);
+    expect(asked.lines.join('\n')).not.toContain('dropping the old host name');
+    expect(metaDns()).toContain('pi.lan');
+    expect(metaDns()).not.toContain('pi.lan.local');
+  });
+});
+
+describe('new-ca after a rename, with the old host asked for in another spelling', () => {
+  it.each([' PI.LAN ', 'pi.lan.'])(
+    'does not say it drops the old host for --name %j',
+    async (spelling) => {
+      await main(['init'], testContext(dir, { hostname: () => 'pi.lan' }));
+      const asked = testContext(dir, { hostname: () => 'pi2.lan' });
+      expect(await main(['new-ca', '--name', spelling, '--yes'], asked)).toBe(0);
+      expect(asked.lines.join('\n')).not.toContain('dropping the old host name');
+    }
+  );
+
+  it('refuses a --name that is not a valid name, after saying nothing about the old host', async () => {
+    await main(['init'], testContext(dir, { hostname: () => 'pi.lan' }));
+    const bad = testContext(dir, { hostname: () => 'pi2.lan' });
+    expect(await main(['new-ca', '--name', 'not a name!', '--yes'], bad)).toBe(1);
+    expect(bad.errors.join('\n')).toContain('is not a valid host name');
+  });
+
+  it('reports something thrown that is not an Error as text', async () => {
+    await main(['init'], ctx);
+    let calls = 0;
+    const odd = testContext(dir, {
+      hostname: () => {
+        if (++calls > 1) throw 'odd failure';
+        return 'io';
+      }
+    });
+    expect(await main(['new-ca', '--yes'], odd)).toBe(1);
+    expect(odd.errors.join('\n')).toContain('not creating a CA: odd failure');
+  });
+});
+
+describe('a name that is refused as a public suffix', () => {
+  it('says where it came from and how to get past it', async () => {
+    await main(['init'], ctx);
+    const refused = testContext(dir, {
+      env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_NAMES: 'github.io' }
+    });
+    expect(await main(['new-ca', '--yes'], refused)).toBe(1);
+    const text = refused.errors.join('\n');
+    expect(text).toContain('github.io is a public suffix');
+    expect(text).toContain('PIPULSE_TLS_NAMES');
+    expect(text).toContain('--name none');
+  });
+
+  it('says nothing about where it came from for any other refusal', async () => {
+    await main(['init'], ctx);
+    const other = testContext(dir, { env: { PIPULSE_TLS_DIR: dir, PIPULSE_TLS_NAMES: 'com' } });
+    expect(await main(['new-ca', '--yes'], other)).toBe(1);
+    expect(other.errors.join('\n')).not.toContain('--name none');
+  });
+});
+
+describe('the scope new-ca prints before replacing a CA', () => {
+  it('shows the current scope as its DNS and IP lines only, then the new scope', async () => {
+    await main(['init'], ctx);
+    const rotation = testContext(dir);
+    expect(await main(['new-ca', '--yes'], rotation)).toBe(0);
+    const at = rotation.lines.indexOf('Current CA scope:');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(rotation.lines[at + 1]).toMatch(/^ {2}DNS: io, io\.local, localhost/);
+    expect(rotation.lines[at + 2]).toMatch(/^ {2}IP: {2}127\.0\.0\.1\/32/);
+    expect(rotation.lines[at + 3]).toBe('New CA scope:');
+  });
+});

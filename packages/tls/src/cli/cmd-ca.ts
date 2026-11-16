@@ -4,6 +4,8 @@ import { opensslVersion } from '../ca/issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import {
   buildConstraints,
+  caNames,
+  canonicalName,
   consequenceText,
   subnetWarning,
   type Constraints
@@ -135,12 +137,35 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   if (requestedNames.includes('none') && requestedNames.length > 1)
     throw new UsageError('--name none cannot be combined with other names');
   const dropNames = requestedNames[0] === 'none';
+  // The names kept are the ones the operator added (the dotted ones, minus the pairs that follow
+  // a host name). A host that was renamed since the CA was made drops its old names: the CA
+  // would otherwise keep vouching for a name a different device may take.
+  // The host as the CA stores it (trimmed, lower case, no trailing dot, punycode): os.hostname()
+  // can give a form that differs from the stored one, and that is not a rename.
+  const host = (() => {
+    try {
+      return canonicalName(ctx.hostname());
+    } catch {
+      return ctx.hostname().toLowerCase();
+    }
+  })();
+  const oldHost = current.kind === 'ok' ? current.ca.constraints.dns[0] : undefined;
+  const renamedFrom = oldHost !== undefined && oldHost !== host ? oldHost : undefined;
   const keptNames =
     current.kind === 'ok' && !dropNames
-      ? current.ca.constraints.dns.filter(
-          (name) => name.includes('.') && name !== `${ctx.hostname().toLowerCase()}.local`
-        )
+      ? caNames(current.ca.constraints).filter((name) => name !== host && name !== renamedFrom)
       : [];
+  const askedForOldHost = requestedNames.some((name) => {
+    try {
+      return canonicalName(name) === renamedFrom;
+    } catch {
+      return false; // not a valid name: buildConstraints refuses it below
+    }
+  });
+  if (renamedFrom !== undefined && !dropNames && !askedForOldHost)
+    ctx.out(
+      `The host is now ${host}, not ${renamedFrom}: dropping the old host name ${renamedFrom} and ${renamedFrom}.local from the new CA (--name keeps a name on purpose).`
+    );
   const newNames = dropNames ? [] : requestedNames.filter((name) => !keptNames.includes(name));
   if (keptNames.length > 0 && newNames.length === 0)
     ctx.out(
@@ -156,7 +181,14 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
     for (const warning of built.warnings) ctx.err(`warning: ${warning}`);
     constraints = built.constraints;
   } catch (error) {
-    ctx.err(`not creating a CA: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.err(`not creating a CA: ${message}`);
+    // A name refused for being a public suffix came from PIPULSE_TLS_NAMES or from the current
+    // CA (a CA made before the list existed): say which ways out there are.
+    if (/is a public suffix/.test(message))
+      ctx.err(
+        'The name comes from PIPULSE_TLS_NAMES (edit pipulse.env) or from the current CA (pass --name none to drop its names, then --name for the ones to keep).'
+      );
     return 1;
   }
   for (const subnet of constraints.subnets) {
@@ -165,7 +197,8 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   }
   if (current.kind === 'ok') {
     ctx.out('Current CA scope:');
-    for (const line of consequenceText(current.ca.constraints).slice(1, 3)) ctx.out(line);
+    // The DNS and IP lines only: the header and the note about other identities come first.
+    for (const line of consequenceText(current.ca.constraints).slice(2, 4)) ctx.out(line);
   }
   ctx.out('New CA scope:');
   for (const line of consequenceText(constraints)) ctx.out(line);

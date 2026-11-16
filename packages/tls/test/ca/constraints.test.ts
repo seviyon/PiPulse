@@ -18,6 +18,7 @@ import {
   parseAddress,
   parseCidr,
   parseConstraints,
+  PUBLIC_SUFFIXES,
   scopeOf,
   subnetWarning
 } from '../../src/ca/constraints.js';
@@ -586,5 +587,174 @@ describe('consequenceText without exclusions', () => {
     expect(text).toContain('DNS: io, io.local, localhost (and names below them)');
     expect(text).not.toContain('except below');
     expect(text).not.toContain('Accepting');
+  });
+});
+
+describe('what a trusting device is told', () => {
+  it('says the name limits cover web names and addresses only, and how to trust for the web only', () => {
+    const { constraints } = buildConstraints({ hostname: 'io', names: [], subnets: [] });
+    const text = consequenceText(constraints).join('\n');
+    expect(text).toContain('cover web names and addresses only');
+    expect(text).toContain('email addresses');
+    expect(text).toContain('TLS (web) use only');
+  });
+});
+
+describe('an address the default-route interface carries that cannot be read', () => {
+  const nic = (family: 'IPv4' | 'IPv6', address: string) => ({
+    address,
+    netmask: '',
+    family,
+    mac: '00:00:00:00:00:00',
+    internal: false,
+    cidr: null
+  });
+
+  it('is left out, not thrown on (a 6in4 tunnel gives ::a.b.c.d with a dotted tail)', () => {
+    const interfaces = {
+      'he-ipv6': [nic('IPv6', '::192.168.1.35'), nic('IPv6', '::ffff:10.0.0.5')],
+      eth0: [nic('IPv4', '192.168.1.35')]
+    };
+    expect(defaultRouteAddresses({ v6: 'he-ipv6' }, interfaces)).toEqual([]);
+  });
+
+  it('does not lose the addresses that can be read', () => {
+    const interfaces = {
+      eth0: [
+        nic('IPv6', '::192.168.1.35'),
+        nic('IPv6', '2001:db8:1:2::35'),
+        nic('IPv4', '192.168.1.35')
+      ]
+    };
+    expect(defaultRouteAddresses({ v4: 'eth0', v6: 'eth0' }, interfaces)).toEqual([
+      '192.168.1.35',
+      '2001:db8:1:2::35'
+    ]);
+  });
+});
+
+describe('public suffixes', () => {
+  const build = (name: string) => buildConstraints({ hostname: 'io', names: [name], subnets: [] });
+
+  it.each(['co.uk', 'com.au', 'github.io', 'herokuapp.com', 'in-addr.arpa', 'CO.UK.'])(
+    'refuses %s: every name below it belongs to someone else',
+    (name) => {
+      expect(() => build(name)).toThrow(/public suffix/);
+    }
+  );
+
+  it.each(['nas.co.uk', 'me.github.io', 'example.com', 'home.arpa', 'pi.lan', 'x.home.arpa'])(
+    'allows %s',
+    (name) => {
+      expect(build(name).constraints.dns).toContain(name.toLowerCase());
+    }
+  );
+});
+
+describe('a host name that is itself a public suffix', () => {
+  it.each(['github.io', 'CO.UK.'])('refuses %s as the host, with no names given', (hostname) => {
+    expect(() => buildConstraints({ hostname, names: [], subnets: [] })).toThrow(/public suffix/);
+  });
+
+  it('still allows a host below a public suffix', () => {
+    expect(
+      buildConstraints({ hostname: 'nas.co.uk', names: [], subnets: [] }).constraints.dns
+    ).toContain('nas.co.uk');
+  });
+});
+
+describe('the list of public suffixes', () => {
+  // Pinned: an entry lost or misspelled by accident would let a CA be limited to that suffix.
+  const expected = [
+    'co.uk',
+    'org.uk',
+    'me.uk',
+    'ac.uk',
+    'gov.uk',
+    'ltd.uk',
+    'plc.uk',
+    'net.uk',
+    'sch.uk',
+    'com.au',
+    'net.au',
+    'org.au',
+    'edu.au',
+    'gov.au',
+    'co.nz',
+    'net.nz',
+    'org.nz',
+    'govt.nz',
+    'co.jp',
+    'ne.jp',
+    'or.jp',
+    'ac.jp',
+    'go.jp',
+    'com.br',
+    'net.br',
+    'org.br',
+    'gov.br',
+    'co.za',
+    'org.za',
+    'co.in',
+    'net.in',
+    'org.in',
+    'gov.in',
+    'com.cn',
+    'net.cn',
+    'org.cn',
+    'gov.cn',
+    'co.kr',
+    'or.kr',
+    'com.mx',
+    'com.ar',
+    'com.tr',
+    'com.sg',
+    'com.hk',
+    'com.tw',
+    'github.io',
+    'gitlab.io',
+    'herokuapp.com',
+    'appspot.com',
+    'blogspot.com',
+    'azurewebsites.net',
+    'cloudfront.net',
+    'amazonaws.com',
+    'netlify.app',
+    'vercel.app',
+    'pages.dev',
+    'workers.dev',
+    'web.app',
+    'firebaseapp.com',
+    'arpa',
+    'in-addr.arpa',
+    'ip6.arpa'
+  ];
+
+  it('holds exactly these names, all lower case and without a trailing dot', () => {
+    expect([...PUBLIC_SUFFIXES].sort()).toEqual([...expected].sort());
+    for (const name of PUBLIC_SUFFIXES) expect(name).toBe(name.toLowerCase().replace(/\.$/, ''));
+  });
+
+  it('refuses every one of them as a name for the CA', () => {
+    for (const name of expected)
+      expect(() => buildConstraints({ hostname: 'io', names: [name], subnets: [] })).toThrow(
+        /public suffix/
+      );
+  });
+});
+
+describe('an IPv4 address on the default-route interface that cannot be read', () => {
+  it('is left out, with the addresses that can be read kept', () => {
+    const nic = (address: string) => ({
+      address,
+      netmask: '',
+      family: 'IPv4' as const,
+      mac: '00:00:00:00:00:00',
+      internal: false,
+      cidr: null
+    });
+    expect(
+      defaultRouteAddresses({ v4: 'eth0' }, { eth0: [nic('not-an-address'), nic('192.168.1.35')] })
+    ).toEqual(['192.168.1.35']);
   });
 });
