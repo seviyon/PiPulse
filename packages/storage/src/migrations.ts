@@ -208,8 +208,11 @@ const migrations: ((db: DatabaseSync) => void)[] = [
   // lifetime counts); webhook_summary_counts is what compaction took out of
   // the queue and has not yet reported, per rule, for the recovery summary;
   // detail holds a pending summary row's own counts so a later compaction can
-  // add to it. Rows that were already attempted are marked started, so an upgrade never
-  // treats a possibly delivered row as untouched.
+  // add to it. Rows that were already attempted are marked started, and so is the oldest
+  // pending row of every webhook (the one the old sender may have had in flight when it
+  // stopped, and it never wrote a marker), so an upgrade never treats a possibly delivered
+  // row as untouched. A webhook with attempted rows pending was retrying: it starts degraded,
+  // from its earliest attempt.
   (db) => {
     db.exec(`
       ALTER TABLE notifications ADD COLUMN started_at INTEGER;
@@ -237,6 +240,12 @@ const migrations: ((db: DatabaseSync) => void)[] = [
       );
       UPDATE notifications SET started_at = COALESCE(sent_at, failed_at, created_at) WHERE attempts > 0;
       UPDATE notifications SET failed_kind = 'abandoned' WHERE status = 'failed' AND attempts > 0;
+      INSERT INTO webhook_state (webhook_id, degraded_since)
+        SELECT webhook_id, MIN(started_at) FROM notifications
+        WHERE status = 'pending' AND attempts > 0 GROUP BY webhook_id;
+      UPDATE notifications SET started_at = created_at
+        WHERE status = 'pending' AND started_at IS NULL
+          AND id IN (SELECT MIN(id) FROM notifications WHERE status = 'pending' GROUP BY webhook_id);
     `);
   }
 ];

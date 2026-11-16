@@ -157,6 +157,12 @@ export function shiftPending(db: PiPulseDb, ms: number): number {
       )
       .run(ms, ms, ms).changes
   );
+  // A waiting summary keeps its outage start in `detail`: it moves too, or a later compaction
+  // that adds to it would take the older of two starts that are on different clocks.
+  db.prepare(
+    `UPDATE notifications SET detail = json_set(detail, '$.since', json_extract(detail, '$.since') + ?)
+     WHERE event = 'summary' AND status = 'pending' AND detail IS NOT NULL`
+  ).run(ms);
   shiftState(db, ms);
   return moved;
 }

@@ -3,7 +3,13 @@ import { openDb, type PiPulseDb } from '@pipulse/storage';
 import { clearAlert, raiseAlert } from '@pipulse/alerts';
 import type { WebhookConfig } from '../src/config.js';
 import { ELIGIBLE_AFTER_MS, PENDING_CAP, compact } from '../src/compact.js';
-import { insertNotification, markFailed, markSent, markStarted } from '../src/outbox.js';
+import {
+  insertNotification,
+  markFailed,
+  markSent,
+  markStarted,
+  shiftPending
+} from '../src/outbox.js';
 import {
   addCount,
   clearNeedsAttention,
@@ -556,5 +562,31 @@ describe('an alert that several unchanged rule edits closed and reopened', () =>
     raiseRow(a.id, t);
     expect(run().coalesced).toBe(1);
     expect(rowsOf()).toEqual([]);
+  });
+});
+
+describe('a clock jump while a summary waits', () => {
+  it("moves the summary's outage start with the rest, so a merged summary reports the right one", () => {
+    setDegraded(db, 'w', NOW - 40 * MIN);
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    expect(detailOf().since).toBe(NOW - 40 * MIN);
+    shiftPending(db, 60 * MIN); // NTP steps the clock an hour ahead
+    expect(detailOf().since).toBe(NOW + 20 * MIN);
+    expect(getState(db, 'w').degradedSince).toBe(NOW + 20 * MIN);
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    compact(db, hook(), { now: NOW + 60 * MIN, hostname: 'Io', metrics: [] });
+    expect(detailOf().since).toBe(NOW + 20 * MIN);
+  });
+
+  it("keeps the other parts of the summary's detail, and leaves rows that are not pending summaries alone", () => {
+    episode({ raisedAgo: 30 * MIN, clearedAgo: 20 * MIN });
+    run();
+    const before = detailOf();
+    shiftPending(db, 1000);
+    expect(detailOf().counts).toEqual(before.counts);
+    db.prepare("UPDATE notifications SET status = 'sent' WHERE event = 'summary'").run();
+    shiftPending(db, 1000);
+    expect(detailOf().since).toBe(before.since + 1000); // a sent summary does not move again
   });
 });
