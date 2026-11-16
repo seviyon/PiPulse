@@ -60,21 +60,28 @@ export function compact(
     const young = (row: PendingRow) => now - row.createdAt < ELIGIBLE_AFTER_MS;
     const getsRaises = webhook.events.includes('raised');
 
-    // An alert is still going when it is open, or when an unchanged rule edit closed it and
-    // reopened it as another alert that has no raise of its own here (the enqueuer leaves
-    // that raise out on purpose: the first one stands for both).
+    // An alert is still going when it is open, or when unchanged rule edits closed it and
+    // reopened it, one after another, until an alert that is still open: the enqueuer leaves
+    // the raise of each reopened alert out on purpose, so the first one stands for the whole
+    // run. The walk stops at an alert that has a raise of its own here (the edit changed
+    // something, so that alert speaks for itself). `UNION` drops repeats, so edits made in
+    // one instant, which can point at each other, still end.
     const alertGoing = (alertId: number) =>
       db
         .prepare(
-          `SELECT 1 FROM alerts a WHERE a.id = ? AND (
-             a.cleared_at IS NULL OR (
-               a.cleared_by = 'rule_changed' AND EXISTS (
-                 SELECT 1 FROM alerts b
-                 WHERE b.rule_id = a.rule_id AND b.metric = a.metric
-                   AND b.cleared_at IS NULL AND b.raised_at = a.cleared_at
-                   AND NOT EXISTS (
-                     SELECT 1 FROM notifications n
-                     WHERE n.webhook_id = ? AND n.alert_id = b.id AND n.event = 'raised'))))`
+          `WITH RECURSIVE run(id) AS (
+             SELECT ?
+             UNION
+             SELECT b.id FROM run
+               JOIN alerts a ON a.id = run.id
+               JOIN alerts b ON b.rule_id = a.rule_id AND b.metric = a.metric
+                 AND b.raised_at = a.cleared_at AND b.id <> a.id
+             WHERE a.cleared_by = 'rule_changed'
+               AND NOT EXISTS (
+                 SELECT 1 FROM notifications n
+                 WHERE n.webhook_id = ? AND n.alert_id = b.id AND n.event = 'raised')
+           )
+           SELECT 1 FROM run JOIN alerts x ON x.id = run.id WHERE x.cleared_at IS NULL LIMIT 1`
         )
         .get(alertId, webhook.id) !== undefined;
 

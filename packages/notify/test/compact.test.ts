@@ -467,3 +467,80 @@ describe('while the endpoint rejects requests outright', () => {
     expect(body).toContain('1 alert opened and cleared: gone ×1');
   });
 });
+
+describe('an alert that several unchanged rule edits closed and reopened', () => {
+  const spec = {
+    ruleId: 'cpu_busy',
+    metric: 'cpu_load',
+    severity: 'warning' as const,
+    message: 'busy',
+    value: 1
+  };
+  const raiseRow = (alertId: number, at: number) =>
+    insertNotification(db, {
+      webhookId: 'w',
+      alertId,
+      event: 'raised',
+      ruleId: 'cpu_busy',
+      metric: 'cpu_load',
+      payload: '{}',
+      nextAt: at,
+      createdAt: at
+    });
+  /** A (raised, edited) -> B (edited) -> C (open): each edit closes one alert as the next opens. */
+  function twoEdits() {
+    const t0 = NOW - 30 * MIN;
+    const t1 = NOW - 20 * MIN;
+    const t2 = NOW - 10 * MIN;
+    const a = raiseAlert(db, { ...spec, raisedAt: t0 });
+    clearAlert(db, a.id, t1, 'rule_changed');
+    const b = raiseAlert(db, { ...spec, raisedAt: t1 });
+    clearAlert(db, b.id, t2, 'rule_changed');
+    const c = raiseAlert(db, { ...spec, raisedAt: t2 });
+    return { a, b, c, t0, t1, t2 };
+  }
+
+  it('keeps the first raise, which stands for the alert that is open after two edits', () => {
+    const { a, t0 } = twoEdits();
+    raiseRow(a.id, t0);
+    expect(run()).toEqual({ coalesced: 0, summaryQueued: false });
+    expect(rowFor(a.id, 'raised')).toBeDefined();
+    expect(getState(db, 'w').counts.opened_and_cleared).toBe(0);
+  });
+
+  it('follows any number of edits', () => {
+    const { a, c, t0, t2 } = twoEdits();
+    clearAlert(db, c.id, t2 + 1 * MIN, 'rule_changed');
+    raiseAlert(db, { ...spec, raisedAt: t2 + 1 * MIN });
+    raiseRow(a.id, t0);
+    expect(run().coalesced).toBe(0);
+  });
+
+  it('drops the raise when the last alert has a raise of its own (the last edit changed something)', () => {
+    const { a, c, t0, t2 } = twoEdits();
+    raiseRow(a.id, t0);
+    raiseRow(c.id, t2);
+    expect(run().coalesced).toBe(1);
+    expect(rowsOf().map((r) => r.alertId)).toEqual([c.id]);
+  });
+
+  it('drops the first raise when the first edit changed something, and keeps the one the second edit left standing', () => {
+    // A -> B changed (B has its own raise); B -> C unchanged (that raise stands for C)
+    const { a, b, t0, t1 } = twoEdits();
+    raiseRow(a.id, t0);
+    raiseRow(b.id, t1);
+    expect(run().coalesced).toBe(1);
+    expect(rowsOf().map((r) => r.alertId)).toEqual([b.id]);
+  });
+
+  it('ends when the edits end without an open alert, and does not loop on edits made in one instant', () => {
+    const t = NOW - 20 * MIN;
+    const a = raiseAlert(db, { ...spec, raisedAt: t });
+    clearAlert(db, a.id, t, 'rule_changed');
+    const b = raiseAlert(db, { ...spec, raisedAt: t });
+    clearAlert(db, b.id, t, 'rule_changed'); // A and B point at each other
+    raiseRow(a.id, t);
+    expect(run().coalesced).toBe(1);
+    expect(rowsOf()).toEqual([]);
+  });
+});
