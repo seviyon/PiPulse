@@ -530,6 +530,31 @@ describe('new-ca after the host was renamed', () => {
   });
 });
 
+describe('new-ca after a rename, with the old host asked for in another spelling', () => {
+  it.each([' PI.LAN ', 'pi.lan.'])(
+    'does not say it drops the old host for --name %j',
+    async (spelling) => {
+      await main(['init'], testContext(dir, { hostname: () => 'pi.lan' }));
+      const asked = testContext(dir, { hostname: () => 'pi2.lan' });
+      expect(await main(['new-ca', '--name', spelling, '--yes'], asked)).toBe(0);
+      expect(asked.lines.join('\n')).not.toContain('dropping the old host name');
+    }
+  );
+
+  it('reports something thrown that is not an Error as text', async () => {
+    await main(['init'], ctx);
+    let calls = 0;
+    const odd = testContext(dir, {
+      hostname: () => {
+        if (++calls > 1) throw 'odd failure';
+        return 'io';
+      }
+    });
+    expect(await main(['new-ca', '--yes'], odd)).toBe(1);
+    expect(odd.errors.join('\n')).toContain('not creating a CA: odd failure');
+  });
+});
+
 describe('a name that is refused as a public suffix', () => {
   it('says where it came from and how to get past it', async () => {
     await main(['init'], ctx);

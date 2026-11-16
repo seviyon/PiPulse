@@ -651,6 +651,18 @@ describe('public suffixes', () => {
   );
 });
 
+describe('a host name that is itself a public suffix', () => {
+  it.each(['github.io', 'CO.UK.'])('refuses %s as the host, with no names given', (hostname) => {
+    expect(() => buildConstraints({ hostname, names: [], subnets: [] })).toThrow(/public suffix/);
+  });
+
+  it('still allows a host below a public suffix', () => {
+    expect(
+      buildConstraints({ hostname: 'nas.co.uk', names: [], subnets: [] }).constraints.dns
+    ).toContain('nas.co.uk');
+  });
+});
+
 describe('the list of public suffixes', () => {
   // Pinned: an entry lost or misspelled by accident would let a CA be limited to that suffix.
   const expected = [

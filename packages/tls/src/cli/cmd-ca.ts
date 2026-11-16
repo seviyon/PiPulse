@@ -155,7 +155,13 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
     current.kind === 'ok' && !dropNames
       ? caNames(current.ca.constraints).filter((name) => name !== host && name !== renamedFrom)
       : [];
-  const askedForOldHost = requestedNames.some((name) => name.trim().toLowerCase() === renamedFrom);
+  const askedForOldHost = requestedNames.some((name) => {
+    try {
+      return canonicalName(name) === renamedFrom;
+    } catch {
+      return false; // not a valid name: buildConstraints refuses it below
+    }
+  });
   if (renamedFrom !== undefined && !dropNames && !askedForOldHost)
     ctx.out(
       `The host is now ${host}, not ${renamedFrom}: dropping the old host name ${renamedFrom} and ${renamedFrom}.local from the new CA (--name keeps a name on purpose).`
@@ -175,7 +181,7 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
     for (const warning of built.warnings) ctx.err(`warning: ${warning}`);
     constraints = built.constraints;
   } catch (error) {
-    const message = (error as Error).message;
+    const message = error instanceof Error ? error.message : String(error);
     ctx.err(`not creating a CA: ${message}`);
     // A name refused for being a public suffix came from PIPULSE_TLS_NAMES or from the current
     // CA (a CA made before the list existed): say which ways out there are.

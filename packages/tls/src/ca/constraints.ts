@@ -269,6 +269,14 @@ export const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
   'ip6.arpa'
 ]);
 
+function refuseIfPublicSuffix(canonical: string): void {
+  if (PUBLIC_SUFFIXES.has(canonical)) {
+    throw new ConstraintError(
+      `${canonical} is a public suffix (every name below it belongs to someone else), so a CA limited to it could vouch for sites you do not own; use a name below it, such as host.${canonical}`
+    );
+  }
+}
+
 export function buildConstraints(
   input: { hostname: string; names: string[]; subnets: string[] },
   options: { excludeBelowSingleLabel?: boolean } = {}
@@ -279,6 +287,7 @@ export function buildConstraints(
   const exclude = options.excludeBelowSingleLabel ?? EXCLUDE_BELOW_SINGLE_LABEL;
   const warnings: string[] = [];
   const host = canonicalName(input.hostname);
+  refuseIfPublicSuffix(host);
   const extra: string[] = [];
   for (const name of input.names) {
     if (isIP(name.trim()) !== 0) {
@@ -287,14 +296,10 @@ export function buildConstraints(
       );
     } else {
       const canonical = canonicalName(name);
+      refuseIfPublicSuffix(canonical);
       // "com" permitted would let the CA key vouch for every *.com site on every device that
       // trusts it (RFC 5280 matches the whole subtree). Only the host itself and localhost
       // may be single-label; an alias needs a dotted form (pi.local, pi.lan).
-      if (PUBLIC_SUFFIXES.has(canonical)) {
-        throw new ConstraintError(
-          `${canonical} is a public suffix (every name below it belongs to someone else), so a CA limited to it could vouch for sites you do not own; use a name below it, such as host.${canonical}`
-        );
-      }
       if (!canonical.includes('.') && canonical !== host && canonical !== 'localhost') {
         throw new ConstraintError(
           `${canonical} is a single-label name, which would let this CA issue for every name below it (all of *.${canonical}); use a dotted name such as ${canonical}.local`
