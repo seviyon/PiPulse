@@ -439,3 +439,67 @@ describe('remaining branches of the review fixes', () => {
     expect(typeof real.ask).toBe('function');
   });
 });
+
+describe('new-ca after the host was renamed', () => {
+  const metaDns = () => readMeta(ctx.layout)!.constraints.dns;
+  const renamed = (hostname: string, overrides: Parameters<typeof testContext>[1] = {}) =>
+    testContext(dir, { hostname: () => hostname, ...overrides });
+
+  it('drops the old host name and its .local, and says so', async () => {
+    await main(['init'], ctx);
+    expect(metaDns()).toEqual(['io', 'io.local', 'localhost']);
+    const after = renamed('ganymede');
+    expect(await main(['new-ca', '--yes'], after)).toBe(0);
+    expect(metaDns()).toEqual(['ganymede', 'ganymede.local', 'localhost']);
+    expect(after.lines.join('\n')).toContain('ganymede');
+    expect(after.lines.join('\n')).toContain('dropping the old host name io');
+    expect(
+      new X509Certificate(readFileSync(paths(ctx.layout).leafCrt)).subjectAltName
+    ).not.toContain('io.local');
+  });
+
+  it('does the same for a dotted host name', async () => {
+    const first = renamed('pi.lan');
+    await main(['init'], first);
+    expect(metaDns()).toEqual(['pi.lan', 'pi.lan.local', 'localhost']);
+    expect(await main(['new-ca', '--yes'], renamed('pi2.lan'))).toBe(0);
+    expect(metaDns()).toEqual(['pi2.lan', 'pi2.lan.local', 'localhost']);
+  });
+
+  it('keeps an alias the operator added with --name, and lets --name bring the old host back', async () => {
+    await main(['init'], ctx);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], testContext(dir))).toBe(0);
+    expect(await main(['new-ca', '--yes'], renamed('ganymede'))).toBe(0);
+    expect(metaDns()).toEqual(['ganymede', 'ganymede.local', 'localhost', 'nas.lan']);
+    const oldest = readMeta(ctx.layout)!.backups[0]!.name; // two backups exist: the third rotation needs one pruned
+    expect(
+      await main(
+        ['new-ca', '--name', 'io.lan', '--yes', '--prune-oldest', oldest],
+        renamed('ganymede')
+      )
+    ).toBe(0);
+    expect(metaDns()).toContain('io.lan');
+  });
+
+  it('says nothing about a host that kept its name', async () => {
+    await main(['init'], ctx);
+    const same = testContext(dir);
+    expect(await main(['new-ca', '--yes'], same)).toBe(0);
+    expect(same.lines.join('\n')).not.toContain('dropping the old host name');
+  });
+
+  it('says it keeps a name that was asked for again, and says nothing when there are none to keep', async () => {
+    await main(['init'], ctx);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], testContext(dir))).toBe(0);
+    const again = testContext(dir);
+    expect(await main(['new-ca', '--name', 'nas.lan', '--yes'], again)).toBe(0);
+    expect(again.lines.join('\n')).toContain('Keeping the current names (nas.lan)');
+
+    const other = tempDir();
+    await main(['init'], testContext(other));
+    const none = testContext(other);
+    expect(await main(['new-ca', '--yes'], none)).toBe(0);
+    expect(none.lines.join('\n')).not.toContain('Keeping the current names');
+    rmSync(other, { recursive: true, force: true });
+  });
+});

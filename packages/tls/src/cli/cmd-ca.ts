@@ -4,6 +4,7 @@ import { opensslVersion } from '../ca/issue.js';
 import { issuanceClock, CLOCK_WAIT_MS } from './clock-gate.js';
 import {
   buildConstraints,
+  caNames,
   consequenceText,
   subnetWarning,
   type Constraints
@@ -135,12 +136,20 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   if (requestedNames.includes('none') && requestedNames.length > 1)
     throw new UsageError('--name none cannot be combined with other names');
   const dropNames = requestedNames[0] === 'none';
+  // The names kept are the ones the operator added (the dotted ones, minus the pairs that follow
+  // a host name). A host that was renamed since the CA was made drops its old names: the CA
+  // would otherwise keep vouching for a name a different device may take.
+  const host = ctx.hostname().toLowerCase();
+  const oldHost = current.kind === 'ok' ? current.ca.constraints.dns[0] : undefined;
+  const renamedFrom = oldHost !== undefined && oldHost !== host ? oldHost : undefined;
   const keptNames =
     current.kind === 'ok' && !dropNames
-      ? current.ca.constraints.dns.filter(
-          (name) => name.includes('.') && name !== `${ctx.hostname().toLowerCase()}.local`
-        )
+      ? caNames(current.ca.constraints).filter((name) => name !== host && name !== renamedFrom)
       : [];
+  if (renamedFrom !== undefined && !dropNames)
+    ctx.out(
+      `The host is now ${host}, not ${renamedFrom}: dropping the old host name ${renamedFrom} and ${renamedFrom}.local from the new CA (--name keeps a name on purpose).`
+    );
   const newNames = dropNames ? [] : requestedNames.filter((name) => !keptNames.includes(name));
   if (keptNames.length > 0 && newNames.length === 0)
     ctx.out(
@@ -165,7 +174,8 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   }
   if (current.kind === 'ok') {
     ctx.out('Current CA scope:');
-    for (const line of consequenceText(current.ca.constraints).slice(1, 3)) ctx.out(line);
+    // The DNS and IP lines only: the header and the note about other identities come first.
+    for (const line of consequenceText(current.ca.constraints).slice(2, 4)) ctx.out(line);
   }
   ctx.out('New CA scope:');
   for (const line of consequenceText(constraints)) ctx.out(line);
