@@ -16,7 +16,9 @@ import {
   CA_LIFETIME_MS,
   IssueError,
   LEAF_LIFETIME_MS,
+  NO_PURPOSE_LIMITS,
   OPENSSL,
+  PURPOSE_LIMITS,
   caExtensions,
   issueCa,
   issueLeaf,
@@ -307,16 +309,67 @@ describe('IPv6 ranges are read word by word', () => {
 });
 
 describe('extension lists', () => {
-  it('writes the CA extensions exactly', () => {
-    expect(caExtensions(SCOPE, true)).toEqual([
+  it("writes the base CA extensions exactly (today's CA)", () => {
+    expect(caExtensions(SCOPE, true, NO_PURPOSE_LIMITS)).toEqual([
       'basicConstraints = critical, CA:TRUE, pathlen:0',
       'keyUsage = critical, keyCertSign, cRLSign',
       'subjectKeyIdentifier = hash',
       'nameConstraints = critical, permitted;DNS:pipulse-check, permitted;DNS:pipulse-check.local, permitted;DNS:localhost, permitted;IP:127.0.0.1/255.255.255.255, permitted;IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, permitted;IP:192.168.77.0/255.255.255.0, excluded;DNS:.pipulse-check, excluded;DNS:.localhost'
     ]);
-    expect(caExtensions(SCOPE)).toEqual(caExtensions(SCOPE, true));
-    expect(caExtensions(SCOPE, false)).toHaveLength(3);
-    expect(caExtensions(SCOPE, false).join('\n')).not.toContain('subjectKeyIdentifier');
+    expect(caExtensions(SCOPE, false, NO_PURPOSE_LIMITS)).toHaveLength(3);
+    expect(caExtensions(SCOPE, false, NO_PURPOSE_LIMITS).join('\n')).not.toContain(
+      'subjectKeyIdentifier'
+    );
+  });
+
+  it('writes the CA extensions with purpose limits exactly', () => {
+    expect(caExtensions(SCOPE, true)).toEqual([
+      'basicConstraints = critical, CA:TRUE, pathlen:0',
+      'keyUsage = critical, keyCertSign, cRLSign',
+      'extendedKeyUsage = serverAuth',
+      'subjectKeyIdentifier = hash',
+      'nameConstraints = critical, permitted;DNS:pipulse-check, permitted;DNS:pipulse-check.local, permitted;DNS:localhost, permitted;IP:127.0.0.1/255.255.255.255, permitted;IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, permitted;IP:192.168.77.0/255.255.255.0, permitted;email:.invalid, permitted;URI:.invalid, excluded;DNS:.pipulse-check, excluded;DNS:.localhost'
+    ]);
+    expect(caExtensions(SCOPE)).toEqual(caExtensions(SCOPE, true, PURPOSE_LIMITS));
+  });
+
+  it('adds exactly the limit it is given', () => {
+    const base = caExtensions(SCOPE, true, NO_PURPOSE_LIMITS);
+    const eku = [...base.slice(0, 2), 'extendedKeyUsage = serverAuth', ...base.slice(2)];
+    expect(caExtensions(SCOPE, true, { ...NO_PURPOSE_LIMITS, eku: true })).toEqual(eku);
+    const withName = (name: string) => [
+      ...base.slice(0, 3),
+      base[3]!.replace(', excluded;', `, permitted;${name}, excluded;`)
+    ];
+    expect(caExtensions(SCOPE, true, { ...NO_PURPOSE_LIMITS, email: true })).toEqual(
+      withName('email:.invalid')
+    );
+    expect(caExtensions(SCOPE, true, { ...NO_PURPOSE_LIMITS, uri: true })).toEqual(
+      withName('URI:.invalid')
+    );
+  });
+
+  it('the limit constants are frozen and complete', () => {
+    expect(PURPOSE_LIMITS).toEqual({ eku: true, email: true, uri: true });
+    expect(NO_PURPOSE_LIMITS).toEqual({ eku: false, email: false, uri: false });
+    expect(Object.isFrozen(PURPOSE_LIMITS)).toBe(true);
+    expect(Object.isFrozen(NO_PURPOSE_LIMITS)).toBe(true);
+  });
+
+  it('only issue.ts can turn the limits off', () => {
+    const src = join(__dirname, '..', '..', 'src');
+    const files = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory()
+          ? files(join(dir, e.name))
+          : e.name.endsWith('.ts')
+            ? [join(dir, e.name)]
+            : []
+      );
+    const offenders = files(src)
+      .filter((f) => !f.endsWith(join('ca', 'issue.ts')))
+      .filter((f) => /PurposeLimits|NO_PURPOSE_LIMITS|\blimits\s*:/.test(readFileSync(f, 'utf8')));
+    expect(offenders).toEqual([]);
   });
 
   it('writes the leaf extensions exactly', () => {

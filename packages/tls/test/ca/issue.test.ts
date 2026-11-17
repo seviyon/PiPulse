@@ -11,6 +11,7 @@ import {
   CA_LIFETIME_MS,
   IssueError,
   LEAF_LIFETIME_MS,
+  NO_PURPOSE_LIMITS,
   caExtensions,
   issueCa,
   issueLeaf,
@@ -194,6 +195,39 @@ describe('issueCa', () => {
     expect(out).toMatch(/Name Constraints: critical/);
     expect(out).not.toMatch(/Excluded:\s+IP/);
     expect(ca.keyPem).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+  });
+
+  it('gives a CA serverAuth only and confines email and URI names to .invalid', () => {
+    const out = text(ca.certPem);
+    expect(out).toMatch(/X509v3 Extended Key Usage:\s*\n\s*TLS Web Server Authentication\s*\n/);
+    expect(out).toMatch(/Permitted:[\s\S]*email:\.invalid[\s\S]*URI:\.invalid[\s\S]*Excluded:/);
+    expect(out).toMatch(/DNS:pipulse-check/);
+    expect(out).toMatch(/IP:192\.168\.77\.0\/255\.255\.255\.0/);
+    expect(out).toMatch(/Excluded:\s*\n\s*DNS:\.pipulse-check/);
+    expect(new X509Certificate(ca.certPem).keyUsage).toEqual(['1.3.6.1.5.5.7.3.1']);
+  });
+
+  it('leaves the CA as it was with NO_PURPOSE_LIMITS', async () => {
+    const old = await issueCa({
+      openssl: TEST_OPENSSL,
+      workDir: work,
+      subject: 'PiPulse CA pipulse-check 0a1b2d',
+      scope: SCOPE,
+      now: NOW,
+      limits: NO_PURPOSE_LIMITS
+    });
+    const out = text(old.certPem);
+    expect(out).not.toContain('Extended Key Usage');
+    expect(out).not.toContain('email:');
+    expect(out).not.toContain('URI:');
+    expect(new X509Certificate(old.certPem).keyUsage).toBeUndefined();
+  });
+
+  it('gives the leaf nothing new', async () => {
+    const issued = await leaf(['pipulse-check']);
+    const out = text(issued.certPem);
+    expect(out).not.toContain('Name Constraints');
+    expect(new X509Certificate(issued.certPem).keyUsage).toEqual(['1.3.6.1.5.5.7.3.1']);
   });
 
   it('never reuses a serial', async () => {

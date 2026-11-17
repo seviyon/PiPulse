@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -80,6 +81,16 @@ describe('stageNewCa', () => {
     expect(bundle).not.toContain(caKey.split('\n')[1]);
     expect(ca.subject).toMatch(/^PiPulse CA io [0-9a-f]{6}$/);
     expect(ca.constraints).toEqual(constraints);
+  });
+
+  it('makes the CA with all three purpose limits', async () => {
+    const { dirs } = await stagedCa();
+    const out = execFileSync(TEST_OPENSSL, ['x509', '-noout', '-text'], {
+      input: readFileSync(join(dirs.ca, 'ca', 'ca.crt'))
+    }).toString();
+    expect(out).toMatch(/Extended Key Usage:\s*\n\s*TLS Web Server Authentication/);
+    expect(out).toContain('email:.invalid');
+    expect(out).toContain('URI:.invalid');
   });
 
   it('puts the default-route address in the leaf when the CA covers it', async () => {
