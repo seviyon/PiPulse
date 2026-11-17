@@ -1,6 +1,6 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeAtomic } from '../common/files.js';
+import { readAtMost, writeAtomic } from '../common/files.js';
 import { FINGERPRINT } from './layout.js';
 import { processIdentity } from '../common/proc.js';
 import type { ChainClass } from '../inspect/inspect.js';
@@ -48,15 +48,9 @@ class StatusFileProblem extends Error {}
  * readFileSync on a descriptor reads to the end whatever the size was.
  */
 export function readBoundedText(fd: number, max: number, path: string): string {
-  const buffer = Buffer.alloc(max + 1);
-  let length = 0;
-  while (length < buffer.length) {
-    const n = readSync(fd, buffer, length, buffer.length - length, null);
-    if (n === 0) break;
-    length += n;
-  }
-  if (length > max) throw new StatusFileProblem(`${path} is too large`);
-  return buffer.toString('utf8', 0, length);
+  const text = readAtMost(fd, max);
+  if (text === undefined) throw new StatusFileProblem(`${path} is too large`);
+  return text;
 }
 
 /**

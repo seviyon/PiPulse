@@ -11,7 +11,7 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
@@ -51,6 +51,21 @@ function reason(error: unknown): string {
 }
 
 /**
+ * The text behind `fd` when it is at most `max` bytes, else undefined. Reads at most max + 1
+ * bytes, so a file that keeps growing cannot be pulled into memory in full.
+ */
+export function readAtMost(fd: number, max: number): string | undefined {
+  const buffer = Buffer.alloc(max + 1);
+  let length = 0;
+  while (length < buffer.length) {
+    const n = readSync(fd, buffer, length, buffer.length - length, null);
+    if (n === 0) break;
+    length += n;
+  }
+  return length > max ? undefined : buffer.toString('utf8', 0, length);
+}
+
+/**
  * Opens `path`, checks the open file (not the path, so nothing can be swapped
  * in between) and reads that same descriptor. O_NONBLOCK keeps a FIFO from
  * blocking the open; it is then refused as not a regular file. Errors name
@@ -70,7 +85,6 @@ export function readSecureFile(path: string, policy: ReadPolicy, what: string): 
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new TlsFileError(`${what}: not a regular file`);
-    if (stat.size > MAX_BYTES) throw new TlsFileError(`${what}: larger than 64 KiB`);
     const mode = stat.mode & 0o777;
     if (policy.kind === 'operator') {
       if (policy.secret && (mode & 0o004) !== 0) {
@@ -89,7 +103,11 @@ export function readSecureFile(path: string, policy: ReadPolicy, what: string): 
         throw new TlsFileError(`${what}: group ${stat.gid}, expected ${policy.gid}`);
       }
     }
-    return readFileSync(fd, 'utf8');
+    // The size is not taken from fstat: a file can grow after it, and readFileSync(fd) would read
+    // it to the end. readAtMost reads at most the cap whatever the size was.
+    const text = readAtMost(fd, MAX_BYTES);
+    if (text === undefined) throw new TlsFileError(`${what}: larger than 64 KiB`);
+    return text;
   } finally {
     closeSync(fd);
   }

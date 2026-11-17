@@ -129,6 +129,7 @@ const EXPORTS = [
   'priv',
   'processIdentity',
   'pub',
+  'readAtMost',
   'readClock',
   'readMeta',
   'readRenewStatus',

@@ -16,12 +16,23 @@ export interface PemBlock {
 const BLOCK =
   /-----BEGIN ([A-Z0-9 ]+)-----\n([A-Za-z0-9+/=\n]+)-----END ([A-Z0-9 ]+)-----(?:\n|$)/y;
 
+// Where a block may start when text outside the blocks is skipped: a line that begins, after
+// any whitespace (as the strict parser also allows), with a BEGIN delimiter.
+const BLOCK_START = /^([^\S\n]*)-----BEGIN /gm;
+
 /**
  * Splits `text` into PEM blocks. CRLF is normalised for parsing only; only
- * whitespace may sit between blocks. Errors name `what` (a setting or file
+ * whitespace may sit between blocks, unless `skipText` (RFC 7468: explanatory text outside
+ * the blocks is ignored, as `openssl pkcs12` and `openssl x509 -text` write it): then text
+ * is skipped up to the next line that starts a block, and a block that starts but is not a
+ * well-formed one is still refused, never skipped. Errors name `what` (a setting or file
  * name) and never quote the content.
  */
-export function parsePemBlocks(text: string, what: string): PemBlock[] {
+export function parsePemBlocks(
+  text: string,
+  what: string,
+  options: { skipText?: boolean } = {}
+): PemBlock[] {
   if (Buffer.byteLength(text, 'utf8') > MAX_PEM_BYTES) {
     throw new PemError(`${what} is larger than 64 KiB`);
   }
@@ -35,8 +46,15 @@ export function parsePemBlocks(text: string, what: string): PemBlock[] {
   const blocks: PemBlock[] = [];
   let at = 0;
   for (;;) {
-    while (at < normalized.length && /\s/.test(normalized[at]!)) at++;
-    if (at >= normalized.length) break;
+    if (options.skipText) {
+      BLOCK_START.lastIndex = at;
+      const start = BLOCK_START.exec(normalized);
+      if (!start) break;
+      at = start.index + start[1]!.length;
+    } else {
+      while (at < normalized.length && /\s/.test(normalized[at]!)) at++;
+      if (at >= normalized.length) break;
+    }
     BLOCK.lastIndex = at;
     const match = BLOCK.exec(normalized);
     if (!match || match[1] !== match[3]) {
@@ -49,7 +67,11 @@ export function parsePemBlocks(text: string, what: string): PemBlock[] {
     if (blocks.length > MAX_PEM_BLOCKS) throw new PemError(`${what} has more than 8 PEM blocks`);
     at = BLOCK.lastIndex;
   }
-  if (blocks.length === 0) throw new PemError(`${what} is empty`);
+  if (blocks.length === 0) {
+    throw new PemError(
+      options.skipText && normalized.trim() !== '' ? `${what} has no PEM block` : `${what} is empty`
+    );
+  }
   return blocks;
 }
 
@@ -96,9 +118,13 @@ export function parseKeyFile(text: string, what: string): string {
   return blocks[0]!.pem;
 }
 
-/** A certificate file (operator certificate + chain, or a CA file): certificates only. */
+/**
+ * A certificate file (operator certificate + chain, or a CA file): certificates only. Text
+ * around them is ignored (`openssl pkcs12 -nokeys` writes "Bag Attributes"); key files and
+ * generated bundles stay strict.
+ */
 export function parseCertificateFile(text: string, what: string): string[] {
-  const blocks = parsePemBlocks(text, what);
+  const blocks = parsePemBlocks(text, what, { skipText: true });
   const other = blocks.find((b) => b.label !== 'CERTIFICATE');
   if (other) throw new PemError(`${what} has an unexpected ${other.label} block`);
   return blocks.map((b) => b.pem);

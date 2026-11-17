@@ -143,3 +143,176 @@ describe('review fixes: key files people really have', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
+
+describe('text outside the blocks of a certificate file (RFC 7468: ignored)', () => {
+  const bag = 'Bag Attributes\n    localKeyID: 01 02\nsubject=CN = example\nissuer=CN = ca\n';
+
+  it('skips openssl pkcs12 explanatory text before, between and after certificates', () => {
+    const plain = parseCertificateFile(leaf + intermediate, 'c');
+    expect(parseCertificateFile(bag + leaf + bag + intermediate + 'end of file\n', 'c')).toEqual(
+      plain
+    );
+  });
+
+  it('skips the text of openssl x509 -text output after the certificate', () => {
+    const text = 'Certificate:\n    Data:\n        Version: 3 (0x2)\n';
+    expect(parseCertificateFile(text + leaf, 'c')).toEqual(parseCertificateFile(leaf, 'c'));
+  });
+
+  it('still refuses a broken certificate block instead of skipping it', () => {
+    const broken = '-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n';
+    expect(() => parseCertificateFile(bag + broken + leaf, 'c')).toThrow(/isn't a PEM block/);
+    expect(() => parseCertificateFile(leaf + broken, 'c')).toThrow(/isn't a PEM block/);
+    const mismatched = leaf.replace('END CERTIFICATE', 'END PRIVATE KEY');
+    expect(() => parseCertificateFile(bag + mismatched, 'c')).toThrow(/isn't a PEM block/);
+  });
+
+  it('refuses a file with text and no block, and says so', () => {
+    expect(() => parseCertificateFile(bag, 'c')).toThrow('c has no PEM block');
+    expect(() => parseCertificateFile('', 'c')).toThrow('c is empty');
+  });
+
+  it('only starts a block at the beginning of a line', () => {
+    expect(() => parseCertificateFile('see ' + leaf, 'c')).toThrow('c has no PEM block');
+  });
+
+  it('keeps the other limits: other labels, 8 blocks, 64 KiB', () => {
+    expect(() => parseCertificateFile(bag + leaf + key, 'c')).toThrow(
+      /unexpected PRIVATE KEY block/
+    );
+    expect(() => parseCertificateFile((bag + leaf).repeat(9), 'c')).toThrow(/more than 8/);
+    expect(() => parseCertificateFile(bag + 'x'.repeat(64 * 1024) + leaf, 'c')).toThrow(
+      /larger than 64 KiB/
+    );
+    expect(parseCertificateFile((bag + leaf).repeat(8), 'c')).toHaveLength(8);
+  });
+
+  it('stays strict for key files, bundles and the generic parser', () => {
+    expect(() => parseKeyFile(bag + key, 'k')).toThrow(/isn't a PEM block/);
+    expect(() => parseBundle(bag + key + leaf, 'b')).toThrow(/isn't a PEM block/);
+    expect(() => parsePemBlocks(bag + leaf, 'f')).toThrow(/isn't a PEM block/);
+  });
+
+  it('stays fast on a long run of lines that nearly start a block', () => {
+    const started = performance.now();
+    expect(() => parseCertificateFile('-----BEGIN\n'.repeat(5000), 'c')).toThrow(
+      'c has no PEM block'
+    );
+    expect(() => parseCertificateFile('-----BEGIN X-----\n'.repeat(3000), 'c')).toThrow(
+      /isn't a PEM block/
+    );
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('parsePemBlocks edges', () => {
+  it('names its error PemError', () => {
+    try {
+      parsePemBlocks('', 'f');
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as Error).name).toBe('PemError');
+      expect(error).toBeInstanceOf(PemError);
+    }
+  });
+
+  it('reads a last block with no newline after its END line, strict and skipping', () => {
+    const noNewline = leaf.trimEnd();
+    expect(noNewline.endsWith('\n')).toBe(false);
+    expect(parsePemBlocks(noNewline, 'f')).toHaveLength(1);
+    expect(parseCertificateFile(noNewline, 'f')).toHaveLength(1);
+  });
+
+  it('accepts exactly 64 KiB and refuses one byte more, counted in bytes', () => {
+    const exact = leaf + '\n'.repeat(64 * 1024 - Buffer.byteLength(leaf));
+    expect(Buffer.byteLength(exact)).toBe(64 * 1024);
+    expect(parsePemBlocks(exact, 'f')).toHaveLength(1);
+    expect(parseCertificateFile(exact, 'f')).toHaveLength(1);
+    expect(() => parsePemBlocks(exact + '\n', 'f')).toThrow('f is larger than 64 KiB');
+    // 40000 two-byte characters are 40000 characters but 80000 bytes.
+    expect(() => parsePemBlocks(leaf + 'é'.repeat(40_000), 'f')).toThrow(/larger than 64 KiB/);
+  });
+
+  it('says a file of only whitespace is empty, in a certificate file too', () => {
+    expect(() => parseCertificateFile('\n \t\n', 'f')).toThrow('f is empty');
+    expect(() => parsePemBlocks('\n \t\n', 'f')).toThrow('f is empty');
+  });
+});
+
+describe('a certificate file with whitespace before a BEGIN line', () => {
+  // The strict parser skips any whitespace before a block, so a BEGIN line may follow spaces, a
+  // tab or a byte order mark; the body and END lines are still matched strictly.
+  const before = (pem: string, prefix: string) => prefix + pem;
+  const plain = parseCertificateFile(leaf + intermediate, 'c');
+
+  it.each([
+    ['spaces', '    '],
+    ['a tab', '\t'],
+    ['a no-break space', '\u00a0']
+  ])(
+    'still reads certificates whose BEGIN line follows %s, as the strict parser does',
+    (_name, prefix) => {
+      expect(parsePemBlocks(before(leaf, prefix), 'f')).toHaveLength(1);
+      expect(
+        parseCertificateFile(before(leaf, prefix) + before(intermediate, prefix), 'c')
+      ).toEqual(plain);
+    }
+  );
+
+  it('reads an intermediate after spaces, following an unprefixed leaf and text between them', () => {
+    const text = 'Bag Attributes\n' + leaf + 'subject=CN = ca\n' + before(intermediate, '  ');
+    expect(parseCertificateFile(text, 'c')).toEqual(plain);
+  });
+
+  it('reads a certificate after a byte order mark', () => {
+    expect(parseCertificateFile('\uFEFF' + leaf, 'c')).toEqual(parseCertificateFile(leaf, 'c'));
+  });
+
+  it('keeps matching strictly from the delimiter on: an indented body is refused', () => {
+    const indentedBody = leaf
+      .trimEnd()
+      .split('\n')
+      .map((line, i) => (i === 0 ? line : '  ' + line))
+      .join('\n');
+    expect(() => parseCertificateFile(indentedBody, 'c')).toThrow(/isn't a PEM block/);
+  });
+
+  it('does not take a BEGIN line inside other text for a block', () => {
+    expect(() => parseCertificateFile('see: ' + leaf, 'c')).toThrow('c has no PEM block');
+    expect(() => parseCertificateFile('  see ' + leaf, 'c')).toThrow('c has no PEM block');
+  });
+});
+
+describe('the legacy Proc-Type header is recognised exactly', () => {
+  const withHeader = (header: string) =>
+    `-----BEGIN RSA PRIVATE KEY-----\n${header}\n\nAAAA\n-----END RSA PRIVATE KEY-----\n`;
+
+  it.each([
+    'Proc-Type: 4,ENCRYPTED',
+    'Proc-Type:4,ENCRYPTED',
+    'Proc-Type:   4,ENCRYPTED',
+    'Proc-Type: 4, ENCRYPTED',
+    'Proc-Type: 4,   ENCRYPTED  ',
+    'proc-type: 4,encrypted'
+  ])('says %j is encrypted', (header) => {
+    expect(() => parseKeyFile(withHeader(header), 'k')).toThrow('k is encrypted');
+  });
+
+  it.each([
+    ['text before it on the line', 'note Proc-Type: 4,ENCRYPTED'],
+    ['text after it on the line', 'Proc-Type: 4,ENCRYPTED-ish'],
+    ['a different type', 'Proc-Type: 5,ENCRYPTED'],
+    ['a longer word', 'Proc-Type: 4,ENCRYPTEDX']
+  ])('does not call a file with %s encrypted', (_name, header) => {
+    expect(() => parseKeyFile(withHeader(header), 'k')).toThrow(/isn't a PEM block/);
+  });
+
+  it('looks for the header only in files up to 128 KiB, and names a larger file as too large', () => {
+    const base = withHeader('Proc-Type: 4,ENCRYPTED');
+    const padded = (length: number) => base + '\n'.repeat(length - base.length);
+    expect(() => parseKeyFile(padded(100_000), 'k')).toThrow('k is encrypted');
+    expect(() => parseKeyFile(padded(128 * 1024), 'k')).toThrow('k is encrypted');
+    expect(() => parseBundle(padded(128 * 1024), 'b')).toThrow('b is encrypted');
+    expect(() => parseKeyFile(padded(128 * 1024 + 1), 'k')).toThrow('k is larger than 64 KiB');
+  });
+});
