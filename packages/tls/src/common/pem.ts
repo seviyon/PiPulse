@@ -16,8 +16,9 @@ export interface PemBlock {
 const BLOCK =
   /-----BEGIN ([A-Z0-9 ]+)-----\n([A-Za-z0-9+/=\n]+)-----END ([A-Z0-9 ]+)-----(?:\n|$)/y;
 
-// Where a block may start when text outside the blocks is skipped: the beginning of a line.
-const BLOCK_START = /^-----BEGIN /gm;
+// Where a block may start when text outside the blocks is skipped: a line that begins, after
+// any whitespace (as the strict parser also allows), with a BEGIN delimiter.
+const BLOCK_START = /^([^\S\n]*)-----BEGIN /gm;
 
 /**
  * Splits `text` into PEM blocks. CRLF is normalised for parsing only; only
@@ -49,7 +50,7 @@ export function parsePemBlocks(
       BLOCK_START.lastIndex = at;
       const start = BLOCK_START.exec(normalized);
       if (!start) break;
-      at = start.index;
+      at = start.index + start[1]!.length;
     } else {
       while (at < normalized.length && /\s/.test(normalized[at]!)) at++;
       if (at >= normalized.length) break;

@@ -407,7 +407,8 @@ describe('review fixes: an expired certificate and a clock that steps back', () 
 
 describe('startReloader with the replacement rule on a clock that is unknown', () => {
   it('keeps serving the valid certificate until the replacement is valid, then applies it', () => {
-    let wall = Date.now();
+    // A fixed instant inside the fixtures' validity and after the clock floor (2026-09-01).
+    let wall = Date.UTC(2026, 10, 17, 12);
     const notBefore = wall + 3_600_000;
     const later: LoadedCertificate = { ...B, notBefore, notAfter: notBefore + 9e9 };
     const r = setup(A, (candidate, active) =>

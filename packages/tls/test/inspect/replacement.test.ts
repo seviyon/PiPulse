@@ -18,6 +18,11 @@ const load = (crt: string, key: string): LoadedCertificate =>
     names: []
   });
 const VALID = load('leaf.crt', 'leaf.key');
+// A fixed instant inside the fixture leaf's validity (2026-01-01 to 2125) and after the clock floor
+// (2026-09-01, below which every clock reads as unsynced), so no test depends on today's date.
+const NOW = Date.UTC(2026, 10, 17, 12);
+const DAY_MS = 86_400_000;
+const FUTURE = { ...VALID, notBefore: NOW + DAY_MS, notAfter: NOW + 9e9 };
 const EXPIRED = load('expired.crt', 'expired.key');
 
 let dir: string | undefined;
@@ -29,7 +34,7 @@ const options = (over: Partial<Parameters<typeof checkReplacement>[2]> = {}) => 
   dir = tempDir();
   return {
     requireValid: false,
-    now: Date.now(),
+    now: NOW,
     timesyncDir: join(dir, 'none'),
     clockTrust: false,
     ...over
@@ -64,7 +69,7 @@ describe('checkReplacement', () => {
   });
 
   describe('not yet valid', () => {
-    const future = { ...VALID, notBefore: Date.now() + 86_400_000, notAfter: Date.now() + 9e9 };
+    const future = FUTURE;
     it('with requireValid is refused while the clock is synced', () => {
       const o = options({ requireValid: true });
       mkdirSync(o.timesyncDir);
@@ -145,7 +150,7 @@ describe('checkReplacement', () => {
       }
       throw new Error('expected a refusal');
     };
-    const future = { ...VALID, notBefore: Date.now() + 86_400_000, notAfter: Date.now() + 9e9 };
+    const future = FUTURE;
 
     it.each([
       [

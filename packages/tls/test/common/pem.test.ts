@@ -238,3 +238,81 @@ describe('parsePemBlocks edges', () => {
     expect(() => parsePemBlocks('\n \t\n', 'f')).toThrow('f is empty');
   });
 });
+
+describe('a certificate file with whitespace before a BEGIN line', () => {
+  // The strict parser skips any whitespace before a block, so a BEGIN line may follow spaces, a
+  // tab or a byte order mark; the body and END lines are still matched strictly.
+  const before = (pem: string, prefix: string) => prefix + pem;
+  const plain = parseCertificateFile(leaf + intermediate, 'c');
+
+  it.each([
+    ['spaces', '    '],
+    ['a tab', '\t'],
+    ['a no-break space', '\u00a0']
+  ])(
+    'still reads certificates whose BEGIN line follows %s, as the strict parser does',
+    (_name, prefix) => {
+      expect(parsePemBlocks(before(leaf, prefix), 'f')).toHaveLength(1);
+      expect(
+        parseCertificateFile(before(leaf, prefix) + before(intermediate, prefix), 'c')
+      ).toEqual(plain);
+    }
+  );
+
+  it('reads an intermediate after spaces, following an unprefixed leaf and text between them', () => {
+    const text = 'Bag Attributes\n' + leaf + 'subject=CN = ca\n' + before(intermediate, '  ');
+    expect(parseCertificateFile(text, 'c')).toEqual(plain);
+  });
+
+  it('reads a certificate after a byte order mark', () => {
+    expect(parseCertificateFile('\uFEFF' + leaf, 'c')).toEqual(parseCertificateFile(leaf, 'c'));
+  });
+
+  it('keeps matching strictly from the delimiter on: an indented body is refused', () => {
+    const indentedBody = leaf
+      .trimEnd()
+      .split('\n')
+      .map((line, i) => (i === 0 ? line : '  ' + line))
+      .join('\n');
+    expect(() => parseCertificateFile(indentedBody, 'c')).toThrow(/isn't a PEM block/);
+  });
+
+  it('does not take a BEGIN line inside other text for a block', () => {
+    expect(() => parseCertificateFile('see: ' + leaf, 'c')).toThrow('c has no PEM block');
+    expect(() => parseCertificateFile('  see ' + leaf, 'c')).toThrow('c has no PEM block');
+  });
+});
+
+describe('the legacy Proc-Type header is recognised exactly', () => {
+  const withHeader = (header: string) =>
+    `-----BEGIN RSA PRIVATE KEY-----\n${header}\n\nAAAA\n-----END RSA PRIVATE KEY-----\n`;
+
+  it.each([
+    'Proc-Type: 4,ENCRYPTED',
+    'Proc-Type:4,ENCRYPTED',
+    'Proc-Type:   4,ENCRYPTED',
+    'Proc-Type: 4, ENCRYPTED',
+    'Proc-Type: 4,   ENCRYPTED  ',
+    'proc-type: 4,encrypted'
+  ])('says %j is encrypted', (header) => {
+    expect(() => parseKeyFile(withHeader(header), 'k')).toThrow('k is encrypted');
+  });
+
+  it.each([
+    ['text before it on the line', 'note Proc-Type: 4,ENCRYPTED'],
+    ['text after it on the line', 'Proc-Type: 4,ENCRYPTED-ish'],
+    ['a different type', 'Proc-Type: 5,ENCRYPTED'],
+    ['a longer word', 'Proc-Type: 4,ENCRYPTEDX']
+  ])('does not call a file with %s encrypted', (_name, header) => {
+    expect(() => parseKeyFile(withHeader(header), 'k')).toThrow(/isn't a PEM block/);
+  });
+
+  it('looks for the header only in files up to 128 KiB, and names a larger file as too large', () => {
+    const base = withHeader('Proc-Type: 4,ENCRYPTED');
+    const padded = (length: number) => base + '\n'.repeat(length - base.length);
+    expect(() => parseKeyFile(padded(100_000), 'k')).toThrow('k is encrypted');
+    expect(() => parseKeyFile(padded(128 * 1024), 'k')).toThrow('k is encrypted');
+    expect(() => parseBundle(padded(128 * 1024), 'b')).toThrow('b is encrypted');
+    expect(() => parseKeyFile(padded(128 * 1024 + 1), 'k')).toThrow('k is larger than 64 KiB');
+  });
+});
