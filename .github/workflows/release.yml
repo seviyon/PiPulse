@@ -23,8 +23,6 @@ on:
 permissions:
   contents: read
 
-concurrency: release
-
 jobs:
   version:
     runs-on: ubuntu-26.04
@@ -145,6 +143,14 @@ jobs:
     runs-on: ubuntu-26.04
     # Secrets live in this environment, limited to main: no other branch can read the key.
     environment: release
+    # Only this job changes shared state (gh-pages, the tag, :latest), so only it queues. A
+    # workflow-wide lock made every push to main, released or not, compete for the one pending
+    # slot, and a run that releases could be replaced by one that does not. GitHub keeps one pending
+    # run per group: if two releases wait behind a third, the older one shows as cancelled; re-run it
+    # with Run workflow and its version.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
       packages: write
@@ -153,6 +159,12 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
+      - name: The version is still free
+        # `version` picked it before a release ahead of this one in the queue finished.
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then echo "v$V was released while this run waited; re-run it with the next version"; exit 1; fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release
