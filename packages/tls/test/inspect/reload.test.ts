@@ -2,7 +2,8 @@ import { copyFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { inspectMaterial, type LoadedCertificate, type Trust } from '../../src/inspect/inspect.js';
-import { startReloader } from '../../src/inspect/reload.js';
+import { checkReplacement } from '../../src/inspect/replacement.js';
+import { RETRY_MS, startReloader } from '../../src/inspect/reload.js';
 import { statSignature } from '../../src/common/files.js';
 import { fixture, fixturePath, tempDir } from '../helpers.js';
 
@@ -401,5 +402,39 @@ describe('review fixes: an expired certificate and a clock that steps back', () 
     mono += 61 * 60_000;
     provider.poll();
     expect(logs).toHaveLength(2);
+  });
+});
+
+describe('startReloader with the replacement rule on a clock that is unknown', () => {
+  it('keeps serving the valid certificate until the replacement is valid, then applies it', () => {
+    let wall = Date.now();
+    const notBefore = wall + 3_600_000;
+    const later: LoadedCertificate = { ...B, notBefore, notAfter: notBefore + 9e9 };
+    const r = setup(A, (candidate, active) =>
+      checkReplacement(candidate, active, {
+        requireValid: false,
+        now: wall,
+        timesyncDir: join(tempDir(), 'none'), // no timesyncd: the clock state is unknown
+        clockTrust: false
+      })
+    );
+    r.change('s1', () => later);
+    r.provider.poll();
+    r.provider.poll(); // stable: the attempt is refused
+    expect(r.applied).toEqual([]);
+    expect(r.provider.current()).toBe(A);
+    expect(r.provider.reload()).toMatchObject({ state: 'failing' });
+    expect(r.provider.reload().lastError).toMatch(/not valid yet and the active one is/);
+
+    r.advance(RETRY_MS - 1);
+    r.provider.poll(); // too early to retry
+    expect(r.applied).toEqual([]);
+
+    wall = notBefore + 1; // the replacement's start has passed
+    r.advance(1);
+    r.provider.poll(); // the retry applies it, with no new file change
+    expect(r.applied).toEqual([later]);
+    expect(r.provider.current()).toBe(later);
+    expect(r.provider.reload()).toMatchObject({ state: 'ok', lastError: null });
   });
 });
