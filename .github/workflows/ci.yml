@@ -74,10 +74,30 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Packaging tests
-        run: sh packaging/test/run.sh
+        # verify-release runs in its own job (packaging-verify) so the two finish together.
+        run: sh packaging/test/run.sh --except verify-release
       - name: TLS unit tests as root
         # The ownership tests (chown to another user) skip everywhere else; this container runs as root.
         run: npx vitest run packages/tls
+
+  packaging-verify:
+    # The release verifier's test builds a whole release and checks it about a dozen times (about 9 minutes),
+    # so it runs beside `packaging`, not after it. It needs its own checkout, dependencies and build, because
+    # the test packs the built dashboard and application. Add this job's name to the required checks of `main`.
+    runs-on: ubuntu-26.04
+    container:
+      image: node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Tools the test needs
+        run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates gnupg jq >/dev/null
+      - run: npm ci
+      - run: npm run build
+      - name: Release verification test
+        run: sh packaging/test/run.sh verify-release
 
   docker:
     runs-on: ubuntu-26.04
