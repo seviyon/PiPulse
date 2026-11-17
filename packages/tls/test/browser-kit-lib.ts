@@ -1,5 +1,5 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-import { isIP } from 'node:net';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { isIPv4 } from 'node:net';
 import { join } from 'node:path';
 import {
   NO_PURPOSE_LIMITS,
@@ -29,7 +29,8 @@ export function parseKitArgs(argv: string[]): { out: string; lanIp: string; mode
   const [out, lanIp, mode, ...extra] = argv;
   if (!out || !lanIp || !mode || extra.length > 0) throw new KitUsageError(KIT_USAGE);
   if (!(KIT_MODES as readonly string[]).includes(mode)) throw new KitUsageError(KIT_USAGE);
-  if (isIP(lanIp) === 0) throw new KitUsageError(KIT_USAGE); // checked before anything is written
+  // IPv4 only, like the 0.0.0.0 listeners of serve.mjs; checked before anything is written.
+  if (!isIPv4(lanIp)) throw new KitUsageError(KIT_USAGE);
   return { out, lanIp, mode: mode as KitMode };
 }
 
@@ -66,6 +67,13 @@ export function buildKitCa(o: {
   });
 }
 
+/** A key file that is never visible with a wider mode: a new 0600 file, then renamed into place. */
+function writeSecret(path: string, data: string): void {
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, data, { mode: 0o600, flag: 'w' });
+  renameSync(temp, path);
+}
+
 export async function runKit(
   argv: string[],
   io: { out(line: string): void; err(line: string): void }
@@ -82,8 +90,7 @@ export async function runKit(
   mkdirSync(out, { recursive: true });
   const now = Date.now();
   const ca = await buildKitCa({ workDir: out, mode, now });
-  writeFileSync(join(out, 'ca.key'), ca.keyPem, { mode: 0o600 });
-  chmodSync(join(out, 'ca.key'), 0o600); // a re-run over an older, wider file keeps no wider mode
+  writeSecret(join(out, 'ca.key'), ca.keyPem);
   writeFileSync(join(out, 'ca.crt'), ca.certPem);
   const leaves: [number, string[], string[]][] = [
     [8441, ['pipulse-check', 'pipulse-check.local'], []],
@@ -104,8 +111,7 @@ export async function runKit(
       ip,
       now
     });
-    writeFileSync(join(out, `${port}.pem`), leaf.keyPem + leaf.certPem, { mode: 0o600 });
-    chmodSync(join(out, `${port}.pem`), 0o600);
+    writeSecret(join(out, `${port}.pem`), leaf.keyPem + leaf.certPem);
   }
   writeFileSync(
     join(out, 'serve.mjs'),

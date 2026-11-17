@@ -53,13 +53,16 @@ describe('the kit refuses to run without a valid mode', () => {
     expect(existsSync(target)).toBe(false);
   });
 
-  it('refuses an address that is not an IP, before writing anything', async () => {
-    const target = join(dir, 'bad-ip');
-    const log = lines();
-    expect(await runKit([target, 'not-an-ip', 'pr3'], log.io)).toBe(2);
-    expect(log.err).toEqual([KIT_USAGE]);
-    expect(existsSync(target)).toBe(false);
-  });
+  it.each(['not-an-ip', '::1', 'fe80::1', '10.0.0.256', '10.0.0'])(
+    'refuses the address %j (IPv4 only), before writing anything',
+    async (address) => {
+      const target = join(dir, `bad-ip-${address.replace(/\W/g, '_')}`);
+      const log = lines();
+      expect(await runKit([target, address, 'pr3'], log.io)).toBe(2);
+      expect(log.err).toEqual([KIT_USAGE]);
+      expect(existsSync(target)).toBe(false);
+    }
+  );
 
   it('keeps ca.key at 0600 when a re-run finds a wider file', async () => {
     const target = join(dir, 'rerun');
