@@ -25,6 +25,32 @@ export interface IpRange {
 }
 
 /**
+ * The purpose limits a generated CA carries besides its DNS and IP name constraints. All three are
+ * on for every CA PiPulse makes; only tests and the browser check kit turn them off, to build
+ * today's CA ("base") or base plus one line.
+ *  - eku: `extendedKeyUsage = serverAuth`, intended to limit the CA to web servers on stores that
+ *    honour a CA's extended key usage (not critical, the usual choice for a CA's EKU; what it does to a CA depends on the verifier).
+ *  - email: `permitted;email:.invalid`, confining the email names it may vouch for to the reserved
+ *    .invalid namespace (RFC 2606).
+ *  - uri: `permitted;URI:.invalid`, the same for URI names.
+ */
+export interface PurposeLimits {
+  eku: boolean;
+  email: boolean;
+  uri: boolean;
+}
+export const PURPOSE_LIMITS: Readonly<PurposeLimits> = Object.freeze({
+  eku: true,
+  email: true,
+  uri: true
+});
+export const NO_PURPOSE_LIMITS: Readonly<PurposeLimits> = Object.freeze({
+  eku: false,
+  email: false,
+  uri: false
+});
+
+/**
  * What a CA may issue for (critical nameConstraints). Values are canonical
  * already (constraints.ts makes them); this module re-checks their syntax
  * before any of them reaches an openssl config.
@@ -112,13 +138,19 @@ function netmask(range: IpRange): string {
   return mask.map((w) => w.toString(16)).join(':');
 }
 
-export function caExtensions(scope: IssueScope, keyIds = true): string[] {
+export function caExtensions(
+  scope: IssueScope,
+  keyIds = true,
+  limits: PurposeLimits = PURPOSE_LIMITS
+): string[] {
   if (scope.dns.length === 0 || scope.ip.length === 0) {
     throw new IssueError('a CA needs at least one permitted DNS name and one IP range');
   }
   const permitted = [
     ...scope.dns.map((name) => `permitted;DNS:${dnsName(name)}`),
-    ...scope.ip.map((range) => `permitted;IP:${range.address}/${netmask(range)}`)
+    ...scope.ip.map((range) => `permitted;IP:${range.address}/${netmask(range)}`),
+    ...(limits.email ? ['permitted;email:.invalid'] : []),
+    ...(limits.uri ? ['permitted;URI:.invalid'] : [])
   ];
   const excluded = scope.excludedDns.map((name) => {
     if (!name.startsWith('.'))
@@ -128,6 +160,7 @@ export function caExtensions(scope: IssueScope, keyIds = true): string[] {
   return [
     'basicConstraints = critical, CA:TRUE, pathlen:0',
     'keyUsage = critical, keyCertSign, cRLSign',
+    ...(limits.eku ? ['extendedKeyUsage = serverAuth'] : []),
     ...(keyIds ? ['subjectKeyIdentifier = hash'] : []),
     `nameConstraints = critical, ${[...permitted, ...excluded].join(', ')}`
   ];
@@ -316,13 +349,19 @@ export async function issueCa(options: {
   now: number;
   /** Tests only: leave out the key identifiers (default true). */
   keyIds?: boolean;
+  /** Tests and the browser check kit only: which purpose limits to leave on (default all). */
+  limits?: PurposeLimits;
 }): Promise<Issued> {
   const keyPem = newKey();
   const certPem = await sign({
     openssl: options.openssl ?? OPENSSL,
     workDir: options.workDir,
     subject: options.subject,
-    extensions: caExtensions(options.scope, options.keyIds ?? true),
+    extensions: caExtensions(
+      options.scope,
+      options.keyIds ?? true,
+      options.limits ?? PURPOSE_LIMITS
+    ),
     keyPem,
     notBefore: options.now - BACKDATE_MS,
     notAfter: options.now + CA_LIFETIME_MS
