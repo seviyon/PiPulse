@@ -224,7 +224,7 @@ Take the exact line ranges from `git diff -U0 origin/main -- packages/tls/src/ca
 
 ### Task 7: Docs, status note and PR text
 
-- [ ] **Step 0: Reword the second line of `consequenceText`** (`packages/tls/src/ca/constraints.ts:574`) to: `These name limits cover web names and addresses only. A device or program that ignores a CA's own purpose and name limits, as some trust stores do, would also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.` Same single line, same output shape. Update the expected line in `packages/tls/test/ca/constraints.mutation.test.ts:334` (and any other exact-text expectation `grep` finds), run `npx vitest run --root packages/tls test/ca test/cli`, and commit `docs(tls): the CA scope warning says "ignores", not "every purpose"`.
+- [ ] **Step 0: Reword the second line of `consequenceText`** (`packages/tls/src/ca/constraints.ts:574`) to: `These name limits cover web names and addresses only. A device or program that ignores the purpose and name limits written into a CA, as some trust stores do, would also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.` Same single line, same output shape. Update the expected line in `packages/tls/test/ca/constraints.mutation.test.ts:334` (and any other exact-text expectation `grep` finds), run `npx vitest run --root packages/tls test/ca test/cli`, and commit `docs(tls): the CA scope warning says "ignores", not "every purpose"`.
 
 **Files:**
 
