@@ -22,8 +22,9 @@ const SCOPE: IssueScope = {
     { address: '192.168.77.0', prefix: 24 }
   ]
 };
-const PURPOSE = /error 26 at 1 depth lookup:\s*unsuitable certificate purpose/;
-const LEAF_PURPOSE = /error 26 at 0 depth lookup:\s*unsuitable certificate purpose/;
+// OpenSSL 3.x words error 26 "unsuitable certificate purpose", 1.1.1 "unsupported": the code and depth are what matter.
+const PURPOSE = /error 26 at 1 depth lookup:\s*(?:unsuitable|unsupported) certificate purpose/;
+const LEAF_PURPOSE = /error 26 at 0 depth lookup:\s*(?:unsuitable|unsupported) certificate purpose/;
 const PERMITTED = /error 47 at 0 depth lookup:\s*permitted subtree violation/;
 const EXCLUDED = /error 48 at 0 depth lookup:\s*excluded subtree violation/;
 const FOUR = 'serverAuth, clientAuth, codeSigning, emailProtection';
