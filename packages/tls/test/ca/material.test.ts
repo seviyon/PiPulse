@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildConstraints } from '../../src/ca/constraints.js';
+import { NO_PURPOSE_LIMITS, issueCa } from '../../src/ca/issue.js';
 import { ensureDir } from '../../src/common/files.js';
 import { MODES, paths, pub, readMeta, type Layout } from '../../src/ca/layout.js';
 import {
@@ -106,6 +107,74 @@ describe('stageNewCa', () => {
     await stagedCa();
     expect(existsSync(paths(ctx.layout).work)).toBe(true);
     expect(readdirSync(paths(ctx.layout).work)).toEqual([]);
+  });
+});
+
+describe('a CA made before purpose limits', () => {
+  /** What an install upgraded from before this change has on disk: a CA without the limits. */
+  async function oldCa() {
+    const dirs = { ca: join(dir, 'ca.next-old'), pub: join(dir, '.next-old') };
+    ensureDir(dirs.ca, { mode: 0o700 });
+    ensureDir(dirs.pub, { mode: 0o750 });
+    const current = await stageNewCa(ctx, dirs, constraints, []); // the layout and constraints.json
+    const issued = await issueCa({
+      openssl: TEST_OPENSSL,
+      workDir: paths(ctx.layout).work,
+      subject: 'PiPulse CA io 0a1b2c',
+      scope: {
+        dns: ['io', 'io.local', 'localhost'],
+        excludedDns: ['.io', '.localhost'],
+        ip: [
+          { address: '127.0.0.1', prefix: 32 },
+          { address: '::1', prefix: 128 },
+          { address: '192.168.1.0', prefix: 24 }
+        ]
+      },
+      now: NOW,
+      limits: NO_PURPOSE_LIMITS
+    });
+    const caDir = join(dirs.ca, 'ca');
+    writeFileSync(join(caDir, 'ca.key'), issued.keyPem);
+    writeFileSync(join(caDir, 'ca.crt'), issued.certPem);
+    const stored = JSON.parse(readFileSync(join(caDir, 'constraints.json'), 'utf8')) as {
+      fingerprint: string;
+    };
+    stored.fingerprint = issued.fingerprint;
+    writeFileSync(join(caDir, 'constraints.json'), JSON.stringify(stored));
+    for (const file of ['ca.key', 'ca.crt', 'constraints.json'])
+      chmodSync(join(caDir, file), 0o600);
+    return { dirs, caDir, issued, current };
+  }
+
+  it('is still ok in checkCa with the same fingerprint', async () => {
+    const { caDir, issued } = await oldCa();
+    const check = checkCa(caDir);
+    expect(check.kind).toBe('ok');
+    expect(check.kind === 'ok' && check.ca.fingerprint).toBe(issued.fingerprint);
+  });
+
+  it('signs a leaf that checkLeaf accepts', async () => {
+    const { caDir, dirs } = await oldCa();
+    const check = checkCa(caDir);
+    if (check.kind !== 'ok') throw new Error('old CA not ok');
+    const leaf = await makeLeaf(ctx, check.ca);
+    writeLeaf(dirs.pub, ctx.layout, leaf.issued);
+    expect(checkLeaf(join(dirs.pub, 'leaf.pem'), check.ca, pub(ctx.layout)).kind).toBe('ok');
+  });
+
+  it('restores from a backup byte for byte, still without limits', async () => {
+    const { caDir, issued } = await oldCa();
+    const target = { ca: join(dir, 'ca.next-restored'), pub: join(dir, '.next-restored') };
+    ensureDir(target.ca, { mode: 0o700 });
+    ensureDir(target.pub, { mode: 0o750 });
+    await stageCopiedCa(ctx, target, caDir, []);
+    expect(validateStage(target, pub(ctx.layout)).fingerprint).toBe(issued.fingerprint);
+    expect(readFileSync(join(target.ca, 'ca', 'ca.crt'), 'utf8')).toBe(issued.certPem);
+    const text = execFileSync(TEST_OPENSSL, ['x509', '-noout', '-text'], {
+      input: readFileSync(join(target.ca, 'ca', 'ca.crt'))
+    }).toString();
+    expect(text).not.toContain('Extended Key Usage');
+    expect(text).not.toContain('email:');
   });
 });
 

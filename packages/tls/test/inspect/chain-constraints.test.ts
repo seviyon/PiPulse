@@ -3,6 +3,7 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { issueCa, issueLeaf, type IssueScope } from '../../src/ca/issue.js';
 import { inspectMaterial } from '../../src/inspect/inspect.js';
 import {
   dnsInSubtree,
@@ -592,5 +593,67 @@ describe('what counts as a root, and what is counted once', () => {
       names: []
     });
     expect(result).toMatchObject({ class: 'valid', reasons: [] });
+  });
+});
+
+describe('a generated CA with purpose limits', () => {
+  const NOW = Date.now();
+  const SCOPE: IssueScope = {
+    dns: ['io', 'io.local', 'localhost'],
+    excludedDns: ['.io', '.localhost'],
+    ip: [
+      { address: '127.0.0.1', prefix: 32 },
+      { address: '::1', prefix: 128 },
+      { address: '192.168.1.0', prefix: 24 }
+    ]
+  };
+  // issueCa and issueLeaf, the production code, make both: the CA carries the EKU and the
+  // .invalid email and URI subtrees, which the reader must walk past without calling them unreadable.
+  async function made() {
+    const ca = await issueCa({
+      openssl: TEST_OPENSSL,
+      workDir: dir,
+      subject: 'PiPulse CA io 0a1b2c',
+      scope: SCOPE,
+      now: NOW
+    });
+    const caKey = join(dir, `limited-${++counter}.key`);
+    const caCrt = join(dir, `limited-${counter}.crt`);
+    writeFileSync(caKey, ca.keyPem);
+    writeFileSync(caCrt, ca.certPem);
+    const leaf = await issueLeaf({
+      openssl: TEST_OPENSSL,
+      workDir: dir,
+      ca: { keyPath: caKey, certPath: caCrt, certPem: ca.certPem },
+      subject: 'io',
+      dns: ['io', 'io.local'],
+      ip: ['192.168.1.35'],
+      now: NOW
+    });
+    return { ca, leaf };
+  }
+
+  it('reads only its DNS and IP subtrees', async () => {
+    const { ca } = await made();
+    const read = nameConstraints(new X509Certificate(ca.certPem));
+    expect(read).not.toBe('unreadable');
+    expect(read).not.toBeUndefined();
+    if (read === undefined || read === 'unreadable') return;
+    expect(read.permitted.dns).toEqual(['io', 'io.local', 'localhost']);
+    expect(read.permitted.ip).toHaveLength(3);
+    expect(read.excluded.dns).toEqual(['.io', '.localhost']);
+  });
+
+  it('its leaf inspects as valid with no reasons', async () => {
+    const { ca, leaf } = await made();
+    const result = inspectMaterial({
+      source: 'generated',
+      keyPem: leaf.keyPem,
+      certPems: [leaf.certPem],
+      trust: { anchors: [ca.certPem], system: false },
+      names: []
+    });
+    expect(result.class).toBe('valid');
+    expect(result.reasons).toEqual([]);
   });
 });
