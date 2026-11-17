@@ -331,7 +331,7 @@ describe('consequenceText wording', () => {
     });
     expect(consequenceText(constraints)).toEqual([
       'This CA will be trusted for the following DNS names and IP ranges. Anyone holding its private key can impersonate hosts within those ranges.',
-      'These name limits cover web names and addresses only. A device or program that ignores the purpose and name limits written into a CA, as some trust stores do, would also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.',
+      'These name limits cover web names and addresses only. A CA made by an older PiPulse has no email or purpose limits, and any CA is unlimited on a device or program that ignores them, so it could also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.',
       '  DNS: io, io.local, localhost (and names below them, except below io, localhost)',
       '  IP:  127.0.0.1/32, ::1/128, 192.168.1.0/24, 10.20.0.0/16',
       'Accepting 192.168.1.0/24 allows this CA to issue certificates for any IP in that subnet. A stolen CA key could impersonate other devices there.',

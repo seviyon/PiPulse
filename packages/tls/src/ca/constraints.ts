@@ -571,7 +571,7 @@ export function consequenceText(constraints: Constraints): string[] {
   const below = constraints.excludedDns.map((name) => name.slice(1));
   const lines = [
     'This CA will be trusted for the following DNS names and IP ranges. Anyone holding its private key can impersonate hosts within those ranges.',
-    'These name limits cover web names and addresses only. A device or program that ignores the purpose and name limits written into a CA, as some trust stores do, would also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.',
+    'These name limits cover web names and addresses only. A CA made by an older PiPulse has no email or purpose limits, and any CA is unlimited on a device or program that ignores them, so it could also accept what its key signs for other identities, such as email addresses: trust it for TLS (web) use only where the system lets you choose.',
     `  DNS: ${constraints.dns.join(', ')} (and names below them${below.length ? `, except below ${below.join(', ')}` : ''})`,
     `  IP:  ${[...FIXED_IP_RANGES, ...constraints.subnets].join(', ')}`
   ];

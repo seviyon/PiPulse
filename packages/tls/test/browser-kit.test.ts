@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NO_PURPOSE_LIMITS, caExtensions } from '../src/ca/issue.js';
@@ -51,6 +51,22 @@ describe('the kit refuses to run without a valid mode', () => {
     expect(await runKit([target, '10.0.0.5', 'pr3', 'more'], log.io)).toBe(2);
     expect(log.err).toEqual([KIT_USAGE]);
     expect(existsSync(target)).toBe(false);
+  });
+
+  it('refuses an address that is not an IP, before writing anything', async () => {
+    const target = join(dir, 'bad-ip');
+    const log = lines();
+    expect(await runKit([target, 'not-an-ip', 'pr3'], log.io)).toBe(2);
+    expect(log.err).toEqual([KIT_USAGE]);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('keeps ca.key at 0600 when a re-run finds a wider file', async () => {
+    const target = join(dir, 'rerun');
+    mkdirSync(target);
+    writeFileSync(join(target, 'ca.key'), 'old', { mode: 0o644 });
+    expect(await runKit([target, '10.0.0.5', 'base'], lines().io)).toBe(0);
+    expect(statSync(join(target, 'ca.key')).mode & 0o777).toBe(0o600);
   });
 
   it('refuses a missing folder or address', async () => {

@@ -29,7 +29,7 @@ export interface IpRange {
  * on for every CA PiPulse makes; only tests and the browser check kit turn them off, to build
  * today's CA ("base") or base plus one line.
  *  - eku: `extendedKeyUsage = serverAuth`, intended to limit the CA to web servers on stores that
- *    honour a CA's extended key usage (not critical, so a client that does not know it ignores it).
+ *    honour a CA's extended key usage (not critical, the usual choice for a CA's EKU; what it does to a CA depends on the verifier).
  *  - email: `permitted;email:.invalid`, confining the email names it may vouch for to the reserved
  *    .invalid namespace (RFC 2606).
  *  - uri: `permitted;URI:.invalid`, the same for URI names.

@@ -366,9 +366,15 @@ describe('extension lists', () => {
             ? [join(dir, e.name)]
             : []
       );
+    // The scan must have looked at the source tree at all.
+    expect(files(src).length).toBeGreaterThan(20);
     const offenders = files(src)
       .filter((f) => !f.endsWith(join('ca', 'issue.ts')))
-      .filter((f) => /PurposeLimits|NO_PURPOSE_LIMITS|\blimits\s*:/.test(readFileSync(f, 'utf8')));
+      .filter((f) =>
+        /PurposeLimits|PURPOSE_LIMITS|['"]limits['"]|\blimits\s*:|[{,]\s*limits\s*[,}]|\beku\s*:\s*false/.test(
+          readFileSync(f, 'utf8')
+        )
+      );
     expect(offenders).toEqual([]);
   });
 

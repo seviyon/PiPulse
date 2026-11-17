@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { join } from 'node:path';
 import {
   NO_PURPOSE_LIMITS,
@@ -28,6 +29,7 @@ export function parseKitArgs(argv: string[]): { out: string; lanIp: string; mode
   const [out, lanIp, mode, ...extra] = argv;
   if (!out || !lanIp || !mode || extra.length > 0) throw new KitUsageError(KIT_USAGE);
   if (!(KIT_MODES as readonly string[]).includes(mode)) throw new KitUsageError(KIT_USAGE);
+  if (isIP(lanIp) === 0) throw new KitUsageError(KIT_USAGE); // checked before anything is written
   return { out, lanIp, mode: mode as KitMode };
 }
 
@@ -81,6 +83,7 @@ export async function runKit(
   const now = Date.now();
   const ca = await buildKitCa({ workDir: out, mode, now });
   writeFileSync(join(out, 'ca.key'), ca.keyPem, { mode: 0o600 });
+  chmodSync(join(out, 'ca.key'), 0o600); // a re-run over an older, wider file keeps no wider mode
   writeFileSync(join(out, 'ca.crt'), ca.certPem);
   const leaves: [number, string[], string[]][] = [
     [8441, ['pipulse-check', 'pipulse-check.local'], []],
@@ -102,6 +105,7 @@ export async function runKit(
       now
     });
     writeFileSync(join(out, `${port}.pem`), leaf.keyPem + leaf.certPem, { mode: 0o600 });
+    chmodSync(join(out, `${port}.pem`), 0o600);
   }
   writeFileSync(
     join(out, 'serve.mjs'),
