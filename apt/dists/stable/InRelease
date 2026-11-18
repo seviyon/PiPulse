@@ -1,0 +1,58 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: armhf arm64 amd64
+Codename: stable
+Components: main
+Date: Wed, 18 Nov 2026 22:22:02 +0000
+Label: PiPulse
+Origin: PiPulse
+Suite: stable
+MD5Sum:
+ 7184fdca2038c5e0adff7c83986a2d44              150 Release
+ ff20939d92b92b83987ea9220d8b4525             2731 main/binary-amd64/Packages
+ 7093e31bd45127970a66459115ed0797             1048 main/binary-amd64/Packages.gz
+ 854aadcf916ac6242f7f57ca6e44d5ad             2731 main/binary-arm64/Packages
+ 62bed60addb71ec4d88b05898a23daa9             1045 main/binary-arm64/Packages.gz
+ 2bf3d77e2ad9d9afe65cdd2967bba922             2731 main/binary-armhf/Packages
+ 4e2161ae73f6d803d39d8a83bec6fc66             1053 main/binary-armhf/Packages.gz
+SHA1:
+ 5f703974231015a7aa47a3da9a4a9c9eaec68742              150 Release
+ a91fe1c8632fe3907052208e9870b9745af55908             2731 main/binary-amd64/Packages
+ d93fa20df011de4c076f78de5bef797cdd1b96e9             1048 main/binary-amd64/Packages.gz
+ e82e03d1d9d55fad796fb0e25ca7e495e50a0d80             2731 main/binary-arm64/Packages
+ a6ca4abe0efd001d5a9ca2cfd32cc168d3ba6c90             1045 main/binary-arm64/Packages.gz
+ bb741319189624f45a3395f9d4052a693d88d7a6             2731 main/binary-armhf/Packages
+ 1f554f3a1d46b2c770a7f86426b7e52480079e4f             1053 main/binary-armhf/Packages.gz
+SHA256:
+ 5420af50fb39ed9ac6cfd40f56853b6a1810e5c8c38baab5ab946eb39fe40e54              150 Release
+ bd3c986a2613e42488b459067a7f8f4889b4fdd6b1b55496a37141080a20bd5a             2731 main/binary-amd64/Packages
+ 8cdaaefe1222bb76722b29fc20b0e8198f22894c23a3cee25cd21f192e9e2a9f             1048 main/binary-amd64/Packages.gz
+ 1741b66aa0a77e785cc4c1793c0dccb416d8755deb59867717d99b643a84429a             2731 main/binary-arm64/Packages
+ 5d46b034c6ba77f557c4416ed54c287f0d3615054d85a182a98cb0550cae4c8c             1045 main/binary-arm64/Packages.gz
+ d358fd69b0cacde36185857cf2857337725273f084465958d8cde50eae8603ce             2731 main/binary-armhf/Packages
+ 2b434ad80d8c11c5c649d461a577475ea59ab5e797622d8ee2fb1a7b6aa6e4a0             1053 main/binary-armhf/Packages.gz
+SHA512:
+ 1bb2e09bfeb7e1b4ed86c52b001f503a662f90632bd040c158dbf9856df3a217d79daecb3b1f219b931cacd066de21bca9421a3f9c6d4b87ffe3eeb8f3682253              150 Release
+ f00951572b4cb21eb48f0101a46a7b37d2873c3ccd6a140aea1913de370a500fc060941a31d04c29eb9c15302a411bfccaa1570bcde4f0ce2029f4fc052dd12f             2731 main/binary-amd64/Packages
+ b8a9609b81ccad3ecd02d5ef71bee8d42359660a33c7f5f0e442c33242a806f3391887bfedd4bc8586afa14f0161941d0c8c016df3cd099c4fb3fba62f048a64             1048 main/binary-amd64/Packages.gz
+ 6fd95fa1e61425dc0accd5b52b94a78681503901d9ba459ab6570f62ec4cf61fac847a3a7b4ba1a5f09e55e49d79cb494afdaee01e1178c95ea7539dd368af6e             2731 main/binary-arm64/Packages
+ 8548bc889f41406985fe700d83822e0bda3e6b24d9d7d694e20f9a64b2251379cfd166fe299013311d244862a5264080dfca3e48b4df74c39cf002ac7f733c98             1045 main/binary-arm64/Packages.gz
+ af3e9d9b56961a14ad44feda09d671163b196cda6e9cdd9e02c0c69fe7092ce9ac794e564f9699ac837dff7a87229a4808b9f6b3a25f89ce6bab17fd5bd3eb09             2731 main/binary-armhf/Packages
+ 5e91ae229aa61b80a47247fd6145bf7a5a1284d9756298202571d10ac85416c14180d91b05430ab0b700ee36212956159311108ccb8ba3703da619ee2ff02b64             1053 main/binary-armhf/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEjXxETvlI2xC/RvHX3AzczbYFTkoFAmr+JQoACgkQ3AzczbYF
+TkooZhAAhbkVZw/lA55ErHA0Z5h77xc/GTOmOGGFuCo3r1wUq7xM6VGF9U7SpSjG
+JvI0/8vBGPmxVEeh4/kXgMlqIsbyxIJtNgauFfiQvscKzhzlqwmXiAlyDhkPUoDk
+hzvAr40di+poVAhmeBc6HwKOAunEAB59ymfmTYm+BhCO4uD139VC1u3y/VZ9BdAI
+mwOs8MjsCx5PH2HBGRbpoSuCCTDX6ZnUbjMWTvNORlLWE8STGXyqGRW8QumCLTiJ
+wMmuzmfWlPU1MPe4+uxReQloKjyyBAgV6aOmqd8AcaZ866tc3152e8No5YUAPaJF
+pj48+9ay7ODijVXJKtVcwiBWfBwo81sYtBL7mLEW3BQrBjZ9t+lXjTeBEkz7ry7L
+b8LbuGCmn+UORKqJBWQB3yLQHuj/IZ9+IaVFBPAlYtxnSuZk656xmhe0V1vqygoF
+1BoCuCysPHXM9HxE58SfwexzUcLKYvu0R6BRJowN4aDYdaOyNbsnd/HF2q9GtCRc
+8qi3PDdcbl9s2exAY0GRbMwCcTqGaqRLhct8gkuPWKjfWAu8KHRnP+ds/lHpsRL2
+t+dH4QBf3n+WI5VuPKMMPF5opw6VjTlKG1WzOwYGQ+2JG14u8XjhMq7fEObfgrDe
+UDJ2cQPbNM8PoiD4NE2CYXCaRot1EnF8yf2xXp9N3U9QlLmmQNM=
+=m2/I
+-----END PGP SIGNATURE-----
