@@ -86,8 +86,14 @@ const list = (value: string | undefined) =>
 export const namesSetting = (env: NodeJS.ProcessEnv) => list(env['PIPULSE_TLS_NAMES']);
 export const subnetsSetting = (env: NodeJS.ProcessEnv) => list(env['PIPULSE_TLS_SUBNETS']);
 
-export const recoveryHint = (layout: Layout) =>
-  `restore a backup (sudo pipulse tls restore-ca <ca.old-…>) or move ${paths(layout).caDir} aside and run sudo pipulse tls init to make a new CA (every browser must then trust the new one)`;
+/** A CA file that belongs to another user or group than root:root (what `checkCa` reports for it). */
+export const isOwnerProblem = (problem: string) =>
+  /: (owned by uid \d+, expected \d+|group \d+, expected \d+)/.test(problem);
+
+export const recoveryHint = (layout: Layout, problem?: string) =>
+  problem !== undefined && isOwnerProblem(problem)
+    ? `the CA files belong to another user or group: sudo chown -R ${layout.uid}:${layout.privateGid} ${paths(layout).caDir} (no new CA is needed, and nothing has to be trusted again)`
+    : `restore a backup (sudo pipulse tls restore-ca <ca.old-…>) or move ${paths(layout).caDir} aside and run sudo pipulse tls init to make a new CA (every browser must then trust the new one)`;
 
 /**
  * Whether `path` is there: true, false (ENOENT only), or the error's one-line
@@ -108,8 +114,12 @@ function probe(path: string): true | false | string {
 
 const cn = (cert: X509Certificate) => /(?:^|\n)CN=([^\n]*)/.exec(cert.subject)?.[1] ?? '';
 
-/** The CA in `dir`, checked end to end. A partial CA is reported, never regenerated. */
-export function checkCa(dir: string): CaCheck {
+/**
+ * The CA in `dir`, checked end to end. A partial CA is reported, never regenerated. With an
+ * `owner`, each file must also belong to it (the commands pass the private owner, root:root): a
+ * CA key another user owns could have been changed by that user, so it is not trusted.
+ */
+export function checkCa(dir: string, owner?: Owner): CaCheck {
   const there = probe(dir);
   if (there === false) return { kind: 'none' };
   if (typeof there === 'string') return { kind: 'partial', problem: `${dir} ${there}` };
@@ -135,7 +145,7 @@ export function checkCa(dir: string): CaCheck {
     problem: `${dir}: ${problem}`
   });
   try {
-    const policy = { kind: 'generated', maxMode: MODES.caFile } as const;
+    const policy = { kind: 'generated', maxMode: MODES.caFile, ...(owner ?? {}) } as const;
     const cert = new X509Certificate(readSecureFile(certPath, policy, 'ca/ca.crt'));
     const key = createPrivateKey(readSecureFile(keyPath, policy, 'ca/ca.key'));
     if (!cert.ca) return partial('ca.crt is not a CA certificate');
@@ -302,7 +312,7 @@ function writeCaFiles(
   writeAtomic(join(caDir, 'ca.key'), files.key, options);
   writeAtomic(join(caDir, 'ca.crt'), files.cert, options);
   writeAtomic(join(caDir, 'constraints.json'), files.constraints, options);
-  const check = checkCa(caDir);
+  const check = checkCa(caDir, priv(ctx.layout));
   if (check.kind !== 'ok')
     throw new Error(
       `the staged CA did not check out: ${check.kind === 'partial' ? check.problem : 'missing'}`
@@ -343,7 +353,7 @@ export async function stageCopiedCa(
   const read = (name: string) =>
     readSecureFile(
       join(fromDir, name),
-      { kind: 'generated', maxMode: MODES.caFile },
+      { kind: 'generated', maxMode: MODES.caFile, ...priv(ctx.layout) },
       `${basename(fromDir)}/${name}`
     );
   const ca = writeCaFiles(ctx, join(dirs.ca, 'ca'), {
@@ -355,8 +365,8 @@ export async function stageCopiedCa(
 }
 
 /** Everything a stage must hold before anything active is touched. Throws what is wrong. */
-export function validateStage(dirs: StageDirs, owner: Owner): CaFiles {
-  const check = checkCa(join(dirs.ca, 'ca'));
+export function validateStage(dirs: StageDirs, owner: Owner, caOwner?: Owner): CaFiles {
+  const check = checkCa(join(dirs.ca, 'ca'), caOwner);
   if (check.kind !== 'ok')
     throw new Error(
       `the staged CA is not complete: ${check.kind === 'partial' ? check.problem : 'missing'}`

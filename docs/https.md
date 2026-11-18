@@ -69,7 +69,7 @@ A timer (`pipulse-tls-renew.timer`) checks every hour and renews the 90-day cert
 
 ## Recovering the CA
 
-An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next command that changes something (`init`, `renew`, `new-ca`, `restore-ca`, `enable` or `disable`); nothing else is needed. `status` and `export-ca` only read: they leave it unfinished, and `status` says when one is pending. An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
+An unfinished CA change (a crash or power loss while it ran) is finished or rolled back by the next command that changes something (`init`, `renew`, `new-ca`, `restore-ca`, `enable` or `disable`); nothing else is needed. `status` and `export-ca` only read: they leave it unfinished, and `status` says when one is pending. A command that says a file in `ca/` is "owned by uid" or in the wrong "group" found the CA changed by another user (a `cp -p` of a backup, a restore with `rsync -a`): it refuses to trust such a key, and the fix is `sudo chown -R 0:0 /etc/pipulse/tls/ca`, which needs no new CA and no new trust (in Docker, the same on the `tls-ca` volume through `docker compose run --rm --entrypoint sh pipulse-tls-init -c 'chown -R 0:0 /tls-ca/ca'`). An incomplete `ca/` folder is never regenerated: restore a backup, or move `ca/` aside and run `sudo pipulse tls init`, after which every device must trust the new CA.
 
 ## Seeing what is happening
 

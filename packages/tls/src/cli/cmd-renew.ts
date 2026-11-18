@@ -10,13 +10,15 @@ import { opensslVersion } from '../ca/issue.js';
 import { leafNames } from '../ca/constraints.js';
 import { pathExists, removeTree } from '../common/files.js';
 import { recover } from '../ca/journal.js';
-import { paths, pub, readState, writeRenewStatus, type RenewStatus } from '../ca/layout.js';
+import { paths, priv, pub, readState, writeRenewStatus, type RenewStatus } from '../ca/layout.js';
 import {
   checkCa,
   checkLeaf,
+  isOwnerProblem,
   makeLeaf,
   namesSetting,
   prepareWork,
+  recoveryHint,
   repairPublic,
   writeLeaf,
   type LeafCheck
@@ -140,7 +142,7 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
   let check: ReturnType<typeof checkCa>;
   try {
     recover(layout, ctx.hook);
-    check = checkCa(paths(layout).caDir);
+    check = checkCa(paths(layout).caDir, priv(layout));
   } catch (error) {
     record('failed', (error as Error).message);
     ctx.err(`renewal failed: ${(error as Error).message}`);
@@ -170,6 +172,8 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
   if (check.kind === 'partial') {
     record('failed', `the CA is incomplete: ${check.problem}`);
     ctx.err(`renewal failed: the CA is incomplete: ${check.problem}`);
+    if (isOwnerProblem(check.problem))
+      ctx.err(`to recover: ${recoveryHint(layout, check.problem)}`);
     return 1;
   }
   const ca = check.ca;

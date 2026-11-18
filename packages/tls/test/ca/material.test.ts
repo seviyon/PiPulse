@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
+  chownSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs';
@@ -15,12 +17,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildConstraints } from '../../src/ca/constraints.js';
 import { NO_PURPOSE_LIMITS, issueCa } from '../../src/ca/issue.js';
 import { ensureDir } from '../../src/common/files.js';
-import { MODES, paths, pub, readMeta, type Layout } from '../../src/ca/layout.js';
+import { MODES, paths, priv, pub, readMeta, type Layout } from '../../src/ca/layout.js';
 import {
   checkCa,
   checkLeaf,
+  isOwnerProblem,
   makeLeaf,
   prepareWork,
+  recoveryHint,
   repairPublic,
   stageCopiedCa,
   stageNewCa,
@@ -199,6 +203,123 @@ describe('checkCa', () => {
   });
   it('is "none" when there is no CA folder', () => {
     expect(checkCa(join(dir, 'ca'))).toEqual({ kind: 'none' });
+  });
+
+  describe('with an owner to match', () => {
+    const me = () => ({ uid: process.getuid!(), gid: process.getgid!() });
+
+    it('is ok when every file belongs to it, and when no owner is asked for', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      expect(checkCa(caDir, me()).kind).toBe('ok');
+      expect(checkCa(caDir, priv(ctx.layout)).kind).toBe('ok');
+      expect(checkCa(caDir).kind).toBe('ok');
+    });
+
+    it('refuses a CA whose files belong to another user, and names the file and both ids', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      const check = checkCa(caDir, { uid: me().uid + 1, gid: me().gid });
+      expect(check.kind).toBe('partial');
+      expect(check.kind === 'partial' && check.problem).toBe(
+        `${caDir}: ca/ca.crt: owned by uid ${me().uid}, expected ${me().uid + 1}`
+      );
+    });
+
+    it('refuses a CA whose files belong to another group', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      const check = checkCa(caDir, { uid: me().uid, gid: me().gid + 1 });
+      expect(check.kind === 'partial' && check.problem).toBe(
+        `${caDir}: ca/ca.crt: group ${me().gid}, expected ${me().gid + 1}`
+      );
+    });
+
+    it('checks the key and the constraints file as well as the certificate, each by its own name', async ({
+      skip
+    }) => {
+      // One file at a time gets another of this user's own groups (no root needed to do that).
+      const other = process.getgroups!().find((group) => group !== process.getgid!());
+      // A user in one group cannot make a file belong to another: say so instead of passing.
+      if (other === undefined) skip();
+      if (other === undefined) return;
+      for (const [file, label] of [
+        ['ca.crt', 'ca/ca.crt'],
+        ['ca.key', 'ca/ca.key'],
+        ['constraints.json', 'ca/constraints.json']
+      ] as const) {
+        const { dirs } = await stagedCa();
+        const caDir = join(dirs.ca, 'ca');
+        chownSync(join(caDir, file), process.getuid!(), other);
+        const check = checkCa(caDir, me());
+        expect(check.kind === 'partial' && check.problem, file).toBe(
+          `${caDir}: ${label}: group ${other}, expected ${me().gid}`
+        );
+        rmSync(dirs.ca, { recursive: true, force: true });
+      }
+    });
+
+    it('says how to fix an ownership problem, and keeps the old advice for anything else', () => {
+      const layout = { ...ctx.layout, uid: 0, privateGid: 0 };
+      const caDir = paths(layout).caDir;
+      for (const problem of [
+        `${caDir}: ca/ca.key: owned by uid 1000, expected 0`,
+        `${caDir}: ca/ca.crt: group 999, expected 0`
+      ]) {
+        expect(isOwnerProblem(problem)).toBe(true);
+        expect(recoveryHint(layout, problem)).toBe(
+          `the CA files belong to another user or group: sudo chown -R 0:0 ${caDir} (no new CA is needed, and nothing has to be trusted again)`
+        );
+      }
+      for (const problem of [
+        `${caDir} is missing ca.key`,
+        `${caDir}: ca.key does not match ca.crt`
+      ]) {
+        expect(isOwnerProblem(problem)).toBe(false);
+        expect(recoveryHint(layout, problem)).toContain('restore a backup');
+      }
+      expect(recoveryHint(layout)).toContain('restore a backup');
+    });
+
+    it('restore-ca refuses a backup whose files belong to another group', async ({ skip }) => {
+      const other = process.getgroups!().find((group) => group !== process.getgid!());
+      if (other === undefined) skip();
+      const { dirs } = await stagedCa();
+      const backup = join(dirs.ca, 'ca');
+      chownSync(join(backup, 'ca.key'), process.getuid!(), other!);
+      const target = { ca: join(dir, 'ca.next-restored'), pub: join(dir, '.next-restored') };
+      ensureDir(target.ca, { mode: 0o700 });
+      ensureDir(target.pub, { mode: 0o750 });
+      await expect(stageCopiedCa(ctx, target, backup, [])).rejects.toThrow(
+        /ca\.key: group \d+, expected \d+/
+      );
+    });
+
+    it('restore-ca refuses a backup whose key is a symlink, not a file', async () => {
+      const { dirs } = await stagedCa();
+      const backup = join(dirs.ca, 'ca');
+      const real = join(dir, 'elsewhere.key');
+      writeFileSync(real, readFileSync(join(backup, 'ca.key')), { mode: 0o600 });
+      unlinkSync(join(backup, 'ca.key'));
+      symlinkSync(real, join(backup, 'ca.key'));
+      const target = { ca: join(dir, 'ca.next-linked'), pub: join(dir, '.next-linked') };
+      ensureDir(target.ca, { mode: 0o700 });
+      ensureDir(target.pub, { mode: 0o750 });
+      await expect(stageCopiedCa(ctx, target, backup, [])).rejects.toThrow(/ca\.key/);
+    });
+
+    it('a staged CA is validated against the private owner too', async () => {
+      const { dirs } = await stagedCa();
+      const wrong = { uid: me().uid + 1, gid: me().gid };
+      expect(validateStage(dirs, pub(ctx.layout), priv(ctx.layout)).fingerprint).toMatch(
+        /^[0-9A-F:]+$/
+      );
+      expect(() => validateStage(dirs, pub(ctx.layout), wrong)).toThrow(
+        /the staged CA is not complete: .*owned by uid/
+      );
+      // No private owner given: as before.
+      expect(validateStage(dirs, pub(ctx.layout)).fingerprint).toMatch(/^[0-9A-F:]+$/);
+    });
   });
 });
 

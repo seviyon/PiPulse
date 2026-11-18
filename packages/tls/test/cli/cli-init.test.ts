@@ -483,3 +483,38 @@ describe('init --mode auto', () => {
     expect(await main(['init', '--mode', 'manual'], testContext(dir))).not.toBe(0);
   });
 });
+
+describe('a CA whose files belong to another owner is never used', () => {
+  // The files stay as init made them; the commands now expect another private group (the CA
+  // folder's owner), which a test can set up without being able to chown to another user.
+  const foreignContext = () => {
+    const foreign = testContext(dir);
+    foreign.layout = { ...foreign.layout, privateGid: process.getgid!() + 1 };
+    return foreign;
+  };
+
+  it('renew fails loudly and records why, instead of signing with a key someone else could have changed', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    const foreign = foreignContext();
+    expect(await main(['renew', '--force'], foreign)).toBe(1);
+    expect(foreign.errors.join('\n')).toMatch(/group \d+, expected \d+/);
+    expect(readRenewStatus(paths(foreign.layout).renewStatus)?.result).toBe('failed');
+    // ...and says how to put it right, where a new CA is not the answer.
+    expect(foreign.errors.join('\n')).toContain(
+      'the CA files belong to another user or group: sudo chown -R'
+    );
+    expect(foreign.errors.join('\n')).not.toContain('restore a backup');
+  });
+
+  it('renew over a CA that is incomplete for another reason gives no ownership advice', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    unlinkSync(paths(ctx.layout).caConstraints);
+    const again = testContext(dir);
+    expect(await main(['renew', '--force'], again)).toBe(1);
+    const errors = again.errors.join('\n');
+    expect(errors).toContain('the CA is incomplete');
+    expect(errors).toContain('constraints.json');
+    expect(errors).not.toContain('belong to another user or group');
+    expect(readRenewStatus(paths(again.layout).renewStatus)?.result).toBe('failed');
+  });
+});

@@ -84,6 +84,7 @@ const EXPORTS = [
   'healthy',
   'hostName',
   'inspectMaterial',
+  'isOwnerProblem',
   'isoDate',
   'isoMinute',
   'issuanceClock',
