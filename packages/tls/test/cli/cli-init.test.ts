@@ -505,4 +505,16 @@ describe('a CA whose files belong to another owner is never used', () => {
     );
     expect(foreign.errors.join('\n')).not.toContain('restore a backup');
   });
+
+  it('renew over a CA that is incomplete for another reason gives no ownership advice', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    unlinkSync(paths(ctx.layout).caConstraints);
+    const again = testContext(dir);
+    expect(await main(['renew', '--force'], again)).toBe(1);
+    const errors = again.errors.join('\n');
+    expect(errors).toContain('the CA is incomplete');
+    expect(errors).toContain('constraints.json');
+    expect(errors).not.toContain('belong to another user or group');
+    expect(readRenewStatus(paths(again.layout).renewStatus)?.result).toBe('failed');
+  });
 });
