@@ -58,7 +58,8 @@ export function readBoundedText(fd: number, max: number, path: string): string {
  * can be swapped after the lstat above (a FIFO or /dev/zero would hang or exhaust a root
  * command): open without following links or blocking, then judge the descriptor itself.
  */
-function readText(path: string, expectUid?: number): string {
+/** Exported for tests: `readRuntimeStatus` checks the same things first, so only a direct call reaches these. */
+export function readText(path: string, expectUid?: number): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(fd);
@@ -117,7 +118,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * Validates every field and returns a copy built from the validated values only, so an
  * unknown or malformed field in the file never reaches a caller or the terminal.
  */
-function parseRuntimeStatus(content: string): RuntimeStatus {
+/** Exported for tests: `readRuntimeStatus` turns every throw into one message, hiding which check fired. */
+export function parseRuntimeStatus(content: string): RuntimeStatus {
   const value: unknown = JSON.parse(content);
   if (!isObject(value) || value['version'] !== 1) throw new Error('unexpected content');
   const { transport, pid, startTime, bootId, writtenAt } = value;
@@ -167,6 +169,8 @@ export function readRuntimeStatus(
     read?: (path: string) => string;
     identity?: (pid: number) => { startTime: string; bootId: string } | undefined;
     bootId?: () => string | undefined;
+    /** Reads /proc files for the default `identity` and `bootId` (tests pass a fake /proc). */
+    procRead?: ((path: string) => string) | undefined;
   } = {}
 ): RuntimeView {
   const path = join(dir, RUNTIME_FILE);
@@ -197,10 +201,14 @@ export function readRuntimeStatus(
   } catch {
     return { state: 'status-file-corrupt', problem: `${path} is not a valid status file` };
   }
-  const bootNow = (options.bootId ?? (() => processIdentity(process.pid)?.bootId))();
+  const bootNow = (
+    options.bootId ?? (() => processIdentity(process.pid, options.procRead)?.bootId)
+  )();
   if (bootNow !== undefined && status.bootId !== bootNow)
     return { state: 'not-running', reason: 'stale-boot' };
-  const identity = (options.identity ?? ((pid: number) => processIdentity(pid)))(status.pid);
+  const identity = (options.identity ?? ((pid: number) => processIdentity(pid, options.procRead)))(
+    status.pid
+  );
   if (!identity) return { state: 'not-running', reason: 'stale-pid' };
   if (identity.startTime !== status.startTime)
     return { state: 'not-running', reason: 'pid-reused' };
