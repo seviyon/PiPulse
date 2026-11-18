@@ -288,6 +288,7 @@ export async function checkHealth(
         rejectUnauthorized: true,
         // A fresh agent: Node 24 sends the default agent's requests through HTTP(S)_PROXY when
         // NODE_USE_ENV_PROXY is set, loopback included.
+        // (With the checkServerIdentity above Node's agent would not keep the socket anyway.)
         agent: new HttpsAgent({ keepAlive: false }),
         // Exactly what the server judges an operator certificate by: PIPULSE_TLS_CA, else Node's
         // bundled roots. Without this, NODE_EXTRA_CA_CERTS (set for webhooks) would be trusted too.

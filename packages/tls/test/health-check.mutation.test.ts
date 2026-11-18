@@ -376,7 +376,10 @@ describe('the HTTPS check, request and answer', () => {
   });
 });
 
-describe('the check leaves no connection open', () => {
+// Plain HTTP only: over HTTPS the check passes a custom checkServerIdentity, and with one Node's
+// agent never keeps the socket whatever keepAlive says (checked on Node 22.23 and 24.19), so there
+// is nothing to observe and a test there could not fail.
+describe('the plain-HTTP check leaves no connection open', () => {
   const closed = () =>
     vi.waitFor(
       () =>
@@ -391,12 +394,6 @@ describe('the check leaves no connection open', () => {
   it('over plain HTTP', async () => {
     const port = await listen(createHttpServer(json(200, OK)));
     await checkHealth({ PIPULSE_TLS: 'off', PIPULSE_PORT: String(port) });
-    await closed();
-  });
-
-  it('over HTTPS', async () => {
-    const port = await listen(https(json(200, OK)));
-    await checkHealth(tlsEnv(port), { readState: noState });
     await closed();
   });
 });
