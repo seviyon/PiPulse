@@ -81,7 +81,8 @@ export function judgeClock(anchor: Anchor | undefined, now: ClockNow): Verdict {
   };
 }
 
-const isAnchor = (value: unknown): value is Anchor => {
+/** Exported for tests: `readAnchor` catches a throw, so only a direct call shows a guard missing. */
+export const isAnchor = (value: unknown): value is Anchor => {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   const c = v['candidate'];

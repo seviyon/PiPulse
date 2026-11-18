@@ -7,6 +7,7 @@ import {
   ANCHOR_HOLD_MS,
   ANCHOR_TOLERANCE_MS,
   aheadText,
+  isAnchor,
   judgeClock,
   readAnchor,
   writeAnchor,
@@ -197,6 +198,28 @@ describe('the stored anchor', () => {
       writeFileSync(file, text);
       expect(readAnchor(ctx.layout)).toBeUndefined();
     }
+  });
+});
+
+describe('isAnchor', () => {
+  const good = { version: 1, bootId: 'b', offsetMs: 1 };
+  it('answers false, never throws, for anything that is not an anchor', () => {
+    for (const value of [null, undefined, 'x', 7, true, [], [good], {}]) {
+      expect(isAnchor(value)).toBe(false);
+    }
+  });
+
+  it('accepts an anchor with no candidate or a well-formed one', () => {
+    expect(isAnchor(good)).toBe(true);
+    expect(isAnchor({ ...good, candidate: { offsetMs: 1, uptimeMs: 2 } })).toBe(true);
+  });
+
+  it('answers false, never throws, for a candidate that is not well formed', () => {
+    for (const candidate of [null, 'yes', 7, true, [], {}, { offsetMs: 1 }, { uptimeMs: 1 }]) {
+      expect(isAnchor({ ...good, candidate })).toBe(false);
+    }
+    expect(isAnchor({ ...good, candidate: { offsetMs: 1, uptimeMs: Infinity } })).toBe(false);
+    expect(isAnchor({ ...good, candidate: { offsetMs: NaN, uptimeMs: 1 } })).toBe(false);
   });
 });
 
