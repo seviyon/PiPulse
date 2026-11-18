@@ -214,6 +214,20 @@ describe('vcgencmd that cannot reach the firmware', () => {
     await expect(cpuVoltagePlugin.collect()).resolves.toBeNull();
   });
 
+  it('recognises the message Raspberry Pi OS 11 gives a user outside the video group', async () => {
+    vi.resetModules();
+    const fresh = await import('../src/index.js');
+    mockVcgencmd({
+      get_throttled: Object.assign(new Error('Command failed: vcgencmd'), {
+        code: 255 as unknown as string,
+        stderr:
+          "Can't open device file: /dev/vcio\nTry creating a device file with: sudo mknod /dev/vcio c 100 0\n"
+      })
+    });
+    await expect(fresh.throttledPlugin.collect()).rejects.toThrow(/\/dev\/vcio.*"video" group/s);
+    await expect(fresh.throttledPlugin.collect()).resolves.toBeNull();
+  });
+
   it('still reports every timeout, since those can recover', async () => {
     const timeout = () =>
       Object.assign(new Error('Command failed: vcgencmd'), { killed: true, signal: 'SIGTERM' });

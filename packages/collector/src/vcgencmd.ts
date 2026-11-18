@@ -12,7 +12,9 @@ const VCGENCMD = '/usr/bin/vcgencmd';
  * in the `video` group, or a container wasn't given /dev/vchiq. Unlike a
  * timeout, retrying won't help until someone fixes the setup.
  */
-const UNUSABLE_STDERR = /vchiq|VCHI|permission denied/i;
+// On Raspberry Pi OS 11 `Io` (checked 2026-11-18, run as `nobody`): "Can't open device file: /dev/vcio",
+// exit 255; older firmware tools say "failed to open vchiq instance".
+const UNUSABLE_STDERR = /vchiq|VCHI|vcio|can't open device|permission denied/i;
 
 class VcgencmdUnusableError extends Error {}
 
