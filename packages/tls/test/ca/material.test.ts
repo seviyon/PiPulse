@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
+  chownSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -231,23 +232,28 @@ describe('checkCa', () => {
       );
     });
 
-    it('checks the key and the constraints file as well as the certificate', async () => {
-      // Each file alone has the wrong owner: the others are read from a copy that is checked first.
-      const { dirs } = await stagedCa();
-      const caDir = join(dirs.ca, 'ca');
-      // ca.crt and ca.key are read in that order: a wrong owner on the first stops there, so the
-      // later files are only reached when the earlier ones pass. Use the same wrong owner for
-      // all and confirm the first read names ca.crt; then prove the key and constraints are read
-      // under the same policy by their own refusal messages through a stage that has only them.
-      const wrong = { uid: me().uid + 1, gid: me().gid };
-      expect(checkCa(caDir, wrong).kind).toBe('partial');
-      const onlyKey = join(dir, 'only-key');
-      mkdirSync(onlyKey, { mode: 0o700 });
-      for (const file of ['ca.crt', 'ca.key', 'constraints.json']) {
-        writeFileSync(join(onlyKey, file), readFileSync(join(caDir, file)), { mode: 0o600 });
+    it('checks the key and the constraints file as well as the certificate, each by its own name', async ({
+      skip
+    }) => {
+      // One file at a time gets another of this user's own groups (no root needed to do that).
+      const other = process.getgroups!().find((group) => group !== process.getgid!());
+      // A user in one group cannot make a file belong to another: say so instead of passing.
+      if (other === undefined) skip();
+      if (other === undefined) return;
+      for (const [file, label] of [
+        ['ca.crt', 'ca/ca.crt'],
+        ['ca.key', 'ca/ca.key'],
+        ['constraints.json', 'ca/constraints.json']
+      ] as const) {
+        const { dirs } = await stagedCa();
+        const caDir = join(dirs.ca, 'ca');
+        chownSync(join(caDir, file), process.getuid!(), other);
+        const check = checkCa(caDir, me());
+        expect(check.kind === 'partial' && check.problem, file).toBe(
+          `${caDir}: ${label}: group ${other}, expected ${me().gid}`
+        );
+        rmSync(dirs.ca, { recursive: true, force: true });
       }
-      expect(checkCa(onlyKey, me()).kind).toBe('ok');
-      expect(checkCa(onlyKey, wrong).kind).toBe('partial');
     });
 
     it('a staged CA is validated against the private owner too', async () => {
