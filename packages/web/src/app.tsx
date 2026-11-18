@@ -17,6 +17,7 @@ import {
   HttpError,
   loadSession,
   NO_SESSION,
+  segment,
   sendJson,
   type Session
 } from './core/api.js';
@@ -31,6 +32,7 @@ import { routeHash, useRoute } from './router.js';
 import { StatusIcon } from './core/status-icon.js';
 import { Tile } from './now/tile.js';
 import type { Alert, Config, DeviceInfo, Rule, Sample, UpdatesView } from './core/types.js';
+import { anything, isConfig, isSamples, isUpdatesView } from './core/guards.js';
 
 /** Node's process.platform values, as people say them. */
 const platformNames: Record<string, string> = {
@@ -151,7 +153,7 @@ export function App() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     const attempt = () => {
-      getJson<Config>('/api/config').then(
+      getJson<Config>('/api/config', isConfig).then(
         (loaded) => {
           if (cancelled) return;
           if (typeof loaded.serverTime === 'number') {
@@ -204,7 +206,7 @@ export function App() {
     const from = Date.now() + clockOffset.current - WINDOW_MS;
     // History-only metrics have no tile, so no sparkline to fill.
     for (const plugin of plugins.filter((p) => !historyOnly.has(p.id))) {
-      getJson<Sample[]>(`/api/metrics/${plugin.id}/history?from=${from}`).then(
+      getJson<Sample[]>(`/api/metrics/${segment(plugin.id)}/history?from=${from}`, isSamples).then(
         (samples) => setData((state) => applyHistory(state, plugin.id, samples)),
         // A tile without history still fills in from the live feed.
         () => undefined
@@ -220,7 +222,8 @@ export function App() {
   // An older server has no /api/updates and simply shows no tab content.
   useEffect(() => {
     if (!config) return;
-    const load = () => getJson<UpdatesView>('/api/updates').then(setUpdates, () => undefined);
+    const load = () =>
+      getJson<UpdatesView>('/api/updates', isUpdatesView).then(setUpdates, () => undefined);
     load();
     const timer = setInterval(load, 10 * 60_000);
     return () => clearInterval(timer);
@@ -271,7 +274,7 @@ export function App() {
     setLoadKey((key) => key + 1);
   };
   const signOut = () => {
-    void sendJson('POST', '/api/logout').finally(() => {
+    void sendJson('POST', '/api/logout', anything).finally(() => {
       setSession((current) => ({ ...current, signedIn: false }));
       if (session.protectReads) setNeedSignIn(true);
     });

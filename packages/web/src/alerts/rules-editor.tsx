@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { describeRule } from './alerts.js';
 import { getJson, HttpError, sendJson, type Session } from '../core/api.js';
+import { isRuleList } from '../core/guards.js';
 import {
   bodyOf,
   CONDITIONS,
@@ -69,7 +70,7 @@ export function RulesSection({
 
   useEffect(() => {
     let cancelled = false;
-    getJson<{ rules: RuleEntry[] }>('/api/alerts/rules').then(
+    getJson<{ rules: RuleEntry[] }>('/api/alerts/rules', isRuleList).then(
       (body) => !cancelled && setLoaded({ status: 'ready', entries: body.rules }),
       () => !cancelled && setLoaded({ status: 'error' })
     );
@@ -109,6 +110,7 @@ export function RulesSection({
       const result = await sendJson<{ rules: RuleEntry[] }>(
         method,
         method === 'POST' ? ADD_PATH : path(id),
+        isRuleList,
         body
       );
       setLoaded({ status: 'ready', entries: result.rules });
@@ -136,7 +138,7 @@ export function RulesSection({
   const sendRow = async (method: 'PUT' | 'DELETE', id: string, body?: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const result = await sendJson<{ rules: RuleEntry[] }>(method, path(id), body);
+      const result = await sendJson<{ rules: RuleEntry[] }>(method, path(id), isRuleList, body);
       setLoaded({ status: 'ready', entries: result.rules });
       setRowError(undefined);
     } catch (error) {

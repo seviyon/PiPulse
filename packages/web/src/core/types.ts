@@ -224,3 +224,32 @@ export type UpdatesView =
         keptBack: string[];
       };
     };
+
+export interface LevelSetting {
+  text: string;
+  ms: number | null;
+  source: 'env' | 'saved' | 'default';
+  variable: string;
+  locked: boolean;
+}
+
+export interface SettingsBody {
+  retention: Record<Resolution, LevelSetting>;
+  storage: {
+    fileBytes: number;
+    freeBytes: number;
+    diskFreeBytes: number | null;
+    levels: Record<Resolution, { rows: number; oldest: number | null }>;
+  };
+}
+
+export interface LevelDeletion {
+  deletesRows: number;
+  from: number | null;
+  to: number | null;
+}
+
+export interface Preview {
+  deletions: Record<Resolution, LevelDeletion>;
+  estimatedBytes: number;
+}

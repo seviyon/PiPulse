@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson } from '../core/api.js';
+import { anything, isWebhooks } from '../core/guards.js';
 import { formatDateTime } from '../core/format.js';
 import { StatusIcon } from '../core/status-icon.js';
 import type { WebhookStatus } from '../core/types.js';
@@ -46,9 +47,13 @@ export function NotificationsSection() {
   const [loaded, setLoaded] = useState<Loaded>({ status: 'loading' });
 
   useEffect(() => {
-    getJson<unknown>('/api/notify').then(
-      // An older server has no status to give; treat that as nothing configured.
-      (body) => setLoaded({ status: 'ready', webhooks: Array.isArray(body) ? body : [] }),
+    getJson<unknown>('/api/notify', anything).then(
+      // An older server has no status to give; treat that as nothing configured. A list that is
+      // not a list of webhooks is a failed load, not an empty one.
+      (body) =>
+        Array.isArray(body) && !isWebhooks(body)
+          ? setLoaded({ status: 'error' })
+          : setLoaded({ status: 'ready', webhooks: Array.isArray(body) ? body : [] }),
       () => setLoaded({ status: 'error' })
     );
   }, []);

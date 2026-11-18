@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson, type Session } from '../core/api.js';
+import { isTlsConfig, type TlsConfig } from '../core/guards.js';
 import { compactIp, formatDateYear } from '../core/format.js';
 import { StatusIcon } from '../core/status-icon.js';
-import type { Config, TlsView } from '../core/types.js';
+import type { TlsView } from '../core/types.js';
 
 const DAY_MS = 86_400_000;
 export const REFRESH_MS = 60_000;
@@ -171,10 +172,10 @@ function HttpsBody({ tls, now }: { tls: Https; now: number }) {
 
 /** How the dashboard is served: the certificate in use, or a warning that it's plain HTTP. */
 export function CertificateSection({ session }: { session: Session }) {
-  const [config, setConfig] = useState<Config | 'loading' | 'error'>('loading');
+  const [config, setConfig] = useState<TlsConfig | 'loading' | 'error'>('loading');
   useEffect(() => {
     const load = () =>
-      getJson<Config>('/api/config').then(setConfig, () =>
+      getJson<TlsConfig>('/api/config', isTlsConfig).then(setConfig, () =>
         // A failed refresh keeps the last good view; only the first load shows the error.
         setConfig((current) => (typeof current === 'object' ? current : 'error'))
       );

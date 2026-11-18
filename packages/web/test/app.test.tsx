@@ -160,6 +160,42 @@ describe('<App>', () => {
     expect(tile('Network received').textContent).toContain('Waiting for the first reading');
   });
 
+  it('treats a config that is not a config as an unreachable server, and retries', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        new URL(url, 'http://io.lan:8889').pathname === '/api/config'
+          ? Response.json({ device: 'Io', plugins: 'none' })
+          : new Response('not found', { status: 404 })
+      )
+    );
+    render(<App />, root);
+    await eventually(() => expect(root.textContent).toContain('Trying again in'));
+    expect(root.querySelector('h1')?.textContent).not.toBe('Io');
+  });
+
+  it('keeps a plugin id with a slash inside the history URL, and ignores a history that is not samples', async () => {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url, 'http://io.lan:8889').pathname;
+        if (path === '/api/config') {
+          return Response.json({
+            ...config,
+            plugins: [{ id: 'we/ird?id', label: 'Odd', unit: '%', intervalMs: 5000 }],
+            serverTime
+          });
+        }
+        requested.push(path);
+        return Response.json({ not: 'samples' });
+      })
+    );
+    render(<App />, root);
+    await eventually(() => expect(requested).toContain('/api/metrics/we%2Fird%3Fid/history'));
+    expect(tile('Odd').textContent).toContain('Waiting for the first reading');
+  });
+
   it('connects to /api/live on the same host and updates tiles as samples arrive', async () => {
     render(<App />, root);
     await eventually(() => expect(FakeSocket.instances).toHaveLength(1));
@@ -490,5 +526,37 @@ describe('read protection', () => {
     });
     await eventually(() => expect(root.querySelector('h1')?.textContent).toBe('Io'));
     expect(root.textContent).toContain('Sign out');
+  });
+
+  it('signs out: posts the logout, then shows the sign-in form again', async () => {
+    let signedIn = true;
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url, 'http://io.lan:8889').pathname;
+        calls.push(`${init?.method ?? 'GET'} ${path}`);
+        if (path === '/api/session') {
+          return Response.json({ editable: true, signedIn, protectReads: true });
+        }
+        if (path === '/api/logout' && init?.method === 'POST') {
+          signedIn = false;
+          return Response.json({ signedIn: false });
+        }
+        if (!signedIn) return Response.json({ error: 'sign in required' }, { status: 401 });
+        if (path === '/api/config') return Response.json({ ...config, serverTime });
+        return Response.json([]);
+      })
+    );
+    render(<App />, root);
+    await eventually(() => expect(root.textContent).toContain('Sign out'));
+
+    const signOut = [...root.querySelectorAll('a, button')].find(
+      (e) => e.textContent === 'Sign out'
+    );
+    await act(() => (signOut as HTMLElement).click());
+    await eventually(() => expect(root.querySelector('input[type=password]')).not.toBeNull());
+    expect(calls).toContain('POST /api/logout');
+    expect(root.textContent).not.toContain('Sign out');
   });
 });

@@ -67,6 +67,24 @@ describe('AboutSection', () => {
   });
 });
 
+describe('AboutSection when the version cannot be read', () => {
+  it('says so when the server does not answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 }))
+    );
+    await show();
+    expect(root.textContent).toContain("Couldn't load the version");
+  });
+
+  it('says so when the answer is not a config (an older or newer server, a proxy page)', async () => {
+    config = { version: 5, node: 'twenty-two' };
+    await show();
+    expect(root.textContent).toContain("Couldn't load the version");
+    expect(root.textContent).not.toContain('PiPulse 5');
+  });
+});
+
 describe('AboutSection: which dashboard this tab runs', () => {
   it('shows the dashboard version beside the server’s', async () => {
     mockedWeb.value = '0.6.0';

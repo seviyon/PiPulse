@@ -5,7 +5,8 @@ import { routeHash } from '../router.js';
 import { RulesSection } from './rules-editor.js';
 import { StatusIcon } from '../core/status-icon.js';
 import type { Alert, Config, PluginInfo, Rule } from '../core/types.js';
-import { apiFetch, HttpError, sendJson, type Session } from '../core/api.js';
+import { apiFetch, HttpError, parse, segment, sendJson, type Session } from '../core/api.js';
+import { isAlert, isAlerts } from '../core/guards.js';
 
 const DAY = 86_400_000;
 /** How far past its own clock estimate the page asks for cleared alerts. */
@@ -102,7 +103,7 @@ export function AlertsPage({
   const canEdit = session.editable && session.signedIn;
   const signedOut = () => onSessionChange({ ...session, signedIn: false });
   const acknowledge = (alert: Alert) => {
-    sendJson<Alert>('POST', `/api/alerts/${alert.id}/acknowledge`).then(
+    sendJson<Alert>('POST', `/api/alerts/${segment(alert.id)}/acknowledge`, isAlert).then(
       (acked) => {
         setAckError(undefined);
         onAcknowledged(acked);
@@ -123,10 +124,7 @@ export function AlertsPage({
     apiFetch(
       `/api/alerts?state=cleared&from=${at - 30 * DAY}&to=${at + CLOCK_SLACK}&limit=${RECENT_LIMIT}`
     )
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`alerts answered ${response.status}`);
-        return (await response.json()) as Alert[];
-      })
+      .then((response) => parse(response, isAlerts, '/api/alerts'))
       .then(
         (alerts) => {
           if (!cancelled) setRecent({ status: 'ready', alerts });
