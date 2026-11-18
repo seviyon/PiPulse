@@ -54,8 +54,14 @@ put leaf.key
 sed -e "s#ghcr.io/seviyon/pipulse:[^ ]*#$image#" -e "s#- ./config:/etc/pipulse:ro#- $cfg:/etc/pipulse:ro#" -e "s#/run/systemd/timesync#$work/timesync#" -e "s#- /etc/hostname:#- $work/hostname:#" \
   -e '/\/boot\/firmware/d' -e '/os-release/d' -e '/device-tree/d' "$repo/compose.yaml" > "$work/compose.yaml"
 printf '  %s:\n    external: true\n' "$cfg" >> "$work/compose.yaml"
-dc() { docker compose -p "$project" -f "$work/compose.yaml" "$@"; }
-trap 'dc down -v >/dev/null 2>&1 || true; docker volume rm "$cfg" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+composefile=$work/compose.yaml
+dc() { docker compose -p "$project" -f "$composefile" "$@"; }
+# A plain directory on the Docker host for the bind-mount phase below (created through a container,
+# so it is on the host the daemon runs on: the Colima VM, or the CI runner).
+bind=/tmp/$project-bind
+# shellcheck disable=SC2329 # run from the trap below
+host_dir() { docker run --rm -u 0 -v /tmp:/h --entrypoint sh "$image" -c "$1"; }
+trap 'dc down -v >/dev/null 2>&1 || true; docker volume rm "$cfg" >/dev/null 2>&1 || true; host_dir "rm -rf /h/$project-bind" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q "$1")" 2>/dev/null)" = healthy ]; }
 api() { dc exec -T -e NODE_EXTRA_CA_CERTS=/etc/pipulse/ca.pem pipulse node -e "fetch('https://localhost:18892$1').then(r=>r.text()).then(t=>process.stdout.write(t))"; }
 
@@ -84,4 +90,34 @@ put leaf.key
 dc up -d --force-recreate pipulse >/dev/null 2>&1
 for _ in $(seq 1 120); do healthy pipulse && break; sleep 1; done
 healthy pipulse && ok 'the right key recovers the server' || { dc logs pipulse; bad 'the right key recovers the server'; }
+
+# The same files in a plain directory on the host, bind-mounted as an operator's /etc/pipulse is
+# (the volume above is Docker-managed): owned by uid 999 with the key 0600 it is served, and owned
+# by root with the key 0600 the server's user cannot read it and says which setting.
+put_bind() { # put_bind OWNER KEYMODE
+  docker run --rm -u 0 -v /tmp:/h -v "$work/gen:/gen:ro" --entrypoint sh "$image" -c \
+    "rm -rf /h/$project-bind && mkdir -p /h/$project-bind && cp /gen/ca.pem /gen/leaf.pem /h/$project-bind/ && cp /gen/leaf.key /h/$project-bind/leaf.key && chown -R $1 /h/$project-bind && chmod 755 /h/$project-bind && chmod $2 /h/$project-bind/leaf.key && chmod 644 /h/$project-bind/*.pem"
+}
+sed -e "s#- $cfg:/etc/pipulse:ro#- $bind:/etc/pipulse:ro#" "$work/compose.yaml" > "$work/compose-bind.yaml"
+composefile=$work/compose-bind.yaml
+put_bind 999:999 600
+dc up -d --force-recreate pipulse >/dev/null 2>&1
+for _ in $(seq 1 120); do healthy pipulse && break; sleep 1; done
+healthy pipulse && ok 'a bind-mounted directory owned by uid 999 is served' || { dc logs pipulse; bad 'a bind-mounted directory owned by uid 999 is served'; }
+served=$(dc exec -T pipulse node -e "
+const t=require('node:tls');const s=t.connect({host:'127.0.0.1',port:18892,servername:'localhost',ca:require('node:fs').readFileSync('/etc/pipulse/ca.pem')},()=>{process.stdout.write(s.getPeerCertificate().fingerprint256);s.end()})")
+[ "$served" = "$want" ] && ok 'the bind-mounted certificate is the one served' || bad "the bind-mounted certificate is the one served ($served != $want)"
+
+put_bind 0:0 600
+dc up -d --force-recreate pipulse >/dev/null 2>&1 || true
+sleep 15
+logs=$(dc logs pipulse 2>&1 || true)
+echo "$logs" | grep -q 'PIPULSE_TLS_KEY' && ok 'a key owned by root (0600) stops the server with a line naming the setting' || { echo "$logs" | tail -5; bad 'a key owned by root (0600) stops the server with a line naming the setting'; }
+healthy pipulse && bad 'an unreadable key must not leave a healthy server' || ok 'and the server is not healthy'
+if dc exec -T pipulse-tls pipulse tls sidecar-health >/dev/null 2>&1; then ok 'the sidecar stays healthy'; else bad 'the sidecar stays healthy (bind phase)'; fi
+
+put_bind 999:999 600
+dc up -d --force-recreate pipulse >/dev/null 2>&1
+for _ in $(seq 1 120); do healthy pipulse && break; sleep 1; done
+healthy pipulse && ok 'chown 999:999 on the bind-mounted directory recovers the server' || { dc logs pipulse; bad 'chown 999:999 on the bind-mounted directory recovers the server'; }
 exit $fail
