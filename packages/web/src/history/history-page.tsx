@@ -11,7 +11,8 @@ import {
 } from './history.js';
 import { RANGES, routeHash, type RangeId } from '../router.js';
 import type { Config, PluginInfo, Resolution, Series } from '../core/types.js';
-import { apiFetch } from '../core/api.js';
+import { apiFetch, parse, segment } from '../core/api.js';
+import { isSeries } from '../core/guards.js';
 
 interface HistoryPageProps {
   config: Config;
@@ -44,9 +45,9 @@ async function fetchSeries(
   resolution: Resolution | 'auto' = 'auto'
 ): Promise<Series> {
   const query = `from=${from}&to=${to}${resolution === 'auto' ? '' : `&resolution=${resolution}`}`;
-  const response = await apiFetch(`/api/metrics/${metric}/series?${query}`);
+  const response = await apiFetch(`/api/metrics/${segment(metric)}/series?${query}`);
   if (!response.ok) throw new Error(`series for ${metric} answered ${response.status}`);
-  return (await response.json()) as Series;
+  return parse(response, isSeries, `/api/metrics/${metric}/series`);
 }
 
 /** Finest to coarsest; a coarser level never has more rows in a window. */

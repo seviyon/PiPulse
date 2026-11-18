@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson } from '../core/api.js';
+import { isAboutConfig, type AboutConfig } from '../core/guards.js';
 import { StatusIcon } from '../core/status-icon.js';
 import { WEB_VERSION } from '../build.js';
-import type { Config } from '../core/types.js';
 
 /** "2027-04-30" → "30 Apr 2027", fixed (not locale-dependent) so it reads the same everywhere. */
 function formatDay(day: string): string {
@@ -26,9 +26,9 @@ function formatDay(day: string): string {
 
 /** Which PiPulse and Node this is, and whether that Node still gets security fixes. */
 export function AboutSection() {
-  const [config, setConfig] = useState<Config | 'loading' | 'error'>('loading');
+  const [config, setConfig] = useState<AboutConfig | 'loading' | 'error'>('loading');
   useEffect(() => {
-    getJson<Config>('/api/config').then(setConfig, () => setConfig('error'));
+    getJson<AboutConfig>('/api/config', isAboutConfig).then(setConfig, () => setConfig('error'));
   }, []);
   return (
     <section aria-labelledby="settings-about">

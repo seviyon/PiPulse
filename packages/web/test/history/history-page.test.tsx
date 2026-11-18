@@ -45,6 +45,8 @@ const config: Config = {
 
 let requests: URL[];
 let fail: boolean;
+/** When set, every series request answers 200 with this instead of a series. */
+let badBody: unknown;
 /** While set, series requests wait for it to resolve. */
 let hold: Promise<void> | undefined;
 let root: HTMLElement;
@@ -85,6 +87,7 @@ beforeEach(() => {
   FakePlot.instances = [];
   requests = [];
   fail = false;
+  badBody = undefined;
   hold = undefined;
   autoResolution = {};
   noData = new Set();
@@ -96,6 +99,7 @@ beforeEach(() => {
       requests.push(parsed);
       await hold;
       if (fail) return new Response('boom', { status: 500 });
+      if (badBody !== undefined) return Response.json(badBody);
       const metric = /\/api\/metrics\/(\w+)\/series/.exec(parsed.pathname)?.[1] ?? '';
       const asked = parsed.searchParams.get('resolution') as Series['resolution'] | null;
       const series = seriesFor(metric, asked ?? autoResolution[metric] ?? '1m');
@@ -382,6 +386,25 @@ describe('<HistoryPage>', () => {
     expect(chartSection('Network').querySelector('.chart')?.getAttribute('aria-label')).toBe(
       `Network. ${label}`
     );
+  });
+
+  it('treats an answer that is not a series as a failed load', async () => {
+    badBody = { resolution: '1m', points: 'nope' };
+    render(<HistoryPage config={config} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(root.textContent).toContain("Couldn't load the history"));
+    expect(FakePlot.instances).toHaveLength(0);
+  });
+
+  it('keeps a metric id with a slash or a question mark inside its URL segment', async () => {
+    const odd: Config = {
+      ...config,
+      plugins: [{ id: 'we/ird?id#x', label: 'Odd', unit: '%', intervalMs: 5000 }]
+    };
+    render(<HistoryPage config={odd} range="24h" now={() => NOW} />, root);
+    await eventually(() => expect(requests.length).toBeGreaterThan(0));
+    for (const url of requests) {
+      expect(url.pathname).toBe('/api/metrics/we%2Fird%3Fid%23x/series');
+    }
   });
 
   it('explains a failed load and retries on request', async () => {

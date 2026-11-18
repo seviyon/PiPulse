@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { sendJson, type Session } from '../core/api.js';
+import { isUpdatesView } from '../core/guards.js';
 import { formatAge, formatDateTime } from '../core/format.js';
 import { StatusIcon } from '../core/status-icon.js';
 import type { UpdatesView } from '../core/types.js';
@@ -91,7 +92,7 @@ export function UpdatesPage({
     setChecking(true);
     setProblem(undefined);
     try {
-      onView(await sendJson<UpdatesView>('POST', '/api/updates/check'));
+      onView(await sendJson<UpdatesView>('POST', '/api/updates/check', isUpdatesView));
     } catch (error) {
       setProblem((error as Error).message || 'The check could not be run.');
     } finally {

@@ -65,6 +65,26 @@ describe('connectLive', () => {
     expect(messages).toEqual([{ type: 'sample', ts: 1, metric: 'cpu_load', value: 2 }]);
   });
 
+  it('ignores a message that is not one the server sends', () => {
+    connect();
+    latest().open();
+    for (const data of [
+      'not json',
+      'null',
+      '[]',
+      JSON.stringify({ type: 'mystery' }),
+      JSON.stringify({ type: 'sample', ts: 'x', metric: 'a', value: 1 }),
+      JSON.stringify({ type: 'snapshot', samples: 'nope' }),
+      JSON.stringify({ type: 'alert', event: 'raised' })
+    ]) {
+      latest().onmessage?.({ data });
+    }
+    expect(messages).toEqual([]);
+    // ...and the feed still works afterwards.
+    latest().receive({ type: 'sample', ts: 1, metric: 'a', value: 2 });
+    expect(messages).toHaveLength(1);
+  });
+
   it('reconnects with a doubling delay capped at 30 s', () => {
     connect();
     const delays: number[] = [];

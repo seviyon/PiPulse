@@ -1,4 +1,5 @@
 import type { LiveMessage } from './types.js';
+import { isLiveMessage } from './guards.js';
 
 export type ConnectionStatus = 'connecting' | 'live' | 'reconnecting';
 
@@ -38,7 +39,9 @@ export function connectLive(options: LiveOptions): () => void {
     socket.onmessage = (event: MessageEvent<string>) => {
       let message: LiveMessage;
       try {
-        message = JSON.parse(event.data) as LiveMessage;
+        const parsed: unknown = JSON.parse(event.data);
+        if (!isLiveMessage(parsed)) return;
+        message = parsed;
       } catch {
         return;
       }

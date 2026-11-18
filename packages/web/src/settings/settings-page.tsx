@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getJson, HttpError, sendJson, type Session } from '../core/api.js';
+import { isPreview, isSettingsBody } from '../core/guards.js';
 import { formatDateTime } from '../core/format.js';
 import {
   changed,
@@ -52,7 +53,7 @@ export function SettingsPage({
   const canEdit = session.editable && session.signedIn;
 
   useEffect(() => {
-    getJson<SettingsBody>('/api/settings').then(
+    getJson<SettingsBody>('/api/settings', isSettingsBody).then(
       (body) => {
         setLoaded({ status: 'ready', body });
         setDraft(draftOf(body));
@@ -131,14 +132,14 @@ export function SettingsPage({
   const proposal = Object.fromEntries(edited.map((level) => [level, draft[level]]));
 
   const reviewChanges = () => {
-    sendJson<Preview>('POST', '/api/settings/preview', { retention: proposal }).then(
+    sendJson<Preview>('POST', '/api/settings/preview', isPreview, { retention: proposal }).then(
       (preview) => setReview({ status: 'ready', preview }),
       handle
     );
   };
 
   const save = () => {
-    sendJson<SettingsBody>('PUT', '/api/settings', {
+    sendJson<SettingsBody>('PUT', '/api/settings', isSettingsBody, {
       retention: proposal,
       ...(deletes ? { confirmDeletion: true } : {})
     }).then((saved) => {

@@ -1,3 +1,12 @@
+import { isSession, type Guard } from './guards.js';
+
+/** The server answered 2xx but not with what this page expects (an older or newer server, a proxy's page). */
+export class BadResponse extends Error {
+  constructor(path: string) {
+    super(`the PiPulse server's answer for ${path} was not what this page expects`);
+  }
+}
+
 /** An API answer other than 2xx; `body` is the parsed JSON body when there is one. */
 export class HttpError extends Error {
   constructor(
@@ -17,19 +26,28 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   return response;
 }
 
-async function parse<T>(response: Response): Promise<T> {
+/**
+ * One path segment for an id that came from the server or a file: a `/`, `?` or `#` in it must
+ * stay inside the segment.
+ */
+export const segment = (id: string | number): string => encodeURIComponent(String(id));
+
+/** The body of a 2xx answer, checked by `guard`; anything else is an HttpError or a BadResponse. */
+export async function parse<T>(response: Response, guard: Guard<T>, path = 'it'): Promise<T> {
   const body: unknown = await response.json().catch(() => undefined);
   if (!response.ok) throw new HttpError(response.status, body);
-  return body as T;
+  if (!guard(body)) throw new BadResponse(path);
+  return body;
 }
 
-export async function getJson<T>(path: string): Promise<T> {
-  return parse<T>(await apiFetch(path));
+export async function getJson<T>(path: string, guard: Guard<T>): Promise<T> {
+  return parse<T>(await apiFetch(path), guard, path);
 }
 
 export async function sendJson<T>(
   method: 'POST' | 'PUT' | 'DELETE',
   path: string,
+  guard: Guard<T>,
   body?: unknown
 ): Promise<T> {
   return parse<T>(
@@ -38,7 +56,9 @@ export async function sendJson<T>(
       ...(body === undefined
         ? {}
         : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    })
+    }),
+    guard,
+    path
   );
 }
 
@@ -55,7 +75,7 @@ export const NO_SESSION: Session = { editable: false, signedIn: false, protectRe
 /** The session state; an older server (no /api/session) reads as read-only. */
 export async function loadSession(): Promise<Session> {
   try {
-    return await getJson<Session>('/api/session');
+    return await getJson<Session>('/api/session', isSession);
   } catch {
     return NO_SESSION;
   }

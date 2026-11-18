@@ -1,5 +1,5 @@
 import { formatDateTime, formatValue } from '../core/format.js';
-import type { Resolution } from '../core/types.js';
+import type { LevelDeletion, LevelSetting, Resolution, SettingsBody } from '../core/types.js';
 
 export const LEVELS = ['raw', '1m', '1h', '1d'] as const satisfies readonly Resolution[];
 
@@ -18,34 +18,7 @@ const LEVEL_NOUNS: Record<Resolution, string> = {
   '1d': 'daily averages'
 };
 
-export interface LevelSetting {
-  text: string;
-  ms: number | null;
-  source: 'env' | 'saved' | 'default';
-  variable: string;
-  locked: boolean;
-}
-
-export interface SettingsBody {
-  retention: Record<Resolution, LevelSetting>;
-  storage: {
-    fileBytes: number;
-    freeBytes: number;
-    diskFreeBytes: number | null;
-    levels: Record<Resolution, { rows: number; oldest: number | null }>;
-  };
-}
-
-export interface LevelDeletion {
-  deletesRows: number;
-  from: number | null;
-  to: number | null;
-}
-
-export interface Preview {
-  deletions: Record<Resolution, LevelDeletion>;
-  estimatedBytes: number;
-}
+export type { LevelDeletion, LevelSetting, Preview, SettingsBody } from '../core/types.js';
 
 /**
  * The server's duration grammar, for feedback while typing. The server
