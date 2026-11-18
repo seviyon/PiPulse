@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { migrate } from './migrations.js';
+import { createPrivate, tightenPrivate } from './private-file.js';
 import { retryWhileLocked } from './retry.js';
 
 export { migrate, SCHEMA_VERSION } from './migrations.js';
@@ -12,15 +13,17 @@ const BUSY_TIMEOUT_MS = 5000;
 /**
  * Opens (and creates, if needed) the PiPulse SQLite database at `path`,
  * enables WAL mode for concurrent collector-writes / API-reads, and
- * ensures the schema exists.
+ * ensures the schema exists. The file (and its WAL files) is readable by its owner only.
  */
 export function openDb(path: string): PiPulseDb {
+  createPrivate(path);
   const db = new DatabaseSync(path);
   // First, before any statement that needs a lock: a second process opening the file at the same
   // time (the server and the collector) waits its turn instead of failing with "database is locked".
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   retryWhileLocked(() => db.exec('PRAGMA journal_mode = WAL'));
   createSchema(db);
+  tightenPrivate(path);
   return db;
 }
 

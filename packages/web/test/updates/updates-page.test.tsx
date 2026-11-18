@@ -91,6 +91,24 @@ describe('UpdatesPage states, in words', () => {
     expect(text()).toContain('Loading');
   });
 
+  it('signed out with a password set, it says to sign in instead of loading for ever', async () => {
+    const signedOut: Session = { editable: true, signedIn: false, protectReads: false };
+    await show(undefined, { session: signedOut });
+    expect(root.textContent).not.toContain('Loading');
+    expect(root.textContent).toContain('to see what is waiting');
+    const link = root.querySelector('a');
+    expect(link?.getAttribute('href')).toBe(routeHash({ page: 'settings' }));
+    expect(link?.textContent).toBe('Sign in');
+  });
+
+  it('signed in, or with no password, an unloaded list is just loading', async () => {
+    for (const session of [signedIn, readOnly]) {
+      await show(undefined, { session });
+      expect(root.textContent).toContain('Loading');
+      expect(root.textContent).not.toContain('to see what is waiting');
+    }
+  });
+
   it('in Docker it says so and shows the image command, with nothing to check', async () => {
     await show({ state: 'unsupported', reason: 'container' });
     expect(text()).toContain('running in Docker');

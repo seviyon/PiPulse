@@ -450,8 +450,23 @@ describe('/api/updates', () => {
         .headers['set-cookie']
     ).split(';')[0]!;
 
-  it('serves the current view to anyone (reads follow PIPULSE_PROTECT_READS)', async () => {
+  it('serves the current view to a signed-in session', async () => {
     const api = server();
+    const cookie = await signIn(api);
+    const res = await api.inject({ url: '/api/updates', headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ state: 'pending' });
+  });
+
+  it('needs a session once a password is set, even with reads not protected', async () => {
+    const api = server();
+    const res = await api.inject('/api/updates');
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'sign in required' });
+  });
+
+  it('with no password (nobody can sign in) it reads like every other page', async () => {
+    const api = server({ auth: { failureDelayMs: 0 } });
     const res = await api.inject('/api/updates');
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ state: 'pending' });
@@ -476,7 +491,9 @@ describe('/api/updates', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ state: 'ok', os: { total: 3 } });
-    expect((await api.inject('/api/updates')).json()).toMatchObject({ state: 'ok' });
+    expect((await api.inject({ url: '/api/updates', headers: { cookie } })).json()).toMatchObject({
+      state: 'ok'
+    });
   });
 
   it('a check from a foreign page is refused even when signed in', async () => {
@@ -493,14 +510,14 @@ describe('/api/updates', () => {
 
   it('says "not available here" when the server has no updates support', async () => {
     app = buildServer(db, { auth: { failureDelayMs: 0, passwordHash } });
-    expect((await app.inject('/api/updates')).json()).toEqual({
-      state: 'unsupported',
-      reason: 'no-apt'
-    });
     const cookie = String(
       (await app.inject({ method: 'POST', url: '/api/login', payload: { password: 'secret' } }))
         .headers['set-cookie']
     ).split(';')[0]!;
+    expect((await app.inject({ url: '/api/updates', headers: { cookie } })).json()).toEqual({
+      state: 'unsupported',
+      reason: 'no-apt'
+    });
     const res = await app.inject({
       method: 'POST',
       url: '/api/updates/check',

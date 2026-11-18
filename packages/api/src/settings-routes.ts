@@ -10,6 +10,7 @@ import {
   validateRetention,
   type LookBack,
   type PiPulseDb,
+  type StorageUsage,
   type Resolution,
   type RetentionLevel,
   type RetentionSettings
@@ -29,7 +30,12 @@ export interface SettingsOptions {
   /** Free bytes on the database's disk; defaults to statfs on its directory. */
   diskFree?: () => number | undefined;
   now?: () => number;
+  /** Milliseconds on a clock that wall-clock steps do not move (tests); defaults to performance.now(). */
+  monotonic?: () => number;
 }
+
+/** How long the table sizes on the Settings page are reused: counting them walks every row. */
+export const USAGE_TTL_MS = 15_000;
 
 /** The rule whose `for` or `clearAfter` reaches furthest back into raw readings. */
 export function longestLookBack(rules: Rule[]): LookBack | undefined {
@@ -99,6 +105,21 @@ export function registerSettingsRoutes(
 ): void {
   const now = options.now ?? Date.now;
   const diskFree = options.diskFree ?? (() => diskFreeBytes(db));
+  const monotonic = options.monotonic ?? (() => performance.now());
+
+  // Counting the rows of every level walks the whole database (hundreds of thousands of rows on a
+  // Pi, on the one thread that also collects and serves), and GET /api/settings is a read anyone
+  // who can reach the page may repeat. The figures are for a person to read, so a few seconds old
+  // is fine; saving a change starts them afresh.
+  let usageCache: { at: number; usage: StorageUsage } | undefined;
+  const usage = (): StorageUsage => {
+    const at = monotonic();
+    if (usageCache && at >= usageCache.at && at - usageCache.at < USAGE_TTL_MS) {
+      return usageCache.usage;
+    }
+    usageCache = { at, usage: storageUsage(db) };
+    return usageCache.usage;
+  };
 
   const body = () => {
     const levels = options.getRetention();
@@ -119,7 +140,7 @@ export function registerSettingsRoutes(
     );
     return {
       retention,
-      storage: { ...storageUsage(db), diskFreeBytes: diskFree() ?? null }
+      storage: { ...usage(), diskFreeBytes: diskFree() ?? null }
     };
   };
 
@@ -133,7 +154,7 @@ export function registerSettingsRoutes(
       levels: result.levels,
       preview: {
         deletions: previewDeletion(db, policy, policyOf(options.getRetention()), now()),
-        estimatedBytes: estimateBytes(policy, options.metrics, storageUsage(db))
+        estimatedBytes: estimateBytes(policy, options.metrics, usage())
       }
     };
   };
@@ -163,6 +184,7 @@ export function registerSettingsRoutes(
           .send({ error: 'this change deletes data; confirm it first', ...result.preview });
       }
       saveRetention(db, result.levels, now());
+      usageCache = undefined;
       return body();
     }
   );

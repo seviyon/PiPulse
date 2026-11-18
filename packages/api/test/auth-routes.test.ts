@@ -81,13 +81,39 @@ describe('enforcement', () => {
     ['signed out', true, 'GET', '/%61pi/metrics/latest', 401],
     ['signed out', true, 'GET', '/%61%70%69/config', 401],
     ['read-only', false, 'PUT', '/%61pi/settings', 403],
-    ['signed out', false, 'PUT', '/%61pi/settings', 401]
+    ['signed out', false, 'PUT', '/%61pi/settings', 401],
+    // What is unpatched needs a session once a password exists, with or without read protection...
+    ['signed out', false, 'GET', '/api/updates', 401],
+    ['signed out', true, 'GET', '/api/updates', 401],
+    ['signed out', false, 'GET', '/%61pi/updates', 401],
+    ['signed out', false, 'GET', '/%61%70%69/updates', 401],
+    ['signed in', false, 'GET', '/api/updates', 200],
+    ['signed in', true, 'GET', '/api/updates', 200],
+    // ...and, with no password, there is no way to sign in, so it reads like everything else.
+    ['read-only', false, 'GET', '/api/updates', 200],
+    ['read-only', true, 'GET', '/api/updates', 401],
+    // The monitoring figures stay public when read protection is off.
+    ['signed out', false, 'GET', '/api/config', 200]
   ] as const)(
     '%s, protect reads %s: %s %s → %i',
     async (mode, protectReads, method, url, expected) => {
       expect(await status(mode, protectReads, method, url)).toBe(expected);
     }
   );
+
+  it('HEAD /api/updates needs the session too', async () => {
+    const api = server({ passwordHash });
+    expect((await api.inject({ method: 'HEAD', url: '/api/updates' })).statusCode).toBe(401);
+    const cookie = await signIn(api);
+    const signedIn = await api.inject({ method: 'HEAD', url: '/api/updates', headers: { cookie } });
+    expect(signedIn.statusCode).toBe(200);
+  });
+
+  it('answers 401 with the same body as every other protected read', async () => {
+    const api = server({ passwordHash });
+    const res = await api.inject({ method: 'GET', url: '/api/updates' });
+    expect(res.json()).toEqual({ error: 'sign in required' });
+  });
 
   it('rejects a write from a foreign page even when signed in', async () => {
     const api = server({ passwordHash });

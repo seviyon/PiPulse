@@ -223,11 +223,14 @@ export function App() {
   useEffect(() => {
     if (!config) return;
     const load = () =>
-      getJson<UpdatesView>('/api/updates', isUpdatesView).then(setUpdates, () => undefined);
+      getJson<UpdatesView>('/api/updates', isUpdatesView).then(setUpdates, (error: unknown) => {
+        // With a password set the list needs a session: signed out, show none (and say why on the tab).
+        if (error instanceof HttpError && error.status === 401) setUpdates(undefined);
+      });
     load();
     const timer = setInterval(load, 10 * 60_000);
     return () => clearInterval(timer);
-  }, [config]);
+  }, [config, session.signedIn]);
 
   useEffect(() => {
     if (!config) return;
