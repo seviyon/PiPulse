@@ -47,12 +47,45 @@ describe('judgeClock', () => {
     expect(judgeClock(anchor(), at(1_000_000 - 30_000))).toEqual({ ok: true });
   });
 
-  it('follows a slow drift or a step back, and writes it', () => {
-    expect(judgeClock(anchor(), at(1_000_000 + 5 * MIN))).toEqual({
+  it('follows a step back, and writes it', () => {
+    expect(judgeClock(anchor(), at(1_000_000 - 3 * DAY))).toEqual({
       ok: true,
-      next: { version: 1, bootId: 'boot-a', offsetMs: 1_000_000 + 5 * MIN }
+      next: { version: 1, bootId: 'boot-a', offsetMs: 1_000_000 - 3 * DAY }
     });
-    expect(judgeClock(anchor(), at(1_000_000 - 3 * DAY))).toMatchObject({ ok: true });
+    expect(judgeClock(anchor(), at(1_000_000 - MIN))).toEqual({ ok: true });
+    expect(judgeClock(anchor(), at(1_000_000 - MIN - 1))).toMatchObject({ ok: true, next: {} });
+  });
+
+  it('a small step forward is believed but never moves the base', () => {
+    expect(judgeClock(anchor(), at(1_000_000 + 5 * MIN))).toEqual({ ok: true });
+  });
+
+  it('steps that each stay under the tolerance still add up against the base', () => {
+    // A clock source that gains 9 minutes per run: each step is small, the total is not.
+    let stored: Anchor | undefined = anchor();
+    let refused = 0;
+    for (let run = 1; run <= 6; run++) {
+      const verdict = judgeClock(stored, at(1_000_000 + run * 9 * MIN, run * 3_600_000));
+      if (!verdict.ok) refused++;
+      if (verdict.next) stored = verdict.next;
+    }
+    expect(stored?.offsetMs).toBe(1_000_000);
+    expect(refused).toBe(5);
+    // The first run past the tolerance (2 x 9 min) is the first one refused.
+    expect(judgeClock(anchor(), at(1_000_000 + 18 * MIN, 7_200_000))).toMatchObject({
+      ok: false,
+      aheadMs: 18 * MIN
+    });
+  });
+
+  it('drift that is then held for ANCHOR_HOLD_MS is believed and becomes the new base', () => {
+    const first = judgeClock(anchor(), at(1_000_000 + 18 * MIN, 3_600_000));
+    expect(first.ok).toBe(false);
+    const again = judgeClock(
+      anchor({ candidate: first.next?.candidate }),
+      at(1_000_000 + 18 * MIN + MIN, 3_600_000 + ANCHOR_HOLD_MS)
+    );
+    expect(again).toMatchObject({ ok: true, next: { offsetMs: 1_000_000 + 19 * MIN } });
   });
 
   it('a forward step is doubted, and remembered with when it was first seen', () => {
@@ -89,6 +122,23 @@ describe('judgeClock', () => {
     });
   });
 
+  it('a doubted offset must stay steady to count as holding (exactly one minute, no more)', () => {
+    const seen = { offsetMs: 1_000_000 + DAY, uptimeMs: 3_600_000 };
+    const later = (extra: number) =>
+      judgeClock(
+        anchor({ candidate: seen }),
+        at(1_000_000 + DAY + extra, 3_600_000 + ANCHOR_HOLD_MS)
+      );
+    expect(later(MIN)).toMatchObject({ ok: true });
+    expect(later(-MIN)).toMatchObject({ ok: true });
+    const gaining = later(MIN + 1);
+    expect(gaining).toMatchObject({ ok: false, heldMs: 0 });
+    expect(gaining.next?.candidate).toEqual({
+      offsetMs: 1_000_000 + DAY + MIN + 1,
+      uptimeMs: 3_600_000 + ANCHOR_HOLD_MS
+    });
+  });
+
   it('a different step restarts the doubt instead of inheriting the old one', () => {
     const first = { offsetMs: 1_000_000 + 2 * DAY, uptimeMs: 7_200_000 };
     const verdict = judgeClock(
@@ -106,7 +156,7 @@ describe('judgeClock', () => {
     const first = { offsetMs: 1_000_000 + 2 * DAY, uptimeMs: 7_200_000 };
     expect(judgeClock(anchor({ candidate: first }), at(1_000_000 + 1000))).toEqual({
       ok: true,
-      next: { version: 1, bootId: 'boot-a', offsetMs: 1_000_000 + 1000 }
+      next: { version: 1, bootId: 'boot-a', offsetMs: 1_000_000 }
     });
   });
 
