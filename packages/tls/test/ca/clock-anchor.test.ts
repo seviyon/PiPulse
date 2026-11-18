@@ -7,6 +7,7 @@ import {
   ANCHOR_HOLD_MS,
   ANCHOR_TOLERANCE_MS,
   aheadText,
+  isAnchor,
   judgeClock,
   readAnchor,
   writeAnchor,
@@ -200,11 +201,40 @@ describe('the stored anchor', () => {
   });
 });
 
+describe('isAnchor', () => {
+  const good = { version: 1, bootId: 'b', offsetMs: 1 };
+  it('answers false, never throws, for anything that is not an anchor', () => {
+    for (const value of [null, undefined, 'x', 7, true, [], [good], {}]) {
+      expect(isAnchor(value)).toBe(false);
+    }
+  });
+
+  it('accepts an anchor with no candidate or a well-formed one', () => {
+    expect(isAnchor(good)).toBe(true);
+    expect(isAnchor({ ...good, candidate: { offsetMs: 1, uptimeMs: 2 } })).toBe(true);
+  });
+
+  it('answers false, never throws, for a candidate that is not well formed', () => {
+    for (const candidate of [null, 'yes', 7, true, [], {}, { offsetMs: 1 }, { uptimeMs: 1 }]) {
+      expect(isAnchor({ ...good, candidate })).toBe(false);
+    }
+    expect(isAnchor({ ...good, candidate: { offsetMs: 1, uptimeMs: Infinity } })).toBe(false);
+    expect(isAnchor({ ...good, candidate: { offsetMs: NaN, uptimeMs: 1 } })).toBe(false);
+  });
+});
+
 describe('aheadText', () => {
   it('speaks in minutes, hours, then days', () => {
     expect(aheadText(15 * MIN)).toBe('15 min');
     expect(aheadText(5 * 3_600_000)).toBe('5 h');
     expect(aheadText(3 * DAY)).toBe('3 d');
+  });
+
+  it('switches unit exactly at 2 hours and at 48 hours', () => {
+    expect(aheadText(119 * MIN)).toBe('119 min');
+    expect(aheadText(120 * MIN)).toBe('2 h');
+    expect(aheadText(47 * 60 * MIN)).toBe('47 h');
+    expect(aheadText(48 * 60 * MIN)).toBe('2 d');
   });
 });
 
