@@ -11,7 +11,7 @@ import {
 import { builtinRules } from '@pipulse/alerts';
 import { hashPassword, parsePasswordHash, type PasswordHash } from '../src/auth.js';
 import { buildServer } from '../src/index.js';
-import { longestLookBack, rawRetentionProblem } from '../src/settings-routes.js';
+import { longestLookBack, rawRetentionProblem, USAGE_TTL_MS } from '../src/settings-routes.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -28,7 +28,7 @@ let cookie: string;
 let getRetention: () => RetentionSettings;
 let lookBack: LookBack | undefined;
 
-async function start(env: Record<string, string> = {}) {
+async function start(env: Record<string, string> = {}, monotonic?: () => number) {
   lookBack = longestLookBack(builtinRules(4));
   getRetention = retentionSource(db, env, () => {});
   app = buildServer(db, {
@@ -38,7 +38,8 @@ async function start(env: Record<string, string> = {}) {
       rawAtLeast: () => lookBack,
       metrics: [{ intervalMs: 5000 }],
       diskFree: () => 10 ** 10,
-      now: () => NOW
+      now: () => NOW,
+      ...(monotonic ? { monotonic } : {})
     }
   });
   const res = await app.inject({
@@ -207,5 +208,57 @@ describe('PUT /api/settings', () => {
     const res = await put({ retention: { raw: '2d' } });
     expect(res.statusCode).toBe(400);
     expect(res.json().errors.raw).toMatch(/test_long/);
+  });
+});
+
+describe('the storage figures are counted at most once per USAGE_TTL_MS', () => {
+  let clock: number;
+  const rawRows = async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings' });
+    return (res.json() as { storage: { levels: { raw: { rows: number } } } }).storage.levels.raw
+      .rows;
+  };
+  const addRow = () => insertSample(db, { ts: NOW + 1000 * ++added, metric: 'cpu_load', value: 1 });
+  let added: number;
+  beforeEach(async () => {
+    clock = 1_000;
+    added = 0;
+    await start({}, () => clock);
+  });
+
+  it('reuses the count inside the window, and counts again after it', async () => {
+    const first = await rawRows();
+    addRow();
+    expect(await rawRows()).toBe(first);
+    clock += USAGE_TTL_MS - 1;
+    expect(await rawRows()).toBe(first);
+    clock += 1;
+    expect(await rawRows()).toBe(first + 1);
+  });
+
+  it('uses the real monotonic clock when none is given', async () => {
+    await app.close();
+    await start();
+    const first = await rawRows();
+    addRow();
+    expect(await rawRows()).toBe(first);
+  });
+
+  it('counts again when the monotonic clock goes backwards', async () => {
+    const first = await rawRows();
+    addRow();
+    clock -= 1;
+    expect(await rawRows()).toBe(first + 1);
+  });
+
+  it('a saved change starts the count afresh, and the preview uses the same figures', async () => {
+    const first = await rawRows();
+    addRow();
+    expect(await rawRows()).toBe(first);
+    const saved = await put({ retention: { raw: '3d' } });
+    expect(saved.statusCode).toBe(200);
+    expect(
+      (saved.json() as { storage: { levels: { raw: { rows: number } } } }).storage.levels.raw.rows
+    ).toBe(first + 1);
   });
 });

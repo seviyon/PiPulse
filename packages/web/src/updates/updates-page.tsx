@@ -4,6 +4,7 @@ import { isUpdatesView } from '../core/guards.js';
 import { formatAge, formatDateTime } from '../core/format.js';
 import { StatusIcon } from '../core/status-icon.js';
 import type { UpdatesView } from '../core/types.js';
+import { routeHash } from '../router.js';
 import {
   DOCKER_COMMAND,
   PIPULSE_APT_COMMAND,
@@ -103,7 +104,15 @@ export function UpdatesPage({
   return (
     <div class="updates-page">
       <h2>Updates</h2>
-      {view === undefined && <p class="waiting">Loading</p>}
+      {view === undefined && session.editable && !session.signedIn && (
+        <p class="note">
+          <a href={routeHash({ page: 'settings' })}>Sign in</a> to see what is waiting: the list of
+          packages is shown only to a signed-in administrator.
+        </p>
+      )}
+      {view === undefined && !(session.editable && !session.signedIn) && (
+        <p class="waiting">Loading</p>
+      )}
       {view?.state === 'unsupported' && view.reason === 'container' && (
         <>
           <p>

@@ -45,6 +45,13 @@ function requestPath(request: FastifyRequest): string {
 /** Reads anyone may make even with read protection on. */
 const PUBLIC_READS = new Set(['/api/session', '/api/health']);
 
+/**
+ * Reads that need a session whenever an admin password exists, with or without read protection:
+ * what is unpatched on this machine is more than the monitoring figures every page shows. With no
+ * password there is no way to sign in, so there they stay readable like everything else.
+ */
+const SIGN_IN_READS = new Set(['/api/updates']);
+
 const loginSchema = {
   type: 'object',
   required: ['password'],
@@ -82,6 +89,9 @@ export function registerAuth(
         reply.header('set-cookie', sessionCookie(id!, secure(request)));
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
+      if (passwordHash && SIGN_IN_READS.has(path) && !signedIn(request)) {
+        return reply.status(401).send({ error: 'sign in required' });
+      }
       // The WebSocket handler closes an unauthorised socket with 4401 itself.
       if (!protectReads || PUBLIC_READS.has(path) || path === '/api/live') return;
       if (!signedIn(request)) return reply.status(401).send({ error: 'sign in required' });

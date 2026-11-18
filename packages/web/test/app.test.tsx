@@ -11,6 +11,7 @@ vi.mock('uplot', () => ({
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { App } from '../src/app.js';
+import { authEvents } from '../src/core/api.js';
 import type { Config, LiveMessage, Sample } from '../src/core/types.js';
 
 class FakeSocket {
@@ -558,5 +559,51 @@ describe('read protection', () => {
     await eventually(() => expect(root.querySelector('input[type=password]')).not.toBeNull());
     expect(calls).toContain('POST /api/logout');
     expect(root.textContent).not.toContain('Sign out');
+  });
+
+  it('Updates: no badge while signed out of a password-protected list, and it loads after sign-in', async () => {
+    let signedIn = false;
+    let updatesRequests = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url, 'http://io.lan:8889').pathname;
+        if (path === '/api/session') {
+          return Response.json({ editable: true, signedIn, protectReads: false });
+        }
+        if (path === '/api/login' && init?.method === 'POST') {
+          signedIn = true;
+          return Response.json({ signedIn: true });
+        }
+        if (path === '/api/config') return Response.json({ ...config, serverTime });
+        if (path === '/api/updates') {
+          updatesRequests++;
+          return signedIn
+            ? Response.json({
+                state: 'ok',
+                checkedAt: NOW,
+                listsRefreshedAt: NOW,
+                pipulse: { source: 'apt', installed: '1', candidate: '1', available: false },
+                os: { total: 3, packages: [], keptBack: [] }
+              })
+            : Response.json({ error: 'sign in required' }, { status: 401 });
+        }
+        return Response.json([]);
+      })
+    );
+    location.hash = '#/updates';
+    render(<App />, root);
+    await eventually(() => expect(updatesRequests).toBeGreaterThan(0));
+    await eventually(() => expect(root.textContent).toContain('to see what is waiting'));
+    expect(root.querySelector('nav')?.textContent).not.toMatch(/Updates\s*\d/);
+
+    const before = updatesRequests;
+    signedIn = true;
+    // Signing in (done on the Settings page) changes the session; the list is read again.
+    await act(() => {
+      authEvents.dispatchEvent(new Event('unauthorized'));
+    });
+    await eventually(() => expect(updatesRequests).toBeGreaterThan(before));
+    await eventually(() => expect(root.querySelector('nav')?.textContent).toMatch(/Updates\s*3/));
   });
 });
