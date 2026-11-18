@@ -62,9 +62,15 @@
       "addLabels": ["release:patch"]
     },
     {
-      "description": "GitHub Actions version updates wait 3 days after the new version's commit date, like npm. A digest-only update (a floating tag such as v7 moved to a new commit) ages against the matched version's original date, so this does not hold a force-pushed tag; github-tags cannot tell.",
+      "description": "GitHub Actions version updates wait 3 days after the new version's commit date, like npm. A digest-only update (a floating tag such as v7 moved to a new commit) ages against the matched version's original date, so this does not hold a force-pushed tag (github-tags has no push date); the digest rule below covers that.",
       "matchManagers": ["github-actions"],
       "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "A digest-only Actions update (a floating tag such as v7 pointed at a new commit) is how a hijacked tag reaches a workflow, and the age gate cannot see it, so a person merges these. About one a month so far.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
+      "automerge": false
     },
     {
       "description": "Every npm update waits 3 days after its release, dev dependencies included: they run in CI and build the dashboard, and most compromised releases are pulled within days. Docker digests carry no release date, so they are not gated.",
