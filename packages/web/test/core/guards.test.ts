@@ -350,7 +350,8 @@ describe('rules, settings, preview, updates, session, webhooks', () => {
       checkedAt: 1,
       listsRefreshedAt: null,
       pipulse: { source: 'apt', installed: '1', candidate: null, available: false },
-      os: { total: 1, packages: [{ name: 'a', from: '1', to: '2' }], keptBack: ['b'] }
+      os: { total: 1, packages: [{ name: 'a', from: '1', to: '2' }], keptBack: ['b'] },
+      reach: { state: 'partial', attemptedAt: 5, succeededAt: null, reached: 1, total: 2 }
     };
     expect(isUpdatesView(ok)).toBe(true);
     expect(isUpdatesView({ state: 'pending' })).toBe(true);
@@ -363,6 +364,20 @@ describe('rules, settings, preview, updates, session, webhooks', () => {
     expect(isUpdatesView({ state: 'done' })).toBe(false);
     expect(isUpdatesView({ state: 'ok' })).toBe(false);
     expectGuard(isUpdatesView, ok, ok);
+    for (const reach of [
+      undefined,
+      {},
+      { state: 'weird', attemptedAt: 1, succeededAt: 1, reached: 1, total: 1 },
+      { state: 'ok', attemptedAt: 'x', succeededAt: 1, reached: 1, total: 1 },
+      { state: 'ok', attemptedAt: 1, succeededAt: 'x', reached: 1, total: 1 },
+      { state: 'ok', attemptedAt: 1, succeededAt: 1, reached: '1', total: 1 },
+      { state: 'ok', attemptedAt: 1, succeededAt: 1, reached: 1, total: '1' }
+    ]) {
+      expect(isUpdatesView({ ...ok, reach })).toBe(false);
+    }
+    for (const state of ['ok', 'partial', 'failed', 'no-sources']) {
+      expect(isUpdatesView({ ...ok, reach: { ...ok.reach, state } })).toBe(true);
+    }
     const nested = clone(ok) as Doc;
     nested['os'].packages = [{ name: 'a' }];
     expect(isUpdatesView(nested)).toBe(false);
@@ -593,7 +608,8 @@ describe('every member of every enum is accepted, and every nested field is chec
       checkedAt: 1,
       listsRefreshedAt: 2,
       pipulse: { source, installed: null, candidate: '1', available: true },
-      os: { total: 0, packages: [], keptBack: [] }
+      os: { total: 0, packages: [], keptBack: [] },
+      reach: { state: 'ok', attemptedAt: null, succeededAt: null, reached: 0, total: 0 }
     });
     for (const source of ['apt', 'other']) expect(isUpdatesView(ok(source))).toBe(true);
     expect(isUpdatesView(ok('bogus'))).toBe(false);

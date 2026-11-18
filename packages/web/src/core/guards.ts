@@ -259,6 +259,13 @@ export const isUpdatesView: Guard<UpdatesView> = (value): value is UpdatesView =
           total: num,
           packages: arrayOf(shape({ name: str, from: str, to: str })),
           keptBack: strings
+        }),
+        reach: shape({
+          state: oneOf('ok', 'partial', 'failed', 'no-sources'),
+          attemptedAt: nullable(num),
+          succeededAt: nullable(num),
+          reached: num,
+          total: num
         })
       })(value);
     default:

@@ -584,7 +584,8 @@ describe('read protection', () => {
                 checkedAt: NOW,
                 listsRefreshedAt: NOW,
                 pipulse: { source: 'apt', installed: '1', candidate: '1', available: false },
-                os: { total: 3, packages: [], keptBack: [] }
+                os: { total: 3, packages: [], keptBack: [] },
+                reach: { state: 'ok', attemptedAt: 1, succeededAt: 1, reached: 2, total: 2 }
               })
             : Response.json({ error: 'sign in required' }, { status: 401 });
         }

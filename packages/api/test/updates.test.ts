@@ -22,6 +22,12 @@ import {
   type Runner
 } from '../src/updates.js';
 
+// No test here may run the real apt: the probe answers from a stub unless a test gives its own.
+vi.mock('../src/apt-reach.js', async (original) => ({
+  ...(await original<typeof import('../src/apt-reach.js')>()),
+  checkReach: vi.fn(async () => ({ state: 'ok', reached: 1, total: 1 }))
+}));
+
 // The text apt prints (LC_ALL=C), as documented in apt-get(8) and seen on Raspberry Pi OS.
 const SIMULATION = `Reading package lists...
 Building dependency tree...

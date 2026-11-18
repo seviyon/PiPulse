@@ -11,7 +11,7 @@ import {
 } from '../../src/updates/updates.js';
 import { parseRoute, routeHash } from '../../src/router.js';
 import type { Session } from '../../src/core/api.js';
-import type { UpdatesView } from '../../src/core/types.js';
+import type { UpdatesReach, UpdatesView } from '../../src/core/types.js';
 
 const NOW = Date.UTC(2026, 9, 13, 12, 0, 0);
 const signedIn: Session = { editable: true, signedIn: true, protectReads: false };
@@ -23,6 +23,13 @@ const ok = (over: Partial<Extract<UpdatesView, { state: 'ok' }>> = {}): UpdatesV
   listsRefreshedAt: NOW - 3_600_000,
   pipulse: { source: 'apt', installed: '0.7.0', candidate: '0.7.0', available: false },
   os: { total: 0, packages: [], keptBack: [] },
+  reach: {
+    state: 'ok',
+    attemptedAt: NOW - 120_000,
+    succeededAt: NOW - 120_000,
+    reached: 3,
+    total: 3
+  },
   ...over
 });
 
@@ -240,6 +247,54 @@ describe('UpdatesPage states, in words', () => {
     expect(text()).toContain('sudo apt-get update');
     await show(ok({ listsRefreshedAt: null }));
     expect(text()).toContain('last refreshed the package lists is unknown');
+  });
+});
+
+describe('whether the repositories answered', () => {
+  const reach = (over: Partial<UpdatesReach>): UpdatesView =>
+    ok({
+      reach: {
+        state: 'ok',
+        attemptedAt: NOW - 60_000,
+        succeededAt: NOW - 60_000,
+        reached: 3,
+        total: 3,
+        ...over
+      }
+    });
+
+  it('says all answered, with counts and the try time, and no warning', async () => {
+    await show(reach({}));
+    expect(text()).toContain('All 3 repositories answered with signed metadata (tried');
+    expect(text()).not.toContain('may be out of date');
+    await show(reach({ reached: 1, total: 1 }));
+    expect(text()).toContain('All 1 repository answered');
+  });
+
+  it('partial: names the counts, the last full success, and warns', async () => {
+    await show(reach({ state: 'partial', reached: 1, total: 2, succeededAt: NOW - 7_200_000 }));
+    expect(text()).toContain('Only 1 of 2 repositories answered with signed metadata');
+    expect(text()).toContain('last time every repository answered: 2 h ago');
+    expect(text()).toContain('The update list above may be out of date');
+  });
+
+  it('failed: says none answered and that none has answered since the start', async () => {
+    await show(reach({ state: 'failed', reached: 0, total: 2, succeededAt: null }));
+    expect(text()).toContain('No repository answered with signed metadata');
+    expect(text()).toContain('every repository has not answered since PiPulse started');
+  });
+
+  it('failed with no count: the check could not be run', async () => {
+    await show(
+      reach({ state: 'failed', reached: 0, total: 0, succeededAt: null, attemptedAt: null })
+    );
+    expect(text()).toContain('The repositories could not be checked;');
+  });
+
+  it('no sources: says so and does not warn', async () => {
+    await show(reach({ state: 'no-sources', reached: 0, total: 0 }));
+    expect(text()).toContain('No apt repositories are configured here.');
+    expect(text()).not.toContain('may be out of date');
   });
 });
 

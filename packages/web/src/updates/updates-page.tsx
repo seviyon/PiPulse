@@ -3,7 +3,7 @@ import { sendJson, type Session } from '../core/api.js';
 import { isUpdatesView } from '../core/guards.js';
 import { formatAge, formatDateTime } from '../core/format.js';
 import { StatusIcon } from '../core/status-icon.js';
-import type { UpdatesView } from '../core/types.js';
+import type { UpdatesReach, UpdatesView } from '../core/types.js';
 import { routeHash } from '../router.js';
 import {
   DOCKER_COMMAND,
@@ -43,12 +43,41 @@ function Command({ text }: { text: string }) {
   );
 }
 
+/** Whether the repositories answered, kept apart from whether updates are waiting. */
+function Reach({ reach, now }: { reach: UpdatesReach; now: number }) {
+  const last =
+    reach.succeededAt === null
+      ? 'every repository has not answered since PiPulse started'
+      : `last time every repository answered: ${formatAge(now - reach.succeededAt)}`;
+  const at = reach.attemptedAt === null ? '' : ` (tried ${formatDateTime(reach.attemptedAt)})`;
+  if (reach.state === 'no-sources') return <p>No apt repositories are configured here.</p>;
+  if (reach.state === 'ok')
+    return (
+      <p>
+        All {reach.total} {reach.total === 1 ? 'repository' : 'repositories'} answered with signed
+        metadata{at}.
+      </p>
+    );
+  return (
+    <p class="alert-severity">
+      <StatusIcon level="warning" />
+      {reach.state === 'partial'
+        ? `Only ${reach.reached} of ${reach.total} repositories answered with signed metadata${at}; ${last}.`
+        : reach.total === 0
+          ? `The repositories could not be checked${at}; ${last}.`
+          : `No repository answered with signed metadata${at}; ${last}.`}{' '}
+      The update list above may be out of date. See <code>sudo apt-get update</code> for the reason.
+    </p>
+  );
+}
+
 function When({ view, now }: { view: Extract<UpdatesView, { state: 'ok' }>; now: number }) {
   const stale = view.listsRefreshedAt !== null && now - view.listsRefreshedAt > STALE_LISTS_MS;
   return (
     <section aria-labelledby="updates-when">
       <h2 id="updates-when">When</h2>
       <p>Checked {formatDateTime(view.checkedAt)}.</p>
+      <Reach reach={view.reach} now={now} />
       {view.listsRefreshedAt === null ? (
         <p>When apt last refreshed the package lists is unknown.</p>
       ) : (
