@@ -203,6 +203,16 @@ export type TlsView =
       metadataProblems?: { file: 'ca-meta.json' | 'renew-status.json'; message: string }[];
     };
 
+/** Whether apt's repositories answered (`packages/api/src/apt-reach.ts`); counts only, never names. */
+export interface UpdatesReach {
+  state: 'ok' | 'partial' | 'failed' | 'no-sources';
+  attemptedAt: number | null;
+  /** The last attempt that reached every repository since the server started. */
+  succeededAt: number | null;
+  reached: number;
+  total: number;
+}
+
 /** GET /api/updates: what `apt-get upgrade` would do (see packages/api/src/updates.ts). */
 export type UpdatesView =
   | { state: 'unsupported'; reason: 'container' | 'no-apt' }
@@ -223,6 +233,7 @@ export type UpdatesView =
         packages: { name: string; from: string; to: string }[];
         keptBack: string[];
       };
+      reach: UpdatesReach;
     };
 
 export interface LevelSetting {

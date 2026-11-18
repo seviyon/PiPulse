@@ -42,7 +42,8 @@ const waiting: UpdatesView = {
       { name: 'curl', from: '1', to: '2' }
     ],
     keptBack: []
-  }
+  },
+  reach: { state: 'ok', attemptedAt: Date.now(), succeededAt: Date.now(), reached: 1, total: 1 }
 };
 
 let root: HTMLElement;

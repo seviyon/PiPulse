@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { checkReach, type ReachResult } from './apt-reach.js';
 
 /** Run by absolute path with a fixed argv: nothing from a request or a file reaches a command line. */
 export const APT_GET = '/usr/bin/apt-get';
@@ -22,6 +23,20 @@ export interface UpgradablePackage {
   to: string;
 }
 
+/**
+ * Whether the repositories were reached, apart from whether updates are waiting. `attemptedAt`
+ * is the latest try; `succeededAt` is the last try that reached every repository (null: none
+ * since this server started, because it is held in memory like the rest), so a failure shows
+ * next to the last good time instead of replacing it.
+ */
+export interface Reach {
+  state: ReachResult['state'] | 'unchecked';
+  attemptedAt: number | null;
+  succeededAt: number | null;
+  reached: number;
+  total: number;
+}
+
 export type UpdatesView =
   | { state: 'unsupported'; reason: 'container' | 'no-apt' }
   | { state: 'pending' }
@@ -39,6 +54,7 @@ export type UpdatesView =
         available: boolean;
       };
       os: { total: number; packages: UpgradablePackage[]; keptBack: string[] };
+      reach: Reach;
     };
 
 /**
@@ -158,6 +174,8 @@ export interface UpdatesOptions {
   listsRefreshedAt?: () => number | null;
   /** Whether apt-get exists here (tests). */
   aptPresent?: () => boolean;
+  /** Asks the repositories whether they answer (tests). */
+  reach?: () => Promise<ReachResult>;
   firstCheckMs?: number;
   intervalMs?: number;
   onError?: (error: unknown) => void;
@@ -184,10 +202,36 @@ export function createUpdates(options: UpdatesOptions): Updates {
   let current: UpdatesView = options.inContainer
     ? { state: 'unsupported', reason: 'container' }
     : { state: 'pending' };
+  const reachProbe = options.reach ?? (() => checkReach());
+  let reach: Reach = {
+    state: 'unchecked',
+    attemptedAt: null,
+    succeededAt: null,
+    reached: 0,
+    total: 0
+  };
   let running: Promise<UpdatesView> | undefined;
   let finishedAt: number | undefined;
   let first: NodeJS.Timeout | undefined;
   let every: NodeJS.Timeout | undefined;
+
+  /** Never fails the check: an update list is still worth showing when the probe cannot run. */
+  const probeReach = async (): Promise<void> => {
+    const attemptedAt = now();
+    try {
+      const result = await reachProbe();
+      reach = {
+        state: result.state,
+        attemptedAt,
+        succeededAt: result.state === 'ok' ? attemptedAt : reach.succeededAt,
+        reached: result.reached,
+        total: result.total
+      };
+    } catch (error) {
+      options.onError?.(error);
+      reach = { ...reach, state: 'failed', attemptedAt, reached: 0, total: 0 };
+    }
+  };
 
   const doCheck = async (): Promise<UpdatesView> => {
     if (options.inContainer) return current;
@@ -205,6 +249,7 @@ export function createUpdates(options: UpdatesOptions): Updates {
       } catch {
         // not a package here (a tarball install): reported as `other`
       }
+      await probeReach();
       current = {
         state: 'ok',
         checkedAt: now(),
@@ -221,7 +266,8 @@ export function createUpdates(options: UpdatesOptions): Updates {
           total: simulation.total,
           packages: simulation.packages,
           keptBack: simulation.keptBack
-        }
+        },
+        reach
       };
     } catch (error) {
       options.onError?.(error);
