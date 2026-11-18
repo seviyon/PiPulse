@@ -262,3 +262,27 @@ describe('the storage figures are counted at most once per USAGE_TTL_MS', () => 
     ).toBe(first + 1);
   });
 });
+
+describe('the disk figure', () => {
+  it('is null when the free space cannot be read, and the number otherwise', async () => {
+    for (const [free, expected] of [
+      [undefined, null],
+      [123_456, 123_456]
+    ] as const) {
+      const api = buildServer(db, {
+        auth: { passwordHash, failureDelayMs: 0 },
+        settings: {
+          getRetention: retentionSource(db, {}, () => {}),
+          metrics: [{ intervalMs: 5000 }],
+          diskFree: () => free,
+          now: () => NOW
+        }
+      });
+      const res = await api.inject({ method: 'GET', url: '/api/settings' });
+      expect(
+        (res.json() as { storage: { diskFreeBytes: number | null } }).storage.diskFreeBytes
+      ).toBe(expected);
+      await api.close();
+    }
+  });
+});
