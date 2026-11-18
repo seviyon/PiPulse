@@ -206,6 +206,13 @@ describe('aheadText', () => {
     expect(aheadText(5 * 3_600_000)).toBe('5 h');
     expect(aheadText(3 * DAY)).toBe('3 d');
   });
+
+  it('switches unit exactly at 2 hours and at 48 hours', () => {
+    expect(aheadText(119 * MIN)).toBe('119 min');
+    expect(aheadText(120 * MIN)).toBe('2 h');
+    expect(aheadText(47 * 60 * MIN)).toBe('47 h');
+    expect(aheadText(48 * 60 * MIN)).toBe('2 d');
+  });
 });
 
 describe('renew and a clock that stepped ahead', () => {
