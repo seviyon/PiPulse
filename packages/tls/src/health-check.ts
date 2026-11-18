@@ -54,7 +54,7 @@ export function healthy(body: unknown): boolean {
 }
 
 /** The served certificate was not issued by the CA in ca.crt. */
-const ISSUER_MISMATCH = new Set([
+export const ISSUER_MISMATCH = new Set([
   'UNABLE_TO_GET_ISSUER_CERT',
   'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
