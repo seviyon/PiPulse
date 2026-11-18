@@ -105,6 +105,14 @@ describe('NotificationsSection', () => {
     expect(root.textContent).toContain('No webhooks configured — set PIPULSE_NOTIFY_FILE.');
   });
 
+  it('treats a list that is not a list of webhooks as a failed load, not as none configured', async () => {
+    answer = () => Response.json([{ id: 'apprise' }]);
+    await show();
+    expect(root.textContent).toContain("Couldn't load the notification status");
+    expect(root.querySelectorAll('.webhook-list li')).toHaveLength(0);
+    expect(root.textContent).not.toContain('No webhooks configured');
+  });
+
   it('treats a non-array answer (an older server) as none configured', async () => {
     answer = () => Response.json({ error: 'not here' });
     await show();
