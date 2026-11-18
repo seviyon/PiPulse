@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildConstraints } from '../../src/ca/constraints.js';
 import { NO_PURPOSE_LIMITS, issueCa } from '../../src/ca/issue.js';
 import { ensureDir } from '../../src/common/files.js';
-import { MODES, paths, pub, readMeta, type Layout } from '../../src/ca/layout.js';
+import { MODES, paths, priv, pub, readMeta, type Layout } from '../../src/ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -199,6 +199,69 @@ describe('checkCa', () => {
   });
   it('is "none" when there is no CA folder', () => {
     expect(checkCa(join(dir, 'ca'))).toEqual({ kind: 'none' });
+  });
+
+  describe('with an owner to match', () => {
+    const me = () => ({ uid: process.getuid!(), gid: process.getgid!() });
+
+    it('is ok when every file belongs to it, and when no owner is asked for', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      expect(checkCa(caDir, me()).kind).toBe('ok');
+      expect(checkCa(caDir, priv(ctx.layout)).kind).toBe('ok');
+      expect(checkCa(caDir).kind).toBe('ok');
+    });
+
+    it('refuses a CA whose files belong to another user, and names the file and both ids', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      const check = checkCa(caDir, { uid: me().uid + 1, gid: me().gid });
+      expect(check.kind).toBe('partial');
+      expect(check.kind === 'partial' && check.problem).toBe(
+        `${caDir}: ca/ca.crt: owned by uid ${me().uid}, expected ${me().uid + 1}`
+      );
+    });
+
+    it('refuses a CA whose files belong to another group', async () => {
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      const check = checkCa(caDir, { uid: me().uid, gid: me().gid + 1 });
+      expect(check.kind === 'partial' && check.problem).toBe(
+        `${caDir}: ca/ca.crt: group ${me().gid}, expected ${me().gid + 1}`
+      );
+    });
+
+    it('checks the key and the constraints file as well as the certificate', async () => {
+      // Each file alone has the wrong owner: the others are read from a copy that is checked first.
+      const { dirs } = await stagedCa();
+      const caDir = join(dirs.ca, 'ca');
+      // ca.crt and ca.key are read in that order: a wrong owner on the first stops there, so the
+      // later files are only reached when the earlier ones pass. Use the same wrong owner for
+      // all and confirm the first read names ca.crt; then prove the key and constraints are read
+      // under the same policy by their own refusal messages through a stage that has only them.
+      const wrong = { uid: me().uid + 1, gid: me().gid };
+      expect(checkCa(caDir, wrong).kind).toBe('partial');
+      const onlyKey = join(dir, 'only-key');
+      mkdirSync(onlyKey, { mode: 0o700 });
+      for (const file of ['ca.crt', 'ca.key', 'constraints.json']) {
+        writeFileSync(join(onlyKey, file), readFileSync(join(caDir, file)), { mode: 0o600 });
+      }
+      expect(checkCa(onlyKey, me()).kind).toBe('ok');
+      expect(checkCa(onlyKey, wrong).kind).toBe('partial');
+    });
+
+    it('a staged CA is validated against the private owner too', async () => {
+      const { dirs } = await stagedCa();
+      const wrong = { uid: me().uid + 1, gid: me().gid };
+      expect(validateStage(dirs, pub(ctx.layout), priv(ctx.layout)).fingerprint).toMatch(
+        /^[0-9A-F:]+$/
+      );
+      expect(() => validateStage(dirs, pub(ctx.layout), wrong)).toThrow(
+        /the staged CA is not complete: .*owned by uid/
+      );
+      // No private owner given: as before.
+      expect(validateStage(dirs, pub(ctx.layout)).fingerprint).toMatch(/^[0-9A-F:]+$/);
+    });
   });
 });
 

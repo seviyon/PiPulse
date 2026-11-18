@@ -10,7 +10,7 @@ import { opensslVersion } from '../ca/issue.js';
 import { leafNames } from '../ca/constraints.js';
 import { pathExists, removeTree } from '../common/files.js';
 import { recover } from '../ca/journal.js';
-import { paths, pub, readState, writeRenewStatus, type RenewStatus } from '../ca/layout.js';
+import { paths, priv, pub, readState, writeRenewStatus, type RenewStatus } from '../ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -140,7 +140,7 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
   let check: ReturnType<typeof checkCa>;
   try {
     recover(layout, ctx.hook);
-    check = checkCa(paths(layout).caDir);
+    check = checkCa(paths(layout).caDir, priv(layout));
   } catch (error) {
     record('failed', (error as Error).message);
     ctx.err(`renewal failed: ${(error as Error).message}`);

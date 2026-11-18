@@ -12,7 +12,7 @@ import {
 } from '../ca/constraints.js';
 import { removeTree } from '../common/files.js';
 import { recover, runTransaction } from '../ca/journal.js';
-import { BACKUP_NAME, listBackups, paths, pub, type BackupInfo } from '../ca/layout.js';
+import { BACKUP_NAME, listBackups, paths, priv, pub, type BackupInfo } from '../ca/layout.js';
 import {
   checkCa,
   namesSetting,
@@ -92,7 +92,7 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   }
   recover(layout, ctx.hook);
   ensureTlsDirs(layout, ctx.hook);
-  const current = checkCa(paths(layout).caDir);
+  const current = checkCa(paths(layout).caDir, priv(layout));
   if (current.kind === 'partial') {
     ctx.err(`the CA is incomplete: ${current.problem}`);
     ctx.err(`to recover: ${recoveryHint(layout)}`);
@@ -226,7 +226,7 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
         ));
       },
       validate: (dirs) => {
-        validateStage(dirs, pub(layout));
+        validateStage(dirs, pub(layout), priv(layout));
       }
     });
     if (prune.length > 0) {
@@ -234,7 +234,7 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
       // (the operator would run new-ca again and rotate twice).
       try {
         for (const name of prune) removeTree(join(layout.caRoot, name), ctx.hook);
-        const now = checkCa(paths(layout).caDir);
+        const now = checkCa(paths(layout).caDir, priv(layout));
         if (now.kind === 'ok') repairPublic(ctx, now.ca);
         ctx.out(
           `deleted the oldest ${prune.length === 1 ? 'backup' : 'backups'}: ${prune.join(', ')}`
@@ -282,14 +282,14 @@ export async function restoreCa(ctx: Context, args: string[]): Promise<number> {
   }
   recover(layout, ctx.hook);
   const from = join(layout.caRoot, name);
-  const restored = checkCa(from);
+  const restored = checkCa(from, priv(layout));
   if (restored.kind !== 'ok') {
     ctx.err(
       `${name} can't be restored: ${restored.kind === 'none' ? 'there is no such backup' : restored.problem}`
     );
     return 1;
   }
-  const current = checkCa(paths(layout).caDir);
+  const current = checkCa(paths(layout).caDir, priv(layout));
   if (current.kind === 'partial') {
     ctx.err(
       `the active CA is incomplete (${current.problem}); move ${paths(layout).caDir} aside by hand, then run restore-ca again`
@@ -328,7 +328,7 @@ export async function restoreCa(ctx: Context, args: string[]): Promise<number> {
         ));
       },
       validate: (dirs) => {
-        validateStage(dirs, pub(layout));
+        validateStage(dirs, pub(layout), priv(layout));
       }
     });
     reportOutside(ctx, outside);

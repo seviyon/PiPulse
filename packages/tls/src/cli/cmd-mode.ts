@@ -4,7 +4,7 @@ import { RELEASE_DEFAULT, readTlsConfig, type StateMode } from '../settings/conf
 import type { CheckResult } from '../health-check.js';
 import { loadCertificate, validityOf } from '../inspect/inspect.js';
 import { recover } from '../ca/journal.js';
-import { paths, pub, readState, writeState, type Layout } from '../ca/layout.js';
+import { paths, priv, pub, readState, writeState, type Layout } from '../ca/layout.js';
 import { checkCa, checkLeaf, repairPublic, type CaFiles } from '../ca/material.js';
 import {
   confirm,
@@ -163,7 +163,7 @@ export async function enable(ctx: Context, args: string[]): Promise<number> {
       return 1;
     }
     recover(layout, ctx.hook); // only where this command may write (not a refused folder, not an operator pair)
-    const check = checkCa(paths(layout).caDir);
+    const check = checkCa(paths(layout).caDir, priv(layout));
     if (check.kind !== 'ok') {
       ctx.err(
         check.kind === 'none'

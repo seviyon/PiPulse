@@ -12,7 +12,7 @@ import {
 } from '../ca/constraints.js';
 import { removeTree } from '../common/files.js';
 import { runTransaction } from '../ca/journal.js';
-import { listBackups, paths, pub, readState, writeState } from '../ca/layout.js';
+import { listBackups, paths, priv, pub, readState, writeState } from '../ca/layout.js';
 import {
   checkCa,
   checkLeaf,
@@ -117,7 +117,7 @@ export async function init(ctx: Context, args: string[]): Promise<number> {
     dbExists: exists(db, true),
     markerExists
   });
-  const hadCa = checkCa(paths(ctx.layout).caDir).kind === 'ok';
+  const hadCa = checkCa(paths(ctx.layout).caDir, priv(ctx.layout)).kind === 'ok';
   let code: number;
   try {
     code = await material(ctx, values);
@@ -179,7 +179,7 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
   ensureTlsDirs(layout, ctx.hook);
   prepareWork(layout, ctx.hook);
   try {
-    const check = checkCa(paths(layout).caDir);
+    const check = checkCa(paths(layout).caDir, priv(layout));
     if (check.kind === 'partial') {
       ctx.err(`the CA is incomplete: ${check.problem}`);
       ctx.err(`to recover: ${recoveryHint(layout)}`);
@@ -233,7 +233,7 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
           ({ outside } = await stageNewCa(ctx, dirs, constraints, listBackups(layout)));
         },
         validate: (dirs) => {
-          validateStage(dirs, pub(layout));
+          validateStage(dirs, pub(layout), priv(layout));
         }
       });
       reportOutside(ctx, outside);

@@ -483,3 +483,21 @@ describe('init --mode auto', () => {
     expect(await main(['init', '--mode', 'manual'], testContext(dir))).not.toBe(0);
   });
 });
+
+describe('a CA whose files belong to another owner is never used', () => {
+  // The files stay as init made them; the commands now expect another private group (the CA
+  // folder's owner), which a test can set up without being able to chown to another user.
+  const foreignContext = () => {
+    const foreign = testContext(dir);
+    foreign.layout = { ...foreign.layout, privateGid: process.getgid!() + 1 };
+    return foreign;
+  };
+
+  it('renew fails loudly and records why, instead of signing with a key someone else could have changed', async () => {
+    expect(await main(['init'], ctx)).toBe(0);
+    const foreign = foreignContext();
+    expect(await main(['renew', '--force'], foreign)).toBe(1);
+    expect(foreign.errors.join('\n')).toMatch(/group \d+, expected \d+/);
+    expect(readRenewStatus(paths(foreign.layout).renewStatus)?.result).toBe('failed');
+  });
+});
