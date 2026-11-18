@@ -77,7 +77,9 @@ function When({ view, now }: { view: Extract<UpdatesView, { state: 'ok' }>; now:
     <section aria-labelledby="updates-when">
       <h2 id="updates-when">When</h2>
       <p>Checked {formatDateTime(view.checkedAt)}.</p>
-      <Reach reach={view.reach} now={now} />
+      <div role="status">
+        <Reach reach={view.reach} now={now} />
+      </div>
       {view.listsRefreshedAt === null ? (
         <p>When apt last refreshed the package lists is unknown.</p>
       ) : (

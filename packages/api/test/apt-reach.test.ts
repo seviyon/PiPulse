@@ -123,6 +123,22 @@ Err:3 http://a/x y Release.gpg
   });
 });
 
+describe('a URL or suite that contains the word Release', () => {
+  it('is still one source, read by its last word', () => {
+    expect(parseReach('Get:1 http://mirror/Release x y InRelease [1 B]\n')).toEqual({
+      state: 'ok',
+      reached: 1,
+      total: 1
+    });
+    expect(parseReach('Err:1 http://mirror/Release x y InRelease\n  404\n')).toEqual({
+      state: 'failed',
+      reached: 0,
+      total: 1
+    });
+    expect(parseReach('Get:1 http://mirror/Release/ y InRelease [1 B]\n').state).toBe('ok');
+  });
+});
+
 describe('reachArgs', () => {
   it('asks for InRelease only, into the private folder, with short timeouts and no retries', () => {
     const args = reachArgs('/tmp/d');
@@ -131,6 +147,11 @@ describe('reachArgs', () => {
     expect(args).toContain('-oDir::Cache=/tmp/d/cache');
     expect(args).toContain('-oAcquire::IndexTargets::deb::Packages::DefaultEnabled=false');
     expect(args).toContain('-oAcquire::Languages=none');
+    // neither the binary indexes nor a deb-src line's Sources index is fetched
+    expect(args).toContain('-oAcquire::IndexTargets::deb-src::Sources::DefaultEnabled=false');
+    // a host's own quiet setting must not hide the lines that are read
+    expect(args).toContain('-oquiet=1');
+    expect(args).toContain('-oAPT::Quiet=1');
     expect(args).toContain('-oAcquire::Retries=0');
     expect(args).toContain('-oDebug::NoLocking=1');
     expect(args).toContain('-oAPT::Get::List-Cleanup=0');

@@ -50,6 +50,18 @@ describe('runReach', () => {
     await expect(runReach(['update'])).rejects.toBe(killed);
   });
 
+  it('rejects a launch failure, a signal and a full output buffer, whatever they printed', async () => {
+    for (const error of [
+      Object.assign(new Error('spawn apt-get EACCES'), { code: 'EACCES' }),
+      Object.assign(new Error('maxBuffer exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }),
+      Object.assign(new Error('terminated'), { code: null, signal: 'SIGTERM' }),
+      Object.assign(new Error('terminated'), { code: 100, signal: 'SIGSEGV' })
+    ]) {
+      answer(error, 'Get:1 http://a/x y InRelease\n');
+      await expect(runReach(['update'])).rejects.toBe(error);
+    }
+  });
+
   it('rejects when apt-get is not there', async () => {
     const missing = Object.assign(new Error('spawn apt-get ENOENT'), { code: 'ENOENT' });
     answer(missing, '');

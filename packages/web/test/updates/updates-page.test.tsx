@@ -271,6 +271,17 @@ describe('whether the repositories answered', () => {
     expect(text()).toContain('All 1 repository answered');
   });
 
+  it('sits in a status region that stays mounted, so a change is announced', async () => {
+    await show(reach({}));
+    const region = root.querySelector('section[aria-labelledby="updates-when"] [role="status"]');
+    expect(region?.textContent).toContain('All 3 repositories answered');
+    await show(reach({ state: 'failed', reached: 0, total: 3, succeededAt: null }));
+    expect(root.querySelector('section[aria-labelledby="updates-when"] [role="status"]')).toBe(
+      region
+    );
+    expect(region?.textContent).toContain('No repository answered');
+  });
+
   it('partial: names the counts, the last full success, and warns', async () => {
     await show(reach({ state: 'partial', reached: 1, total: 2, succeededAt: NOW - 7_200_000 }));
     expect(text()).toContain('Only 1 of 2 repositories answered with signed metadata');

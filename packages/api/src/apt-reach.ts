@@ -35,8 +35,12 @@ export function parseReach(text: string): ReachResult {
   // for Release and Release.gpg, each under its own line number.
   const lines = new Map<string, { source: string; file: string; ok: boolean }>();
   for (const line of text.split('\n')) {
+    // The file name is the last word of the line, before apt's optional "[size]" (a URL or suite
+    // that happens to contain the word Release is part of the source).
     const match =
-      /^(Get|Hit|Ign|Err):(\d+) (.*?)\s*(InRelease|Release\.gpg|Release)(?:\s.*)?$/.exec(line);
+      /^(Get|Hit|Ign|Err):(\d+) (.*)\s(InRelease|Release\.gpg|Release)(?:\s\[[^\]]*\])?$/.exec(
+        line
+      );
     if (!match) continue;
     const id = match[2]!;
     const seen = lines.get(id);
@@ -75,9 +79,11 @@ export const runReach: ReachRunner = (args) =>
         env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' }
       },
       (error, stdout) => {
-        // A timeout or a kill leaves nothing to read; an ordinary non-zero exit is an answer.
-        if (error && (error.killed || (error as NodeJS.ErrnoException).code === 'ENOENT'))
-          reject(error);
+        // Only an ordinary non-zero exit is an answer (a bad signature exits 100, with the other
+        // sources' lines complete). A launch failure (string code), a kill or signal, or output
+        // over the buffer leaves nothing to trust.
+        const code = (error as NodeJS.ErrnoException | null)?.code;
+        if (error && (typeof code !== 'number' || error.killed || error.signal)) reject(error);
         else resolve(String(stdout));
       }
     );
@@ -85,26 +91,31 @@ export const runReach: ReachRunner = (args) =>
 
 /** The options that make `apt-get update` fetch only the `InRelease` files into a private folder. */
 export function reachArgs(dir: string): string[] {
-  const off = (target: string) => `-oAcquire::IndexTargets::deb::${target}::DefaultEnabled=false`;
+  const off = (target: string) => `-oAcquire::IndexTargets::${target}::DefaultEnabled=false`;
   return [
     'update',
     `-oDir::State::lists=${join(dir, 'lists')}`,
     `-oDir::Cache=${join(dir, 'cache')}`,
     '-oDebug::NoLocking=1',
     '-oAPT::Get::List-Cleanup=0',
+    // The Get/Err lines are the answer: a host that sets quiet 2 would print none, and 0 adds progress text to them.
+    '-oquiet=1',
+    '-oAPT::Quiet=1',
     '-oAcquire::Languages=none',
     '-oAcquire::Retries=0',
     '-oAcquire::http::Timeout=10',
     '-oAcquire::https::Timeout=10',
+    // Every other index a deb or deb-src line asks for (a deb-src line's Sources file is megabytes).
     ...[
-      'Packages',
-      'Contents-deb',
-      'Contents-udeb',
-      'CNF',
-      'DEP-11',
-      'DEP-11-icons-small',
-      'DEP-11-icons',
-      'DEP-11-icons-large'
+      'deb::Packages',
+      'deb::Contents-deb',
+      'deb::Contents-udeb',
+      'deb::CNF',
+      'deb::DEP-11',
+      'deb::DEP-11-icons-small',
+      'deb::DEP-11-icons',
+      'deb::DEP-11-icons-large',
+      'deb-src::Sources'
     ].map(off)
   ];
 }
