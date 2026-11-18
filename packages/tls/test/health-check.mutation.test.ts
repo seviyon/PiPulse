@@ -371,7 +371,7 @@ describe('the HTTPS check, request and answer', () => {
     }) as typeof clearTimeout);
     const port = await listen(https(json(200, OK)));
     await checkHealth(tlsEnv(port), { readState: noState, timeoutMs: 7777 });
-    expect(made.length).toBeGreaterThan(0);
+    expect(made).toHaveLength(1);
     expect(cleared).toContain(made[0]);
   });
 });
