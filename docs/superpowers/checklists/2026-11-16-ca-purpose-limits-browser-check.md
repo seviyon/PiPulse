@@ -39,7 +39,7 @@ Run only after Part A is green. Nothing here touches `Io`.
 
 - Kit output goes to a fresh folder outside any repo: `/Users/seviyon/Repositories/tarballs/PiPulse/browser-kit-pr3/`. Never trust the 2026-10-04 kit's CA at the same time.
 - Note the macOS version, each browser's version, and the output of `curl -V` and `/usr/bin/curl -V` at the top of the record.
-- Browsers: Safari, Chrome, Firefox (Firefox needs `security.enterprise_roots.enabled` = `true` in `about:config`).
+- Browsers: Safari and Firefox (Firefox needs `security.enterprise_roots.enabled` = `true` in `about:config`).
 - **Trust command.** Use exactly what `pipulse tls export-ca` prints on the PR 2 build that will ship (PR #212, which adds `-p ssl`). Before step 5, open `packages/tls/src/cli/cmd-export.ts` on the branch under test and confirm its macOS line; if it differs from step 5 below, the file wins and this checklist is corrected first. (`main` did not have `-p ssl` until #212 merged.)
 
 **Steps**
@@ -86,7 +86,7 @@ Run only after Part A is green. Nothing here touches `Io`.
 
 Run 2026-11-17, kit built from `e6dcc0f` with mode `pr3` (CA SHA-256 `2F:6C:4E:F8:22:97:CA:D5:EF:6E:D0:9E:AA:90:1A:5C:16:0F:42:DD:4F:F9:F8:91:4D:CB:CF:4A:A8:D8:ED:56`). Step 2 showed `Extended Key Usage: TLS Web Server Authentication` and a critical `Name Constraints` with Permitted `DNS:pipulse-check`, `DNS:pipulse-check.local`, `DNS:localhost`, `DNS:io`, `IP:127.0.0.1/32`, `IP:::1/128`, `IP:10.99.0.0/24`, `email:.invalid`, `URI:.invalid` and Excluded `DNS:.pipulse-check`, `DNS:.localhost`, `DNS:.io`.
 
-Versions: macOS 27.2.1 (26B131) · Safari 27.2 (22625.2.8.11.9) · Chrome not run (not installed) · Firefox 160.0 (aarch64) · `curl -V` curl 8.7.1 (x86_64-apple-darwin26.0) libcurl/8.7.1 (SecureTransport) LibreSSL/3.3.6 · `/usr/bin/curl -V` the same binary (`which -a curl` finds only `/usr/bin/curl`; no Homebrew curl was installed)
+Versions: macOS 27.2.1 (26B131) · Safari 27.2 (22625.2.8.11.9) · Firefox 160.0 (aarch64) · `curl -V` curl 8.7.1 (x86_64-apple-darwin26.0) libcurl/8.7.1 (SecureTransport) LibreSSL/3.3.6 · `/usr/bin/curl -V` the same binary (`which -a curl` finds only `/usr/bin/curl`; no Homebrew curl was installed)
 
 Loads = `port N ok`. Refused = a certificate error. The `-k` control (step 5) answered on all seven ports first.
 
@@ -95,10 +95,9 @@ Loads = `port N ok`. Refused = a certificate error. The `-k` control (step 5) an
 | curl (macOS, above)   | loads                                             | loads | exit 60, permitted subtree | exit 60, permitted subtree | exit 60, excluded subtree | loads | exit 60, excluded subtree | yes                     | yes                                  |
 | /usr/bin/curl (macOS) | same binary as the row above: one client, not two |       |                            |                            |                           |       |                           | n/a                     | n/a                                  |
 | Safari                | loads                                             | loads | refused                    | refused                    | refused                   | loads | refused                   | yes                     | yes (operator report; text not kept) |
-| Chrome                | not run (not installed)                           |       |                            |                            |                           |       |                           | n/a                     | n/a                                  |
 | Firefox               | loads                                             | loads | refused                    | refused                    | refused                   | loads | refused                   | yes                     | yes (operator report; text not kept) |
 
-Gaps: Chrome was not run. The curl matrix is one client (SecureTransport with LibreSSL 3.3.6), not two; an OpenSSL-backed curl was not available. OpenSSL 3.x and 1.1.1w are covered by Part A, not here.
+Gaps: The curl matrix is one client (SecureTransport with LibreSSL 3.3.6), not two; an OpenSSL-backed curl was not available. OpenSSL 3.x and 1.1.1w are covered by Part A, not here.
 
 Variant fingerprints built (SHA-1 each; `pr3` and any step 9 variants): `pr3` `C44161FCB939DA4847544262BB1FACDFE0823F1F`; no step 9 variants (nothing failed) · Part A green on commit: `e6dcc0f` · Cleanup verified for every fingerprint (all items in step 10): ☑ (server stopped and `pgrep` empty, hosts line gone, no `PiPulse browser check CA` in the System keychain, no entry in `dump-trust-settings -d`)
 
