@@ -182,7 +182,7 @@ async function material(ctx: Context, values: InitValues): Promise<number> {
     const check = checkCa(paths(layout).caDir, priv(layout));
     if (check.kind === 'partial') {
       ctx.err(`the CA is incomplete: ${check.problem}`);
-      ctx.err(`to recover: ${recoveryHint(layout)}`);
+      ctx.err(`to recover: ${recoveryHint(layout, check.problem)}`);
       return 1;
     }
     if (check.kind === 'none') {

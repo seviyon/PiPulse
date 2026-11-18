@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs';
@@ -20,8 +21,10 @@ import { MODES, paths, priv, pub, readMeta, type Layout } from '../../src/ca/lay
 import {
   checkCa,
   checkLeaf,
+  isOwnerProblem,
   makeLeaf,
   prepareWork,
+  recoveryHint,
   repairPublic,
   stageCopiedCa,
   stageNewCa,
@@ -254,6 +257,55 @@ describe('checkCa', () => {
         );
         rmSync(dirs.ca, { recursive: true, force: true });
       }
+    });
+
+    it('says how to fix an ownership problem, and keeps the old advice for anything else', () => {
+      const layout = { ...ctx.layout, uid: 0, privateGid: 0 };
+      const caDir = paths(layout).caDir;
+      for (const problem of [
+        `${caDir}: ca/ca.key: owned by uid 1000, expected 0`,
+        `${caDir}: ca/ca.crt: group 999, expected 0`
+      ]) {
+        expect(isOwnerProblem(problem)).toBe(true);
+        expect(recoveryHint(layout, problem)).toBe(
+          `the CA files belong to another user or group: sudo chown -R 0:0 ${caDir} (no new CA is needed, and nothing has to be trusted again)`
+        );
+      }
+      for (const problem of [
+        `${caDir} is missing ca.key`,
+        `${caDir}: ca.key does not match ca.crt`
+      ]) {
+        expect(isOwnerProblem(problem)).toBe(false);
+        expect(recoveryHint(layout, problem)).toContain('restore a backup');
+      }
+      expect(recoveryHint(layout)).toContain('restore a backup');
+    });
+
+    it('restore-ca refuses a backup whose files belong to another group', async ({ skip }) => {
+      const other = process.getgroups!().find((group) => group !== process.getgid!());
+      if (other === undefined) skip();
+      const { dirs } = await stagedCa();
+      const backup = join(dirs.ca, 'ca');
+      chownSync(join(backup, 'ca.key'), process.getuid!(), other!);
+      const target = { ca: join(dir, 'ca.next-restored'), pub: join(dir, '.next-restored') };
+      ensureDir(target.ca, { mode: 0o700 });
+      ensureDir(target.pub, { mode: 0o750 });
+      await expect(stageCopiedCa(ctx, target, backup, [])).rejects.toThrow(
+        /ca\.key: group \d+, expected \d+/
+      );
+    });
+
+    it('restore-ca refuses a backup whose key is a symlink, not a file', async () => {
+      const { dirs } = await stagedCa();
+      const backup = join(dirs.ca, 'ca');
+      const real = join(dir, 'elsewhere.key');
+      writeFileSync(real, readFileSync(join(backup, 'ca.key')), { mode: 0o600 });
+      unlinkSync(join(backup, 'ca.key'));
+      symlinkSync(real, join(backup, 'ca.key'));
+      const target = { ca: join(dir, 'ca.next-linked'), pub: join(dir, '.next-linked') };
+      ensureDir(target.ca, { mode: 0o700 });
+      ensureDir(target.pub, { mode: 0o750 });
+      await expect(stageCopiedCa(ctx, target, backup, [])).rejects.toThrow(/ca\.key/);
     });
 
     it('a staged CA is validated against the private owner too', async () => {

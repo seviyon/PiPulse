@@ -86,8 +86,14 @@ const list = (value: string | undefined) =>
 export const namesSetting = (env: NodeJS.ProcessEnv) => list(env['PIPULSE_TLS_NAMES']);
 export const subnetsSetting = (env: NodeJS.ProcessEnv) => list(env['PIPULSE_TLS_SUBNETS']);
 
-export const recoveryHint = (layout: Layout) =>
-  `restore a backup (sudo pipulse tls restore-ca <ca.old-…>) or move ${paths(layout).caDir} aside and run sudo pipulse tls init to make a new CA (every browser must then trust the new one)`;
+/** A CA file that belongs to another user or group than root:root (what `checkCa` reports for it). */
+export const isOwnerProblem = (problem: string) =>
+  /: (owned by uid \d+, expected \d+|group \d+, expected \d+)/.test(problem);
+
+export const recoveryHint = (layout: Layout, problem?: string) =>
+  problem !== undefined && isOwnerProblem(problem)
+    ? `the CA files belong to another user or group: sudo chown -R ${layout.uid}:${layout.privateGid} ${paths(layout).caDir} (no new CA is needed, and nothing has to be trusted again)`
+    : `restore a backup (sudo pipulse tls restore-ca <ca.old-…>) or move ${paths(layout).caDir} aside and run sudo pipulse tls init to make a new CA (every browser must then trust the new one)`;
 
 /**
  * Whether `path` is there: true, false (ENOENT only), or the error's one-line
@@ -347,7 +353,7 @@ export async function stageCopiedCa(
   const read = (name: string) =>
     readSecureFile(
       join(fromDir, name),
-      { kind: 'generated', maxMode: MODES.caFile },
+      { kind: 'generated', maxMode: MODES.caFile, ...priv(ctx.layout) },
       `${basename(fromDir)}/${name}`
     );
   const ca = writeCaFiles(ctx, join(dirs.ca, 'ca'), {

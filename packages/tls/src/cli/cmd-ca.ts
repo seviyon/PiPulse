@@ -95,7 +95,7 @@ export async function newCa(ctx: Context, args: string[]): Promise<number> {
   const current = checkCa(paths(layout).caDir, priv(layout));
   if (current.kind === 'partial') {
     ctx.err(`the CA is incomplete: ${current.problem}`);
-    ctx.err(`to recover: ${recoveryHint(layout)}`);
+    ctx.err(`to recover: ${recoveryHint(layout, current.problem)}`);
     return 1;
   }
   const backups = listBackups(layout);

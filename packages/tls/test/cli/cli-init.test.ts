@@ -499,5 +499,10 @@ describe('a CA whose files belong to another owner is never used', () => {
     expect(await main(['renew', '--force'], foreign)).toBe(1);
     expect(foreign.errors.join('\n')).toMatch(/group \d+, expected \d+/);
     expect(readRenewStatus(paths(foreign.layout).renewStatus)?.result).toBe('failed');
+    // ...and says how to put it right, where a new CA is not the answer.
+    expect(foreign.errors.join('\n')).toContain(
+      'the CA files belong to another user or group: sudo chown -R'
+    );
+    expect(foreign.errors.join('\n')).not.toContain('restore a backup');
   });
 });

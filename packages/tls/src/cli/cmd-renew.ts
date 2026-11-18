@@ -14,9 +14,11 @@ import { paths, priv, pub, readState, writeRenewStatus, type RenewStatus } from 
 import {
   checkCa,
   checkLeaf,
+  isOwnerProblem,
   makeLeaf,
   namesSetting,
   prepareWork,
+  recoveryHint,
   repairPublic,
   writeLeaf,
   type LeafCheck
@@ -170,6 +172,8 @@ export async function renew(ctx: Context, args: string[]): Promise<number> {
   if (check.kind === 'partial') {
     record('failed', `the CA is incomplete: ${check.problem}`);
     ctx.err(`renewal failed: the CA is incomplete: ${check.problem}`);
+    if (isOwnerProblem(check.problem))
+      ctx.err(`to recover: ${recoveryHint(layout, check.problem)}`);
     return 1;
   }
   const ca = check.ca;
