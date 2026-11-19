@@ -241,6 +241,8 @@ describe('printable', () => {
 });
 
 describe('the default boot and process checks read /proc', () => {
+  // Above Linux's pid_max, so no real process (a test worker included) can have it.
+  const SERVER = 2 ** 23;
   const stat = (pid: number, startTime: string) =>
     `${pid} (node) S ${Array(18).fill('0').join(' ')} ${startTime} 0`;
   /** A fake /proc: `served` pids have a stat line, the boot id is `boot`. */
@@ -256,14 +258,14 @@ describe('the default boot and process checks read /proc', () => {
   const put = (doc: unknown) => writeFileSync(join(dir, RUNTIME_FILE), text(doc), { mode: 0o640 });
 
   it('says running when the pid and boot match', () => {
-    put(good());
-    const procRead = proc({ [process.pid]: '1', 4242: '123456' });
+    put({ ...good(), pid: SERVER });
+    const procRead = proc({ [process.pid]: '1', [SERVER]: '123456' });
     expect(readRuntimeStatus(dir, { procRead }).state).toBe('running');
   });
 
   it('says stale after a reboot', () => {
-    put(good());
-    const procRead = proc({ [process.pid]: '1', 4242: '123456' }, 'boot-b');
+    put({ ...good(), pid: SERVER });
+    const procRead = proc({ [process.pid]: '1', [SERVER]: '123456' }, 'boot-b');
     expect(readRuntimeStatus(dir, { procRead })).toEqual({
       state: 'not-running',
       reason: 'stale-boot'
@@ -271,20 +273,20 @@ describe('the default boot and process checks read /proc', () => {
   });
 
   it('says the pid is gone, or was reused', () => {
-    put(good());
+    put({ ...good(), pid: SERVER });
     expect(readRuntimeStatus(dir, { procRead: proc({ [process.pid]: '1' }) })).toEqual({
       state: 'not-running',
       reason: 'stale-pid'
     });
-    expect(readRuntimeStatus(dir, { procRead: proc({ [process.pid]: '1', 4242: '999' }) })).toEqual(
-      { state: 'not-running', reason: 'pid-reused' }
-    );
+    expect(
+      readRuntimeStatus(dir, { procRead: proc({ [process.pid]: '1', [SERVER]: '999' }) })
+    ).toEqual({ state: 'not-running', reason: 'pid-reused' });
   });
 
   it('cannot judge the boot where it cannot read its own /proc entry, and goes on to the pid', () => {
-    put({ ...good(), bootId: 'something-else' });
+    put({ ...good(), pid: SERVER, bootId: 'something-else' });
     // Only the server's pid is served, so this process has no identity (a non-Linux machine).
-    const procRead = proc({ 4242: '123456' });
+    const procRead = proc({ [SERVER]: '123456' });
     expect(readRuntimeStatus(dir, { procRead }).state).toBe('running');
   });
 });
