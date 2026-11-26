@@ -8,12 +8,9 @@ name: Image scan
 on:
   schedule:
     - cron: '23 5 1 * *'
-  # A new release is a new image: check it when it is out. The Release workflow also runs (and
-  # skips every job) for a merged pull request without a release label; only a run that
-  # succeeded published an image.
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
+  # A new release is a new image: the Release workflow calls this one after it publishes.
+  # (Not workflow_run, which runs with this repository's rights after any matching run.)
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -21,7 +18,6 @@ permissions:
 
 jobs:
   trivy:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
