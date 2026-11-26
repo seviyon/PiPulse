@@ -32,7 +32,9 @@ A was picked for the largest gain at the least risk. B can follow later.
 - `packaging-shard`: a two-leg matrix with today's `packaging` container, tools,
   `npm ci` and build.
   - Shard 1: `fetch-node`, `tarball`, `setup`, `service`, `install`, `release`,
-    `migrate-tls` and `rollback`, then the TLS unit tests as root.
+    `migrate-tls` and `rollback`. The TLS unit tests as root run before them: the
+    packaging tests leave PiPulse installed, and `rollback` leaves
+    `PIPULSE_TLS=off` in `pipulse.env`, which the TLS commands read.
   - Shard 2: `tls`, `deb`, `next-version`, `pr-bump`, `apt`, `migrate` and `run`
     (the test of `run.sh` itself, added with this change).
   - `fail-fast: false`, so one failure does not hide the other shard's result.

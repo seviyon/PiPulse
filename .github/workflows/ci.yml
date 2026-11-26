@@ -84,13 +84,15 @@ jobs:
         run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates adduser iproute2 procps python3 lintian gnupg apt-utils openssl strace systemd jq >/dev/null
       - run: npm ci
       - run: npm run build
-      - name: Packaging tests
-        # run.sh holds the shard lists; verify-release runs in its own job (packaging-verify).
-        run: sh packaging/test/run.sh --shard ${{ matrix.shard }}
+      # Before the packaging tests: they leave PiPulse installed, and the TLS commands read
+      # /etc/pipulse/pipulse.env.
       - name: TLS unit tests as root
         if: matrix.shard == 1
         # The ownership tests (chown to another user) skip everywhere else; this container runs as root.
         run: npx vitest run packages/tls
+      - name: Packaging tests
+        # run.sh holds the shard lists; verify-release runs in its own job (packaging-verify).
+        run: sh packaging/test/run.sh --shard ${{ matrix.shard }}
 
   packaging:
     # The required check of `main`: passes only when every shard passed. always() is needed
