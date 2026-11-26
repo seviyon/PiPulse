@@ -255,3 +255,11 @@ jobs:
             echo 'deb [signed-by=/usr/share/keyrings/pipulse.gpg] https://seviyon.github.io/PiPulse/apt stable main' > /etc/apt/sources.list.d/pipulse.list &&
             apt-get update -qq && apt-get install -y -qq pipulse >/dev/null &&
             grep -q '\"$V\"' /opt/pipulse/app/version.json"
+
+  scan:
+    # Skipped with publish when nothing was released. A finding turns this run red, but the
+    # release is already out.
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-scan.yml
