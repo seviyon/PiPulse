@@ -18,7 +18,7 @@ How versions get made, what a release publishes, and the one-time GitHub setup i
 1. tests and builds once, and assembles `pipulse-<version>.tar.gz`;
 2. builds `pipulse_<version>_{armhf,arm64,amd64}.deb`, each with its Node (downloaded and GPG-verified), and runs `lintian` on them;
 3. pushes `ghcr.io/seviyon/pipulse:<version>` and `:latest` (`linux/arm64`, `linux/amd64`);
-4. adds the `.deb`s to the apt repository on the `gh-pages` branch (keeping the newest 3 per CPU), signs its indexes, and force-pushes the branch as a single fresh commit, so old packages don't pile up in its history;
+4. rebuilds the apt repository from the new `.deb`s and those of the two newest earlier releases (downloaded from GitHub Releases and checked against each release's signed `SHA256SUMS`; nothing already on `gh-pages` is carried over, and a release that fails the check stops this one), signs its indexes, and force-pushes the branch as a single fresh commit, so old packages don't pile up in its history;
 5. writes and signs `SHA256SUMS`, tags `v<version>`, and publishes the GitHub Release with the tarball, `.deb`s, `install.sh`, `compose.yaml` and the checksums (the shipped `compose.yaml` is rewritten to this release's image tag; the copy in the repository follows `:latest`, so until a release finishes its image can be older than the file, and a Renovate digest PR opened in that window would pin the old one: close it or let the next release's PR replace it);
 6. installs the new version from the apt repository in a clean Debian container, exactly as the README tells users to.
 
@@ -62,7 +62,7 @@ Do these once, before merging the Phase 6 PR.
 
 7. **Keep the signing key and the apt branch out of reach (repository settings).**
    - Settings → Environments → _New environment_ `release`, limited to the `main` branch (and ideally a required reviewer); `APT_SIGNING_KEY` and `APT_SIGNING_PASSPHRASE` live in it as environment secrets (not repository secrets), and the `publish` job declares `environment: release`. Otherwise any workflow run on another branch (a Renovate PR runs its own copy of `release-dry-run.yml`; `workflow_dispatch` takes any branch) can read the key and publish a signed release.
-   - `gh-pages`: the default workflow token is read-only and only `publish` has `contents: write`, and `publish` runs only in the `release` environment, so no run on another branch can push it. A ruleset on `gh-pages` is optional; if you add one, the `publish` job force-pushes the branch with the workflow token, so it must be allowed to bypass it.
+   - `gh-pages`: the default workflow token is read-only, but that is only a default: a workflow on any branch can ask for `contents: write`, so anyone who can push to the repository can change `gh-pages`. A change there cannot be signed with the release key (a release reads nothing from the branch), and the next release replaces it. A ruleset on `gh-pages` is optional; if you add one, the `publish` job force-pushes the branch with the workflow token, so it must be allowed to bypass it.
    - `release.yml` runs on a push to `main` (and `workflow_dispatch`), not `pull_request` or `pull_request_target`: the environment's branch rule sees the PR's own branch under `pull_request` and refuses a Renovate merge, and GitHub's default policy for `pull_request_target` (a brownout on 2026-11-16 made runs fail with `startup_failure`; enforced from 2026-12-02) blocks it in public repositories. The `version` job asks the API which PR was merged as the pushed commit (`packaging/pr-bump.sh`) and reads its labels, labels are read when the push run starts, so set the label before merging; a push with no merged PR or no release label ends there.
 
 ## Rotating the apt key
@@ -70,7 +70,7 @@ Do these once, before merging the Phase 6 PR.
 Before it expires (3 years) or if it may have leaked:
 
 1. Make a new key as in step 4, replace both secrets, and commit its public half as `packaging/apt-key.gpg` in the same PR (the `publish` job checks the two agree).
-2. Release (a `release:patch` PR, or _Run workflow_). The repository is re-signed with the new key, and the release's `install.sh` carries it.
+2. Release (a `release:patch` PR, or _Run workflow_). Earlier releases are checked against `packaging/apt-key.gpg`, so export both public keys into it (`gpg --export <new> <old>`, new one first) until two releases have been made with the new key. The repository is re-signed with the new key, and the release's `install.sh` carries it.
 3. Pis that added the old key take the new one by running the installer of that release once (`curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh`): it writes its stamped key to `/usr/share/keyrings/pipulse.gpg`. Until they do, `apt update` fails with an unknown-key error rather than installing anything.
 
    A leaked key means someone else could sign packages Pis would install: rotate at once and say so in the release notes.

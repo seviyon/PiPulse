@@ -5,10 +5,10 @@
 # A new test goes in `all` and in one shard; every call checks that before running anything.
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
-all='fetch-node tarball verify-release setup service install release migrate-tls tls rollback deb next-version pr-bump apt migrate run'
+all='fetch-node tarball verify-release setup service install release migrate-tls tls rollback deb next-version pr-bump previous-debs apt migrate run'
 # Split by duration, so that the two take about as long as each other.
 shard1='fetch-node tarball setup service install release migrate-tls rollback'
-shard2='tls deb next-version pr-bump apt migrate run'
+shard2='tls deb next-version pr-bump previous-debs apt migrate run'
 own_job='verify-release'
 
 die() { echo "run.sh: $1" >&2; exit 2; }

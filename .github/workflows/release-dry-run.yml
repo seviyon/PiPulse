@@ -34,6 +34,10 @@ jobs:
             # suppressed here, on the newer lintian, and not in the package.
             lintian --fail-on error --suppress-tags aliased-location "out/pipulse_0.0.0-dry_${arch}.deb"
           done
+      - name: The earlier releases the apt repository would carry still verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh packaging/previous-debs.sh 0.0.0-dry previous 2
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           # Docker Hub: anonymous pulls share a per-address limit that the runners often exhaust.
