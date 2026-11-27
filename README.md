@@ -17,7 +17,7 @@
 A modern, from-scratch rewrite of [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) — real-time system monitoring for a Raspberry Pi (or any Linux single-board computer), with a lightweight collector daemon, an embedded time-series store, and a fast web dashboard.
 
 
-> **Status: pre-alpha, but feature-complete through Phase 7 (RPi-Monitor retired on the reference Pi).** One server process collects 13 metrics into SQLite, checks them against alert rules, sends webhook notifications, and serves a live dashboard, an Alerts page, a History page with zoomable charts from 1 hour to 1 year, an Updates page that says what `apt-get upgrade` would install, a password-protected Settings page, a REST API and a WebSocket feed. Packaging (apt, tarball, Docker, automatic releases) is done, and from 0.7.0 a fresh install serves HTTPS from a certificate authority made for that Pi. Verified on a Raspberry Pi 2 (armv7l), including a year-equivalent database. See [Roadmap](#roadmap).
+> **Status: in daily use, still before 1.0.** All [roadmap](#roadmap) phases are done, and PiPulse has replaced RPi-Monitor on the reference Pi, a Raspberry Pi 2 (armv7l).
 
 ## Why
 
@@ -25,42 +25,43 @@ The original RPi-Monitor is a great idea that hasn't had a real release since 20
 
 ## Features
 
-**Planned for v1** (feature parity with the original, where it still makes sense):
+- Live dashboard over WebSocket: CPU load, frequency and voltage, throttling, temperature, memory, swap, disk and boot partition usage, network throughput
+- History page with zoomable charts from 1 hour to 1 year, kept in an embedded database with configurable retention
+- Alerts with hysteresis, edited in the browser or in a rules file, with acknowledging and webhook notifications (e.g. [Apprise](https://github.com/caronc/apprise))
+- HTTPS by default on a fresh install, from a certificate authority made for that Pi, or your own certificate
+- Sign-in: changing settings or rules needs an admin password (without one the dashboard is read-only), and reading can be protected too
+- Updates page that says what `apt-get upgrade` would install (it installs nothing itself)
+- REST API with JSON for current and historical metrics
+- A native systemd service (apt or tarball) and an official Docker image
 
-- Live status dashboard (CPU load/frequency/voltage, memory, network throughput, disk/SD card usage, temperature)
-- Historical charts with zoom, backed by a real embedded database instead of fixed-size RRD files
-- Live updates over WebSocket instead of polling
-- Configurable alerting with hysteresis (raise/cancel thresholds), notifying over webhook (e.g. [Apprise](https://github.com/caronc/apprise)); shell-command and log actions are not built yet
-- JSON export of current and historical metrics
-- Read-only mode for write-constrained storage (SD cards, etc.)
-- Both a native systemd service and an official Docker image
+**Not built:**
+
+- Shell-command and log alert actions (webhook only)
+- A read-only mode for write-constrained storage
+- A Prometheus `/metrics` endpoint or a Grafana data-source path
+- Multi-device or fleet dashboards (PiPulse targets a single device)
 
 **Deliberately not carried over from the original:**
 
-- Config-file-authored, `eval`'d presentation logic — replaced by typed collector plugins and a real frontend
-- The long tail of board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc, …) — PiPulse targets a single device; the plugin model leaves room to add boards back later if needed
-- Bundled addons (Shellinabox, Hawkeye, etc.) — a documented extension point may replace these later
-
-**On the roadmap, not blocking v1:**
-
-- A `/metrics` endpoint in Prometheus text format, and/or a Grafana data-source path, for anyone who wants to plug this into an existing observability stack
-- Multi-device / fleet dashboards (out of scope for v1, which targets a single device)
+- Config-file-authored, `eval`'d presentation logic, replaced by typed collector plugins and a real frontend
+- The long tail of board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc, …); the plugin model leaves room to add boards later
+- Bundled addons (Shellinabox, Hawkeye, etc.)
 
 ## Tech stack
 
-| Layer | Choice | Version |
-| --- | --- | --- |
-| Runtime | Node.js | >=22.13.0 (needed for built-in `node:sqlite` without a flag); the packages and the Docker image bring their own: 22.23.3 on 32-bit ARM, 24.21.0 on 64-bit |
-| Language | TypeScript, end to end | 6.0.3 |
-| Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs | 5.33.13 |
-| Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode — no native module, no install step | Node built-in |
-| API | [Fastify](https://fastify.io/) (HTTP + WebSocket) | 5.12.5 |
-| Frontend | Preact + Vite (React-compatible, ~3 KB runtime), [uPlot](https://github.com/leeoniya/uPlot) for the charts | Preact 11.0.1, Vite 8.3.0, uPlot 1.6.32 |
-| Testing | Vitest (unit and integration; happy-dom for the dashboard), Playwright Test (end-to-end, Chromium only, in CI), StrykerJS mutation testing (run by hand) | Vitest 5.0.5, Playwright 1.64.0 |
-| Lint/format | ESLint (flat config, typescript-eslint) + Prettier | ESLint 10.13.0, typescript-eslint 8.72.0, Prettier 3.9.10 |
-| Deployment | apt package and release tarball (systemd service, bundled Node), **and** a 64-bit Docker image (`linux/arm64`, `linux/amd64`, on Debian 12, scanned for known vulnerabilities monthly and after each release) | — |
+| Layer | Choice |
+| --- | --- |
+| Runtime | Node.js >=22.13.0 (needed for built-in `node:sqlite` without a flag); the packages and the Docker image bring their own: Node 22 on 32-bit ARM, Node 24 on 64-bit |
+| Language | TypeScript, end to end |
+| Metrics collection | [`systeminformation`](https://systeminformation.io/) + Pi-specific shell-outs |
+| Storage | SQLite via built-in `node:sqlite` (`DatabaseSync`), WAL mode: no native module, no install step |
+| API | [Fastify](https://fastify.io/) (HTTP + WebSocket) |
+| Frontend | Preact + Vite (React-compatible, ~3 KB runtime), [uPlot](https://github.com/leeoniya/uPlot) for the charts |
+| Testing | Vitest (unit and integration; happy-dom for the dashboard), Playwright Test (end-to-end, Chromium only, in CI), StrykerJS mutation testing (run by hand) |
+| Lint/format | ESLint (flat config, typescript-eslint) + Prettier |
+| Deployment | apt package and release tarball (systemd service, bundled Node), and a 64-bit Docker image (`linux/arm64`, `linux/amd64`, on Debian 12, scanned for known vulnerabilities monthly and after each release) |
 
-Dependency versions above are what `package-lock.json` resolved on 2026-10-19 (`npm ci`, `npm audit`: 0 vulnerabilities); Renovate keeps them current, so `package.json` and `package-lock.json` have the exact ranges. TypeScript stays on 6.x until `typescript-eslint` supports TypeScript 7.
+Exact versions are in `package.json` and `package-lock.json`; Renovate keeps them current. TypeScript stays on 6.x until `typescript-eslint` supports TypeScript 7.
 
 ## Install
 
@@ -70,9 +71,9 @@ On a Raspberry Pi (or any Debian-based Linux), Pi 2 and newer, 32- or 64-bit:
 curl -fsSL https://github.com/seviyon/PiPulse/releases/latest/download/install.sh | sudo sh
 ```
 
-That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js. It runs as the `pipulse` service on port **8889** (it can run next to RPi-Monitor, which uses 8888). New releases arrive with `sudo apt upgrade`.
+That adds PiPulse's signed apt repository and installs the `pipulse` package, which carries its own Node.js. It runs as the `pipulse` service on port **8889** (it can run next to RPi-Monitor, which uses 8888). New releases arrive with `sudo apt update && sudo apt upgrade`.
 
-A fresh install serves **HTTPS** from a certificate authority made for this Pi: the installer prints its fingerprint, and you trust it once on each device ([HTTPS](docs/https.md)). An upgrade stays on plain HTTP until you run `sudo pipulse tls enable`. Settings live in `/etc/pipulse/pipulse.env`.
+A fresh install serves **HTTPS** from a certificate authority made for this Pi: the installer prints its fingerprint, and you trust it once on each device ([HTTPS](docs/https.md)). An install upgraded from before 0.7.0 stays on plain HTTP until you run `sudo pipulse tls enable`. Settings live in `/etc/pipulse/pipulse.env`.
 
 More: [reading the script first, the tarball, remove and Node support](docs/install.md), and [Docker](docs/docker.md).
 
@@ -113,4 +114,4 @@ Inspired by [RPi-Monitor](https://github.com/RPi-Monitor/RPi-Monitor) by Xavier 
 
 ## License
 
-MIT — see [LICENSE](LICENSE). *(Confirm this is the license you want before publishing; since no GPLv3 code from the original is being reused, you're free to pick any license, but it's worth a deliberate choice rather than a default.)*
+MIT, see [LICENSE](LICENSE).
