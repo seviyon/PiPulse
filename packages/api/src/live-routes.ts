@@ -5,6 +5,7 @@ import { openAlerts } from '@pipulse/alerts';
 import { getLatest, type PiPulseDb } from '@pipulse/storage';
 import type { Notice } from './alert-routes.js';
 import type { registerAuth } from './auth-routes.js';
+import { clientKey } from './auth.js';
 import type { Feed } from './feed.js';
 import { isAllowedOrigin } from './origin.js';
 import type { ServerOptions } from './options.js';
@@ -13,15 +14,24 @@ import type { ServerOptions } from './options.js';
 const MAX_CLIENT_FRAME_BYTES = 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
+// A dashboard tab holds one socket for as long as it is open, and the server refuses connections
+// over DEFAULT_LIMITS.maxConnections: without these, one device could hold them all.
+const DEFAULT_MAX_LIVE_CLIENTS = 64;
+const DEFAULT_MAX_LIVE_CLIENTS_PER_ADDRESS = 16;
+
+type LiveLimitName =
+  'heartbeatMs' | 'maxBufferedBytes' | 'maxLiveClients' | 'maxLiveClientsPerAddress';
 
 /** The WebSocket limits in force: what the options say, else the defaults. */
-export function liveLimits(options: Pick<ServerOptions, 'heartbeatMs' | 'maxBufferedBytes'>): {
-  heartbeatMs: number;
-  maxBufferedBytes: number;
-} {
+export function liveLimits(
+  options: Pick<ServerOptions, LiveLimitName>
+): Record<LiveLimitName, number> {
   return {
     heartbeatMs: options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS,
-    maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+    maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
+    maxLiveClients: options.maxLiveClients ?? DEFAULT_MAX_LIVE_CLIENTS,
+    maxLiveClientsPerAddress:
+      options.maxLiveClientsPerAddress ?? DEFAULT_MAX_LIVE_CLIENTS_PER_ADDRESS
   };
 }
 
@@ -40,15 +50,28 @@ export interface LiveDeps {
 export function registerLiveRoutes(
   app: FastifyInstance,
   db: PiPulseDb,
-  options: Pick<
-    ServerOptions,
-    'live' | 'alertFeed' | 'alertRules' | 'heartbeatMs' | 'maxBufferedBytes'
-  >,
+  options: Pick<ServerOptions, 'live' | 'alertFeed' | 'alertRules' | LiveLimitName>,
   { auth, notices, allowedOrigins }: LiveDeps
 ): void {
   const live = options.live;
   if (live) {
-    const { heartbeatMs, maxBufferedBytes } = liveLimits(options);
+    const { heartbeatMs, maxBufferedBytes, maxLiveClients, maxLiveClientsPerAddress } =
+      liveLimits(options);
+    // Sockets held now, by address (an IPv6 host counts by its /64), until each has closed.
+    const held = new Map<string, number>();
+    let total = 0;
+    const take = (address: string): (() => void) | undefined => {
+      const mine = held.get(address) ?? 0;
+      if (total >= maxLiveClients || mine >= maxLiveClientsPerAddress) return undefined;
+      total++;
+      held.set(address, mine + 1);
+      return () => {
+        total--;
+        const left = held.get(address)! - 1;
+        if (left === 0) held.delete(address);
+        else held.set(address, left);
+      };
+    };
 
     // Clients only listen: any frame beyond a few bytes is refused (close code 1009) instead of
     // being buffered, as ws's default of 100 MiB would, once per connection.
@@ -73,6 +96,15 @@ export function registerLiveRoutes(
           }
         },
         (socket, request) => {
+          // First, so that a socket still waiting to finish its close below counts too. Dropped
+          // without a closing handshake, which a client could leave unanswered; the dashboard
+          // reconnects with its usual backoff.
+          const release = take(clientKey(request.ip));
+          if (!release) {
+            socket.terminate();
+            return;
+          }
+          socket.on('close', release);
           if (auth.protectReads && !auth.signedIn(request)) {
             socket.close(4401, 'sign in required');
             return;
