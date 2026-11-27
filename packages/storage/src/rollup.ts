@@ -291,11 +291,19 @@ export function seriesRowsExceed(
   resolution: Resolution,
   max: number
 ): boolean {
-  const sql =
+  const { n } = (
     resolution === 'raw'
-      ? 'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? LIMIT ?)'
-      : `SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics_rollup WHERE metric = ? AND resolution = '${resolution}' AND ts BETWEEN ? AND ? LIMIT ?)`;
-  const { n } = db.prepare(sql).get(metric, from, to, max + 1) as { n: number };
+      ? db
+          .prepare(
+            'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics WHERE metric = ? AND ts BETWEEN ? AND ? LIMIT ?)'
+          )
+          .get(metric, from, to, max + 1)
+      : db
+          .prepare(
+            'SELECT COUNT(*) AS n FROM (SELECT 1 FROM metrics_rollup WHERE metric = ? AND resolution = ? AND ts BETWEEN ? AND ? LIMIT ?)'
+          )
+          .get(metric, resolution, from, to, max + 1)
+  ) as { n: number };
   return n > max;
 }
 
