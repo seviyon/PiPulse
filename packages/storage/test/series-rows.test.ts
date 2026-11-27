@@ -40,6 +40,11 @@ describe('seriesRowsExceed', () => {
     expect(seriesRowsExceed(db, 'a', 7, 100, '1h', 0)).toBe(false);
   });
 
+  it('treats the resolution as a value, never as SQL', () => {
+    const hostile = "1m' OR '1'='1" as '1m';
+    expect(seriesRowsExceed(db, 'a', 0, 100, hostile, 0)).toBe(false);
+  });
+
   it('counts raw readings when asked for raw', () => {
     expect(seriesRowsExceed(db, 'a', 0, 100, 'raw', 2)).toBe(false);
     expect(seriesRowsExceed(db, 'a', 0, 100, 'raw', 1)).toBe(true);
