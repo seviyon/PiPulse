@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.version.outputs.version }}
-      sha: ${{ steps.version.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -59,7 +58,6 @@ jobs:
           sh packaging/next-version.sh --check "$v"
           if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then echo "v$v already exists"; exit 1; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build:
     # No secrets, read-only token not kept in the checkout: npm and the build run here.
@@ -70,12 +68,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.version.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.x
-          cache: npm
+          # No cache: what goes into a release is fetched fresh, not taken from earlier runs.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq gpgv lintian >/dev/null
       - run: npm ci --ignore-scripts
       - name: Build and test
@@ -118,7 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.version.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
@@ -162,7 +160,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.version.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: The version is still free
         # `version` picked it before a release ahead of this one in the queue finished.
@@ -229,7 +227,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           V: ${{ needs.version.outputs.version }}
-          SHA: ${{ needs.version.outputs.sha }}
+          SHA: ${{ github.sha }}
         run: |
           gh release create "v$V" --target "$SHA" --title "PiPulse $V" --generate-notes \
             out/pipulse-"$V".tar.gz out/pipulse_"$V"_*.deb out/install.sh out/compose.yaml out/SHA256SUMS out/SHA256SUMS.asc
