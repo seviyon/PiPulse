@@ -43,7 +43,12 @@ jobs:
           INPUT: ${{ inputs.version }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: |
+          # A manual run takes any branch. publish is refused there by the release environment,
+          # but image would already have pushed under a release's tag. This stops a mistake, not
+          # someone with write access, who can change this file on their own branch.
+          if [ "$REF" != refs/heads/main ]; then echo "releases run from main only, not $REF"; exit 1; fi
           if [ -n "$INPUT" ]; then v=$INPUT; else
             # Fetched on its own line: if the API call fails the step fails, instead of reading as "no release".
             pulls=$(gh api "repos/$REPO/commits/$SHA/pulls")
