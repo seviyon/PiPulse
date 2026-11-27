@@ -64,6 +64,37 @@ const input = (over: Partial<CheckInput>): CheckInput => ({
   ...over
 });
 
+describe('rules with no `for` or `clearAfter`', () => {
+  const instant = { ...hot, forMs: 0, clearAfterMs: 0 };
+  const high: Rule = instant;
+  const { atLeast: _atLeast, ...rest } = instant;
+  const low: Rule = { ...rest, atMost: 5 };
+
+  it.each([
+    ['at least, on the limit', high, 80, true],
+    ['at least, above it', high, 81, true],
+    ['at least, below it', high, 79, false],
+    ['at most, on the limit', low, 5, true],
+    ['at most, below it', low, 4, true],
+    ['at most, above it', low, 6, false]
+  ] as const)('decide on the newest reading: %s', (_name, rule, value, breached) => {
+    const latest = { ts: NOW, value };
+    expect(evaluate(rule, input({ latest }))).toEqual(
+      breached ? { action: 'raise', value } : { action: 'none' }
+    );
+    expect(evaluate(rule, input({ latest, open: true }))).toEqual({
+      action: breached ? 'none' : 'clear'
+    });
+  });
+
+  it('believe a reading two polls old and nothing older, or nothing at all', () => {
+    const aged = (age: number) => input({ latest: { ts: NOW - age, value: 90 } });
+    expect(evaluate(high, aged(2 * I))).toEqual({ action: 'raise', value: 90 });
+    expect(evaluate(high, aged(2 * I + 1))).toEqual({ action: 'none' });
+    expect(evaluate(high, input({ latest: null, open: true }))).toEqual({ action: 'none' });
+  });
+});
+
 describe('threshold rules', () => {
   it('raise once every reading over `for` is at or past the threshold', () => {
     expect(

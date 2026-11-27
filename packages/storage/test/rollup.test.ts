@@ -230,6 +230,34 @@ describe('runHousekeeping pruning', () => {
     expect(rawCount()).toBe(1);
   });
 
+  it('keeps minutes until their day is rolled up, even when their hours already are', () => {
+    insertSample(db, { ts: T0, metric: 'cpu_load', value: 4 });
+    const policy = { ...DEFAULT_RETENTION, '1m': HOUR };
+
+    runHousekeeping(db, T0 + 3 * HOUR, policy);
+
+    expect(rollups('1h').map((r) => r.ts)).toEqual([T0]);
+    expect(rollups('1m').map((r) => r.ts)).toEqual([T0]);
+
+    runHousekeeping(db, T0 + DAY + HOUR, policy);
+
+    expect(rollups('1d').map((r) => [r.ts, r.avg, r.count])).toEqual([[T0, 4, 1]]);
+    expect(rollups('1m')).toEqual([]);
+  });
+
+  it('does not recount a minute from the raw samples that pruning left of it', () => {
+    insertSample(db, { ts: T0, metric: 'cpu_load', value: 10 });
+    insertSample(db, { ts: T0 + 30_000, metric: 'cpu_load', value: 20 });
+    // At T0 + 2 min the raw cutoff falls between the two samples.
+    const policy = { ...DEFAULT_RETENTION, raw: 2 * MIN - 15_000 };
+
+    runHousekeeping(db, T0 + 2 * MIN, policy);
+    expect(rawCount()).toBe(1);
+    runHousekeeping(db, T0 + 2 * MIN, policy);
+
+    expect(rollups('1m')).toEqual([{ ts: T0, avg: 15, min: 10, max: 20, count: 2 }]);
+  });
+
   it('applies each rollup level its own retention and keeps daily forever', () => {
     const start = T0 - 400 * DAY;
     insertSample(db, { ts: start, metric: 'cpu_load', value: 1 });

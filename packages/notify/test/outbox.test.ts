@@ -91,6 +91,14 @@ describe('outbox', () => {
     expect(headOf(db, 'ntfy')).toMatchObject({ event: 'cleared', alertId: 7 });
   });
 
+  it("drops an alert's pending clears for every webhook asked for", () => {
+    insertNotification(db, row({ event: 'cleared', alertId: 7 }));
+    insertNotification(db, row({ event: 'cleared', alertId: 7, webhookId: 'ntfy' }));
+    insertNotification(db, row({ event: 'cleared', alertId: 7, webhookId: 'other' }));
+    expect(deletePendingClears(db, 7, ['apprise', 'ntfy'])).toBe(2);
+    expect(headOf(db, 'other')).toMatchObject({ event: 'cleared', alertId: 7 });
+  });
+
   it('fails pending rows of removed webhooks and prunes finished rows', () => {
     insertNotification(db, row({ webhookId: 'gone' }));
     insertNotification(db, row());
