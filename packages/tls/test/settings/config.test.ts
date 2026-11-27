@@ -34,6 +34,25 @@ describe('parseState', () => {
     expect(() => parseState(text)).toThrow(TlsConfigError);
     expect(() => parseState(text)).toThrow(message);
   });
+
+  it('refuses a key repeated under another spelling', () => {
+    const text = '{"version":1,"mode":"legacy-http","m\\u006fde":"https"}';
+    expect(() => parseState(text)).toThrow(/duplicate key/);
+  });
+
+  it.each([
+    ['a value spelled like a key', '{"version":1,"mode":"version"}', /mode must be/],
+    ['keys that start with a colon', '{"version":"v",":b":"w",":c":1}', /unknown key: :b/]
+  ])('takes only keys for keys: %s', (_name, text, message) => {
+    expect(() => parseState(text)).toThrow(message);
+  });
+
+  it('reads a long string full of escaped quotes without stalling', () => {
+    const text = `{"x":"${'\\"!'.repeat(40_000)}"}`;
+    const started = performance.now();
+    expect(() => parseState(text)).toThrow(/unknown key: x/);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
 });
 
 describe('readTlsConfig mode resolution', () => {
