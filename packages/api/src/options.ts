@@ -50,6 +50,9 @@ export interface ServerOptions {
   heartbeatMs?: number;
   /** Drop a /api/live client once this many bytes are queued unsent to it. */
   maxBufferedBytes?: number;
+  /** /api/live sockets open at once, in all and from one address; the next one is dropped. */
+  maxLiveClients?: number;
+  maxLiveClientsPerAddress?: number;
   /**
    * Browser origins allowed to open /api/live besides the server's own
    * host (e.g. "https://pipulse.lan"). Browsers don't apply the same-origin

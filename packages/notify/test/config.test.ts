@@ -181,6 +181,20 @@ describe('parseNotifyConfig', () => {
     expect(() => parseNotifyConfig({ name: 'notify.json', text: '{' })).toThrow(
       /notify\.json is not valid JSON/
     );
+    // Node's message quotes the text around a mistake, which here is part of a token.
+    for (const text of [
+      '{"webhooks":[{"headers":{"Authorization":Bearer s3cr3t-t0ken}}]}',
+      '{"webhooks":[{"url":"https://h/s3cr3t","id":nope}]}',
+      '{"webhooks":[{"headers":{"Authorization": \'Bearer s3cr3t\'}}]}'
+    ]) {
+      expect(() => parseNotifyConfig({ name: 'notify.json', text })).toThrow(
+        new Error('notify.json is not valid JSON')
+      );
+    }
+    // Where Node says where the mistake is, that much is kept.
+    expect(() => parseNotifyConfig({ name: 'notify.json', text: '{\n"a": "s3cr3t" "b"}' })).toThrow(
+      new Error('notify.json is not valid JSON (line 2 column 15)')
+    );
     expect(() => parseNotifyConfig({ name: 'notify.json', text: '{}' })).toThrow(
       /must be an object with a "webhooks" array/
     );

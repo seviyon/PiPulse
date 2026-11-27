@@ -30,6 +30,8 @@ A change applies at the engine's next check, within 15 seconds, and is pushed to
 
 The server accepts client frames of at most 1 KiB (it only needs pings). With `PIPULSE_PROTECT_READS=true` an unauthenticated socket is closed with code `4401`, and so is an open one when its session ends (at the next heartbeat).
 
+At most 64 `/api/live` sockets are open at once, 16 from one address (an IPv6 /64 counts as one); the server drops the next one without a closing handshake.
+
 ## Responses
 
 - Every response carries a `Content-Security-Policy` that allows only the dashboard's own files (`default-src 'none'`, scripts, styles, fonts and connections from `'self'`, `frame-ancestors 'none'`), plus `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. Another page cannot frame the dashboard.

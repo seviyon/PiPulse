@@ -227,7 +227,11 @@ export function parseNotifyConfig(file: { name: string; text: string }): Webhook
   try {
     json = JSON.parse(file.text);
   } catch (error) {
-    throw new NotifyConfigError(`${file.name} is not valid JSON: ${(error as Error).message}`);
+    // Never Node's message itself: it quotes the text around the mistake, which here can be a
+    // token in a URL or header. Only the position, when it gives one, is passed on.
+    const at = /\(line (\d+) column (\d+)\)$/.exec((error as Error).message);
+    const where = at ? ` (line ${at[1]} column ${at[2]})` : '';
+    throw new NotifyConfigError(`${file.name} is not valid JSON${where}`);
   }
   const list =
     typeof json === 'object' && json !== null && !Array.isArray(json)
