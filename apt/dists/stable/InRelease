@@ -1,0 +1,58 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: armhf arm64 amd64
+Codename: stable
+Components: main
+Date: Fri, 27 Nov 2026 19:59:35 +0000
+Label: PiPulse
+Origin: PiPulse
+Suite: stable
+MD5Sum:
+ b0d281e3e0a5ca9df16028aa6ea239d1              150 Release
+ a85e45a9f345fa27281ac50ed30c34b9             2733 main/binary-amd64/Packages
+ ada294fd6c2403981e27d2df32d715dd             1040 main/binary-amd64/Packages.gz
+ dc95bd5e5cd66a8bfa54e75648c6dfde             2733 main/binary-arm64/Packages
+ 4cf20d368be2719412b735e8c45ca7eb             1037 main/binary-arm64/Packages.gz
+ f7dff80c1f36ca39c4c22e25ff764964             2733 main/binary-armhf/Packages
+ 240ee570252782a027ad2fc1a3199656             1038 main/binary-armhf/Packages.gz
+SHA1:
+ 8b68618199ba1a6b24d5c58f38018967bb6da666              150 Release
+ c1cfcd0f1269c7428287a821785e98f35c6ea2eb             2733 main/binary-amd64/Packages
+ bf2a6c7da40d61e0efa6f0b4b61839d6a0c4bb4a             1040 main/binary-amd64/Packages.gz
+ 5efacabf7c28f42536456808e58f1e1bcfb3c659             2733 main/binary-arm64/Packages
+ 0f89b23abdb6297ebf2d5aa4bf5b8965b9e71127             1037 main/binary-arm64/Packages.gz
+ 7f6785a8fd127fef69871a209745aba0c33f90d4             2733 main/binary-armhf/Packages
+ 82aba3f869ae04c443bb0c659e8cd7d1c0b9db1a             1038 main/binary-armhf/Packages.gz
+SHA256:
+ 2f58e2498ddd50a4dffb48f0292c53afe49d9433cd6cc7a494a70d8ca5420097              150 Release
+ 4234cfca36fb3e0791ec290841e41dc6fde3a29f3b0772b5a7135f40a556db9f             2733 main/binary-amd64/Packages
+ f415c13661b9aaff1d0a5889816bab5cfc97c4eb2fd4f8314637dd4e237a65ff             1040 main/binary-amd64/Packages.gz
+ c6fdba27efba8d523748088b48e5c2739a781af1e13662251cf1f1995dc8d621             2733 main/binary-arm64/Packages
+ bc40dec877f017060283e1282b0281b4b05ed5f3b34d24c4d30c8f1e51332184             1037 main/binary-arm64/Packages.gz
+ 66a61eab4dcb2de46af09c8183a2a5c64a760433926277e685af04f492761008             2733 main/binary-armhf/Packages
+ d352230df4a988ef5a3bba54c48a75b06af398375d1c50ab13cf893909cc6935             1038 main/binary-armhf/Packages.gz
+SHA512:
+ d2144ac677cf13d86cfdd692f7c67fd9b2050dff1d8aab196541f1d641843bf74e32798dd25842b528c446b7aad140a4cbb9b665e0dc34358839d585a61fce5a              150 Release
+ 9ea45cf0e68dfd91698767db8c3cb83e1b23deee63c271a66587e28a4f337e29435a5f3ef1c30da27d9ae5d8c0ebfb008752ae039fb95177a758c70e50a70299             2733 main/binary-amd64/Packages
+ 1c9c3a8264c9f1902ab0dbe42bb6fdba626990cf413eeda699b654cf968afc900ee88d4edb60705509d8a7793dfbc097f75f1e1f54bdf0bb93d2b5003baacbf5             1040 main/binary-amd64/Packages.gz
+ 352cacc9f16d871be5015e88cfc8a7b6066e9dab65b8981b9df1e8febb4990bb023825ed7dfb6706a5392235706e40bf494f2cbc6e4996c809f6d044341a4612             2733 main/binary-arm64/Packages
+ 6a4afb6f1fb2cee204bf68ea0d33bcc046b8a4bc42cbeb3157c6a80f9fd004a52d7a819a37493f9e81953573a4eafe1b1d26930ccbf11464a827c4ed1f545e50             1037 main/binary-arm64/Packages.gz
+ ed7718417ae9983ef2150b39fede122cc6c02cd774ddee64d324a20b427c6441f900b95b57e8cb341f2b24a4b71d957355dc22984ed1b263920bf103f7ae1882             2733 main/binary-armhf/Packages
+ f2b30ac6f18a284138102af6705f370aedd65bad743328d734c7bdd0e95f5d38bca4cda946223df49cdad77a1515404a23b61662a57be99a7d3fcc9eb853ccc5             1038 main/binary-armhf/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEjXxETvlI2xC/RvHX3AzczbYFTkoFAmsJ4ScACgkQ3AzczbYF
+Tkp9aQ/8CgVvxTgs/eM+PirXh8iNCiz7DEH1RUJbVxXTEdA96O7khXtdYvcH3BSz
+dFXIgLWBvAgv8cHcjkU2ArHBgzPw0L/hZpS+XI6B7I9Sbdrg8als1nGMxuIVXtsn
+pmQHGY3B109s3KFx3HlDpYtmtPxruOA7aOKCru0+0njN4zWAg1jhhmdF0UrEoBT0
+39ToxLQ5jIIRWALe+nt5iCjbYCd0R6Jm1krGBh4Lo/RHEWzhE5vdRD2/slH0bQOW
+Ufb1hEJ6NBV3v24V8WzCULY/NeVqzJ/t4NZKYlNO3Ro/NYYP8cWpg99Zwtgy+GPp
+qItxeD7gaM3GtyrjjyNojW0IulTpLnjnTvmssAPV54rv0DK7tdxfWG8ChASHQxY8
+z4w+XBv2IsZw6MMKT6L/LglVTLTcrQpQw70HLa6eQnope0wDQbsur63o4BuzVSNR
+AXIHl+Qsk7imq7nESE0vI4IZNfceTwYfLzmVa8WjIDWEKI5d1lymT3tDdDK1/RWm
+s+dRY+DLyIYP9BDz7wz9SPzqi90hoW3TQcsBTwzF6Xj0GCEa0FHCONcgZRrI/oXD
+6A0VIBYIOxbTUMHgYqYdgY5zcZ53uI4N6UDPrktSXrj135yoY5JQYN4MFYuHN2Yw
+EEE8Qan4lSkWd5Ge0869X4N9AoCj6Xvw9NSCamgE/9f2haxcNMs=
+=ADcu
+-----END PGP SIGNATURE-----
