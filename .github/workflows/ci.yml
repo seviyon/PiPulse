@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Pull request code runs here: the workflow token may only read.
+permissions:
+  contents: read
+
 # A new push to a pull request cancels its older run. Runs on main get a group per commit: in a
 # shared group GitHub drops an older pending run even when cancel-in-progress is false.
 concurrency:
@@ -20,6 +24,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -27,8 +33,9 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      # No dependency install scripts, as in the release build.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Lint
         run: npm run lint
@@ -61,6 +68,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Shellcheck the packaging scripts
         run: shellcheck packaging/*.sh packaging/pipulse packaging/deb/preinst packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/test/*.sh
 
@@ -80,9 +89,11 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Tools the tests need
         run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates adduser iproute2 procps python3 lintian gnupg apt-utils openssl strace systemd jq >/dev/null
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       # Before the packaging tests: they leave PiPulse installed, and the TLS commands read
       # /etc/pipulse/pipulse.env.
@@ -120,9 +131,11 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Tools the test needs
         run: apt-get update -qq && apt-get install -y -qq gpgv curl xz-utils ca-certificates gnupg jq >/dev/null
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Release verification test
         run: sh packaging/test/run.sh verify-release
@@ -131,6 +144,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           # Docker Hub: anonymous pulls share a per-address limit that the runners often exhaust.
@@ -159,6 +174,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.x
@@ -166,8 +183,8 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             e2e/package-lock.json
-      - run: npm ci
-      - run: npm ci --prefix e2e
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix e2e --ignore-scripts
       - run: npm run build
       - name: Playwright version
         id: pw
