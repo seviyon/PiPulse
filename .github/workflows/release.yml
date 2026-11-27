@@ -180,6 +180,13 @@ jobs:
         env:
           V: ${{ needs.version.outputs.version }}
         run: sh packaging/verify-release.sh "$V" out
+      - name: The apt repository's earlier packages
+        # From the published releases, each checked against its signed SHA256SUMS, never from the
+        # gh-pages branch: whatever lands in the repository here is signed below.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.version.outputs.version }}
+        run: sh packaging/previous-debs.sh "$V" previous 2
       - name: Import the signing key
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
@@ -195,14 +202,15 @@ jobs:
           V: ${{ needs.version.outputs.version }}
           APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
         run: |
-          git fetch origin gh-pages:gh-pages 2>/dev/null || true
-          git worktree add pages gh-pages 2>/dev/null || git worktree add --orphan -b gh-pages pages
-          sh packaging/apt-publish.sh pages/apt 3 out/pipulse_"$V"_*.deb
+          # Built from nothing each release: nothing already on gh-pages is read or carried over.
+          git worktree add --orphan -b pages-new pages
+          set -- out/pipulse_"$V"_*.deb
+          for deb in previous/*.deb; do [ ! -e "$deb" ] || set -- "$@" "$deb"; done
+          sh packaging/apt-publish.sh pages/apt 3 "$@"
           touch pages/.nojekyll # serve the apt files as they are
           # One fresh commit each release, force-pushed: git history would otherwise keep
           # every .deb ever published (each carries Node), growing the branch without end.
           cd pages
-          git checkout -q --orphan pages-new
           git add -A
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -qm "apt: pipulse $V"
           git push --force origin HEAD:gh-pages
