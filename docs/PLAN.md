@@ -1,6 +1,6 @@
 # RPi-Monitor Modernization Plan
 
-2026-09-17 · @Someone
+Written 2026-09-17, before the build; brought up to date 2026-11-27.
 
 ## What RPi-Monitor v2.13 actually is
 
@@ -57,18 +57,22 @@ What makes a 2026 rewrite worthwhile rather than a patch job:
 | Frontend      | Preact + Vite, built to static assets served by the API    | React-compatible (reuses your React/JSX experience) at \~3 KB runtime — see "Frontend alternatives" below; no server-side rendering needed for a single-device dashboard                            |
 | Charts        | A maintained canvas/SVG library (e.g. uPlot or Recharts)   | Replaces Flot; better performance and touch support on a Pi-class CPU, no jQuery dependency                                                                                                         |
 
-Suggested repo layout inside `PiPulse` (a TypeScript workspace, e.g. npm/pnpm workspaces):
+Repo layout, as built (npm workspaces):
 
 ```
 PiPulse/
   packages/
+    storage/     # SQLite schema, migrations, rollups, retention
     collector/   # metric plugins + scheduler
-    storage/     # SQLite schema, migrations, query helpers
+    alerts/      # rules and the alert engine
+    notify/      # webhook queue and delivery
+    tls/         # certificates, the per-Pi CA, the `pipulse tls` command
     api/         # Fastify HTTP + WebSocket server
     web/         # Preact + Vite dashboard
-  deploy/
-    systemd/     # unit file, install script
-    docker/      # Dockerfile, compose.yml
+  packaging/     # installer, systemd units, .deb, tarball, apt repository
+  e2e/           # Playwright tests (standalone, not a workspace)
+  Dockerfile
+  compose.yaml
 ```
 
 ## Data collection & storage design
@@ -77,7 +81,7 @@ PiPulse/
 
 - Standard metrics (CPU load/frequency, memory, network throughput, disk/SD card usage, temperature) come from the `systeminformation` package instead of hand-parsing `/proc`.
 - Pi-specific metrics (`vcgencmd measure_volts`, throttling flags, GPIO/sensor reads) stay as small shell-out plugins, same idea as the original but isolated and typed instead of a regexp + postprocess string.
-- Alerts become a rules engine reading the same values (`condition`, `raiseAfter`, `cancelAfter`, `resendEvery` — same hysteresis concept as today's `maxalertduration`/`cancelvalidation`/`resendperiod`) with sandboxed actions (webhook, shell, log) instead of raw eval'd strings. Since you already run **Apprise** in your homelab, a webhook-to-Apprise action would plug straight into your existing notification setup.
+- Alerts are a rules engine reading the same values (one condition per rule, with `for`/`clearAfter` hysteresis, the same concept as today's `maxalertduration`/`cancelvalidation`) instead of raw eval'd strings. The one action is a webhook, which plugs into **Apprise**. Shell and log actions and resending (`resendperiod`) are **not built**.
 
 **Storage schema** (SQLite, WAL mode for concurrent collector-writes / API-reads):
 
@@ -98,6 +102,8 @@ CREATE TABLE metrics_rollup (
   PRIMARY KEY (metric, resolution, ts)
 );
 ```
+
+The block above is the first sketch; the real schema is in `packages/storage/src/migrations.ts` (rollup rows also carry a `count`, and later migrations add more tables).
 
 A scheduled job downsamples raw rows into `metrics_rollup` and prunes old raw data — the same spirit as RRD's rollups, but explicit, queryable, and tunable rather than fixed at file-creation time.
 
@@ -143,13 +149,13 @@ Native installs run as an unprivileged `pipulse` user (in `video`) from `/opt/pi
 | Load averages (1/5/15 min) and cumulative network totals since boot   | Deliberately reshaped, not ported 1:1: only the 1-minute load is collected (`load_1`, every 30 s), charted on History beside CPU load with the core count marked, and kept off the live page; 5/15-min are smoothings of it. Totals since boot reset on reboot, so History instead shows bytes moved in the selected range, rebuilt from the stored rates (no extra collection) |
 | Board-specific templates (Allwinner, OrangePi, sunxi, xbian, raspbmc) | Not carried over 1:1 — scope is your Pi only; the plugin model leaves the door open later                                                                                                                                                                                                                                                                                       |
 | Config-driven KPI/alert definitions                                   | TypeScript plugin + rules files, no free-text `eval`                                                                                                                                                                                                                                                                                                                            |
-| Alerting with hysteresis + raise/cancel commands                      | Rules engine, same hysteresis concept, sandboxed actions (webhook/shell/log)                                                                                                                                                                                                                                                                                                    |
-| Read-only mode                                                        | Config flag disables the SQLite writer; API still serves last-known values                                                                                                                                                                                                                                                                                                      |
+| Alerting with hysteresis + raise/cancel commands                      | Rules engine, same hysteresis concept, webhook action; shell and log actions not built                                                                                                                                                                                                                                                                                          |
+| Read-only mode                                                        | Not built; retention keeps the database small                                                                                                                                                                                                                                                                                                                                   |
 | JSON export of metrics                                                | REST endpoints kept and expanded                                                                                                                                                                                                                                                                                                                                                |
-| SNMP integration                                                      | Open question — see next section; not in v1 unless you confirm you need it                                                                                                                                                                                                                                                                                                      |
-| Addons (Shellinabox, Hawkeye, top3, about)                            | Dropped from core; a documented extension point (iframe/plugin slot) replaces ad hoc eval'd JS                                                                                                                                                                                                                                                                                  |
+| SNMP integration                                                      | Not built; would be reconsidered only if something needs it                                                                                                                                                                                                                                                                                                                     |
+| Addons (Shellinabox, Hawkeye, top3, about)                            | Dropped; no extension point built                                                                                                                                                                                                                                                                                                                                               |
 | Drag-and-drop dashboard layout                                        | Nice-to-have for v2, not blocking v1                                                                                                                                                                                                                                                                                                                                            |
-| Debian package                                                        | Replaced by a systemd unit + install script, plus a Docker image                                                                                                                                                                                                                                                                                                                |
+| Debian package                                                        | `.deb` packages from a signed apt repository, a release tarball and a Docker image                                                                                                                                                                                                                                                                                              |
 
 ## Step-by-step build plan
 
@@ -166,36 +172,29 @@ Native installs run as an unprivileged `pipulse` user (in `video`) from `/opt/pi
 | 5b-3. Notifications        | Tell someone who isn't looking           | ✅ Done. Webhooks from `PIPULSE_NOTIFY_FILE` (JSON body templates, Apprise-shaped default body, event and severity filters) on the engine's `onChange` seam, through a `notifications` outbox (migration 7) delivered in order per webhook with backoff for up to 6 h and surviving restarts; a versioned `AlertAction` interface in `packages/notify`; edit-driven close/reopen pairs suppressed; `GET /api/notify` (host only, never URL or headers), a Notifications section on the Settings page, and a `notify-test` command                                                                                        | An alert raised on the Pi arrives through the webhook                                                                                                                                                                                            |
 | 6. Packaging               | Make it installable                      | ✅ Done (PRs #22–#24, v0.6.0–v0.6.2). Verified on the Pi 2 (Raspberry Pi OS 11): tarball install, upgrade, rollback, uninstall and purge; apt one-liner, `apt upgrade`, remove and purge. apt one-liner and signed apt repository, release tarball with rollback, `.deb` per CPU with its own Node, 64-bit Docker image with `/api/health`, releases from labelled merges, Renovate; see `docs/RELEASING.md`                                                                                                                                                                                                             | Fresh install works both ways on a real Pi                                                                                                                                                                                                       |
 | 6b. HTTPS                  | Encrypt the dashboard by default         | ✅ Done (v0.6.3 your own certificate; v0.7.0 generated CA, renewal, status/alerts, Docker sidecar, fresh installs on HTTPS). Details: `docs/superpowers/specs/2026-09-29-https-design.md`                                                                                                                                                                                                                                                                                                                                                                                                                                | Fresh install serves verified HTTPS on a real Pi and in Docker; an upgrade stays on HTTP until `pipulse tls enable`; a failed certificate never stops monitoring                                                                                 |
-| 7. Cutover                 | Retire the legacy daemon                 | ✅ Done (2026-10-18). Ran side by side for a week with no data gaps and no alerts, readings matched, then `rpimonitor.service` (the unit; `rpimonitord` is its daemon) was stopped and disabled on the Pi 2. Its package and `/etc/rpimonitor/` stay for a month; rollback is `sudo systemctl enable --now rpimonitor`                                                                                                                                                                                                                                                                                                   | New system has run unattended for a full week with no data gaps                                                                                                                                                                                  |
+| 7. Cutover                 | Retire the legacy daemon                 | ✅ Done (2026-10-18). Ran side by side for a week with no data gaps and no alerts, readings matched, then `rpimonitor.service` (the unit; `rpimonitord` is its daemon) was stopped and disabled on the Pi 2. The package was purged the same day, so going back means reinstalling it                                                                                                                                                                                                                                                                                                                                    | New system has run unattended for a full week with no data gaps                                                                                                                                                                                  |
 
-## Risks, open questions, next steps
+## Risks and open questions
 
-**Open questions:**
+**Resolved:**
 
-- **SNMP** — do you actually rely on it today from an NMS or the NAS? Nothing in your current homelab setup points to active SNMP monitoring, so the recommendation is to defer it unless you confirm a need.
-- **Alert channel for v1** — a webhook into **Apprise** (already running in your homelab) is the natural default; confirm that's the right first target versus email or a plain dashboard banner.
+- **SNMP** — not built.
+- **Alert channel** — a webhook, with an Apprise-shaped default body (5b-3).
 - **Retention policy** — resolved in Phase 4: raw 2 days, 1-minute 14 days, hourly 1 year, daily forever (~35 MB on an SD card), overridable with `PIPULSE_RETENTION_RAW` / `_1M` / `_1H` / `_1D`.
 - **Authentication for Phase 5** — resolved in the 5b-1 design (`docs/superpowers/specs/2026-09-23-settings-auth-design.md`): built-in sign-in against an scrypt hash read from `PIPULSE_ADMIN_PASSWORD_HASH_FILE`, in-memory `HttpOnly`/`SameSite=Strict` session cookie, every write authenticated, optional read protection (`PIPULSE_PROTECT_READS`), read-only when no password is configured. Reverse-proxy support is deferred (see [Future: behind a reverse proxy](#future-behind-a-reverse-proxy)).
 - **Docker host-visibility risk** — mostly resolved in Phase 6: kernel-wide counters need no `pid: host`, host networking gives the host's network counters, and the host's OS name and model come from read-only mounts (checked locally in a container). Still open: a real-host run on a 64-bit Pi (the Pi 5) comparing every tile with a native install.
-
-**Immediate next steps:**
-
-1. Confirm the SNMP and alert-channel questions above.
-2. Scaffold the TypeScript workspace in `PiPulse` (Phase 0).
-3. Port CPU/memory/network/storage first — highest value, mirrors the original's own "page 1."
-4. Get raw data flowing end to end (collector → SQLite → API → a minimal dashboard) before building out alerting or packaging.
 
 ## Testing strategy
 
 Gap in the original (zero tests) — closed from day one, not bolted on later:
 
-| Layer              | Tool                                                                             | What it covers                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Collector plugins  | Vitest                                                                           | Mock `/proc`, `/sys`, `vcgencmd` output; assert parsed values and edge cases (missing sensor, malformed output)                                                                                                                                                                                                                                                   |
-| Storage            | Vitest + an in-memory/temp SQLite file                                           | Schema migrations, rollup/downsample correctness, retention pruning                                                                                                                                                                                                                                                                                               |
-| API                | Fastify's built-in `inject()`                                                    | Route contracts, validation, error responses — no real server needed                                                                                                                                                                                                                                                                                              |
-| End-to-end         | Playwright Test, in the standalone `e2e/` folder; Chromium only, in CI           | Against the built server with fake plugins (not the real device): live values over the WebSocket and reconnects, sign-in and read protection, alerts across tabs, the retention confirm flow, history ranges and drag-to-zoom (uPlot draws to a canvas, so what is drawn is not checked), HTTPS. Real-device checks stay the phases' manual exit criteria on `Io` |
-| Test-suite quality | Optional: Stryker (JS equivalent of the Pitest mutation testing you already use) | Confidence the tests actually catch regressions, not just that they pass                                                                                                                                                                                                                                                                                          |
+| Layer              | Tool                                                                   | What it covers                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Collector plugins  | Vitest                                                                 | Mock `/proc`, `/sys`, `vcgencmd` output; assert parsed values and edge cases (missing sensor, malformed output)                                                                                                                                                                                                                                                   |
+| Storage            | Vitest + an in-memory/temp SQLite file                                 | Schema migrations, rollup/downsample correctness, retention pruning                                                                                                                                                                                                                                                                                               |
+| API                | Fastify's built-in `inject()`                                          | Route contracts, validation, error responses — no real server needed                                                                                                                                                                                                                                                                                              |
+| End-to-end         | Playwright Test, in the standalone `e2e/` folder; Chromium only, in CI | Against the built server with fake plugins (not the real device): live values over the WebSocket and reconnects, sign-in and read protection, alerts across tabs, the retention confirm flow, history ranges and drag-to-zoom (uPlot draws to a canvas, so what is drawn is not checked), HTTPS. Real-device checks stay the phases' manual exit criteria on `Io` |
+| Test-suite quality | Stryker mutation testing, run by hand (`npm run mutate`)               | Confidence the tests actually catch regressions, not just that they pass                                                                                                                                                                                                                                                                                          |
 
 Make "tests pass in CI" an explicit exit criterion for every phase in the build plan above, not just Phase 0.
 
@@ -215,9 +214,9 @@ The legacy daemon has no authentication and executes config-supplied strings (po
 
 - **Authenticate every write.** Settings (starting with retention) become editable from the UI in Phase 5; a write that can delete history must never be open to anyone on the LAN. Reads may stay unauthenticated, writes may not.
 - **Parameterize every query.** Any endpoint taking `from`/`to`/`resolution` as input must use `node:sqlite`'s parameter binding (prepared statements), never string-built SQL.
-- **Keep alert actions operator-defined only.** Webhook/shell alert actions belong in a config file you control, never in anything an API client can register or trigger — don't reintroduce a remote way to run arbitrary commands.
-- **Docker privilege awareness.** Mounting `/proc`, `/sys`, and `pid: host` for accurate metrics makes that container meaningfully more privileged than a typical app container — treat it accordingly: don't expose its port to the internet, keep it LAN-only like the rest of your stack.
-- **Dependency hygiene.** Lockfile plus Dependabot/Renovate; Node's ecosystem sees frequent CVEs, so keep the dependency list as small as the plan above already aims for (`systeminformation`, `fastify`, `preact`, a chart library — SQLite is built into Node, so it adds no dependency at all).
+- **Keep alert actions operator-defined only.** Webhooks (the only action built) come from a file you control, never from anything an API client can register or trigger — don't introduce a remote way to run arbitrary commands.
+- **Docker privilege awareness.** The server container is read-only with no capabilities and does not use `pid: host`; it does use host networking and read-only host mounts. Keep it LAN-only and don't expose its port to the internet.
+- **Dependency hygiene.** Lockfile, Renovate and GitHub's Dependabot alerts; Node's ecosystem sees frequent CVEs, so keep the dependency list as small as the plan above already aims for (`systeminformation`, `fastify`, `preact`, a chart library — SQLite is built into Node, so it adds no dependency at all).
 
 There's no LLM or natural-language input anywhere in this system, so prompt injection in that sense doesn't apply — but the underlying principle is the same one the plugin architecture already satisfies: never let external input become an executable code path.
 
@@ -271,9 +270,9 @@ Not needed for v1, and deliberately easy to bolt on later because of how storage
 Two separate problems: core code shouldn't rot as frameworks churn, and new features/plugins shouldn't require touching or breaking existing ones.
 
 - **Ports-and-adapters boundaries.** Core logic (scheduling, alert rules, rollups) depends only on small internal interfaces — never directly on Fastify, Preact, or `node:sqlite` types. Thin adapter modules translate between the interface and the real library. Swapping any one of them later touches one adapter, not the whole codebase.
-- **A stable, versioned plugin API.** Collector plugins and alert actions implement one narrow interface (`CollectorPlugin`, `AlertAction`) — the _only_ contact surface between core and plugin code. That interface carries its own semver and changelog, separate from the app version, the same idea as a browser extension's manifest version. Breaking it is a deliberate, documented decision, never a side effect of a core refactor.
-- **Self-contained plugin folders.** Each plugin ships as its own folder/package with a manifest (id, version, target interface version) and loads dynamically at startup — adding a plugin never means editing core files, the same model as Homebridge or Grafana plugins.
-- **Contract tests, not just unit tests.** A fixed Vitest suite runs against every plugin — built-in or third-party — asserting it satisfies the plugin interface's contract. This is what catches "core changed and broke a plugin" the moment it happens, not months later.
+- **A stable, versioned plugin API.** Collector plugins and alert actions each implement one narrow interface (`CollectorPlugin`, `AlertAction`) — the _only_ contact surface between core and plugin code. Each carries an interface version, separate from the app version. Breaking it is a deliberate, documented decision, never a side effect of a core refactor.
+- **Self-contained plugin folders** (not built). The idea was one folder per plugin with a manifest, loaded dynamically at startup. Today the plugins are built into `packages/collector` and adding one means editing it.
+- **Contract tests, not just unit tests.** A fixed Vitest suite runs against every built-in plugin, asserting it satisfies the plugin interface's contract. This is what catches "core changed and broke a plugin" the moment it happens, not months later.
 - **Fewer, boring dependencies.** SQLite, Fastify, Preact, and `systeminformation` were picked partly _because_ they're mature and slow-moving compared to typical JS-ecosystem churn. Fewer dependencies, each more boring, means less surface area to go stale.
-- **Automated, test-gated updates.** Renovate/Dependabot opens a PR on every dependency bump; the CI contract-test suite is the gate — upgrades merge only when they don't break a plugin's contract. This turns "keep dependencies current" from a manual chore into a background process.
-- **Versioned schema and config.** Both the SQLite schema and the plugin config file carry a version number and a migration path (a `migrations/` folder applied on startup), so a future PiPulse release can evolve either without breaking an existing install's data.
+- **Automated, test-gated updates.** Renovate opens a PR on every dependency bump; CI, including the contract tests, is the gate. This turns "keep dependencies current" from a manual chore into a background process.
+- **Versioned schema.** The SQLite schema carries a version (`PRAGMA user_version`) and migrations run when the database is opened, so a future release can change it without breaking an existing install's data.
