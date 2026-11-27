@@ -273,6 +273,98 @@ describe('startNotifications', () => {
     expect(headOf(db, 'a')).toMatchObject({ attempts: 0, lastError: null });
   });
 
+  it('stop() aborts the delivery in flight, waits for it and sends nothing afterwards', async () => {
+    add('a');
+    let attempts = 0;
+    let aborted = false;
+    const hang: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      deliver(_payload, signal) {
+        attempts++;
+        return new Promise((_, reject) =>
+          signal.addEventListener('abort', () => {
+            // A delivery takes a moment to give up; stop() has to wait for it.
+            setTimeout(() => {
+              aborted = true;
+              reject(new Error('aborted'));
+            }, 30);
+          })
+        );
+      }
+    };
+    const n = startNotifications(db, {
+      webhooks: [
+        {
+          id: 'a',
+          url: 'http://x',
+          method: 'POST',
+          headers: {},
+          events: ['raised', 'cleared'],
+          minSeverity: 'warning',
+          timeoutMs: 60_000
+        }
+      ],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      intervalMs: 5,
+      actions: [hang]
+    });
+    await vi.waitFor(() => expect(attempts).toBe(1));
+
+    await n.stop();
+
+    expect(aborted).toBe(true);
+    // The row is still due; a timer left running would try it again.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(attempts).toBe(1);
+  });
+
+  it('stop() gives up on a delivery that ignores the abort after 5 s', async () => {
+    add('a');
+    let attempts = 0;
+    const deaf: AlertAction = {
+      id: 'a',
+      apiVersion: 1,
+      deliver() {
+        attempts++;
+        return new Promise(() => {});
+      }
+    };
+    const n = startNotifications(db, {
+      webhooks: [
+        {
+          id: 'a',
+          url: 'http://x',
+          method: 'POST',
+          headers: {},
+          events: ['raised', 'cleared'],
+          minSeverity: 'warning',
+          timeoutMs: 60_000
+        }
+      ],
+      hostname: 'Io',
+      metrics: [],
+      now: () => now,
+      intervalMs: 1e9,
+      actions: [deaf]
+    });
+    await vi.waitFor(() => expect(attempts).toBe(1));
+
+    vi.useFakeTimers();
+    try {
+      let stopped = false;
+      void n.stop().then(() => (stopped = true));
+      await vi.advanceTimersByTimeAsync(STOP_WAIT_MS - 1);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stopped).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('wakes on enqueue and delivers', async () => {
     const a = action('apprise', [true]);
     const n = startNotifications(db, {

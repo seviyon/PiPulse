@@ -4,6 +4,7 @@ import {
   acknowledgeAlert,
   openAlerts,
   raiseAlert,
+  ruleHash,
   startAlerts,
   type AlertEvent,
   type Rule
@@ -372,5 +373,83 @@ describe('startAlerts onCheck', () => {
     engine.check();
     expect(onCheck).toHaveBeenCalledTimes(2);
     engine.stop();
+  });
+});
+
+describe('startAlerts with rules the cases above do not cover', () => {
+  const flags: Rule = {
+    id: 'throttled_now',
+    metric: 'cpu_temperature',
+    bitsSet: 0xf,
+    forMs: MIN,
+    clearAfterMs: MIN,
+    severity: 'critical',
+    message: 'Throttling now',
+    source: 'built-in'
+  };
+
+  it('raises and clears a bit-flag rule that has a duration, without errors', () => {
+    const errors: unknown[] = [];
+    readings('cpu_temperature', T0 - 2 * MIN, T0, 0x5);
+    const engine = start([flags], (error) => errors.push(error));
+    expect(events).toMatchObject([{ type: 'raised', alert: { value: 0x5 } }]);
+
+    now = T0 + 2 * MIN;
+    readings('cpu_temperature', T0 + 10_000, now, 0x50000); // other bits only
+    engine.check();
+    expect(events.at(-1)).toMatchObject({ type: 'cleared', alert: { clearedBy: 'condition' } });
+
+    engine.check(); // nothing open and nothing wrong: nothing to do
+    expect(events).toHaveLength(2);
+    expect(errors).toEqual([]);
+  });
+
+  it('reads `for` while nothing is open and `clearAfter` while an alert is', () => {
+    const errors: unknown[] = [];
+    const uneven: Rule = { ...hot, forMs: MIN, clearAfterMs: 5 * MIN };
+    readings('cpu_temperature', T0 - 5 * MIN, T0 - MIN - 10_000, 50);
+    readings('cpu_temperature', T0 - MIN, T0, 85);
+    const engine = start([uneven], (error) => errors.push(error));
+    expect(openAlerts(db)).toHaveLength(1);
+
+    now = T0 + 3 * MIN; // cool for three minutes: less than `clearAfter`
+    readings('cpu_temperature', T0 + 10_000, now, 60);
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(1);
+
+    now = T0 + 6 * MIN;
+    readings('cpu_temperature', T0 + 3 * MIN + 10_000, now, 60);
+    engine.check();
+    expect(openAlerts(db)).toHaveLength(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('ruleHash', () => {
+  const base: Rule = {
+    id: 'r',
+    metric: 'cpu_temperature',
+    forMs: MIN,
+    clearAfterMs: MIN,
+    severity: 'warning',
+    message: 'm',
+    source: 'file'
+  };
+
+  it.each([
+    ['atLeast', { atLeast: 1 }, { atLeast: 2 }],
+    ['atMost', { atMost: 1 }, { atMost: 2 }],
+    ['bitsSet', { bitsSet: 1 }, { bitsSet: 2 }],
+    ['noReadingFor', { noReadingFor: MIN }, { noReadingFor: 2 * MIN }],
+    ['certExpiresWithin', { certExpiresWithin: MIN }, { certExpiresWithin: 2 * MIN }],
+    ['certExpired', { certExpired: true }, {}]
+  ] as const)('changes when %s changes, so the open alert closes', (_name, before, after) => {
+    expect(ruleHash({ ...base, ...before })).not.toBe(ruleHash({ ...base, ...after }));
+  });
+
+  it('keeps the value it had, so an upgrade does not close open alerts', () => {
+    expect(ruleHash({ ...base, atLeast: 1 })).toBe('b1c0f24a428448f9');
+    expect(ruleHash({ ...base, certExpiresWithin: MIN })).toBe('0aa2f2d067def6cb');
+    expect(ruleHash({ ...base, certExpired: true })).toBe('76020bebe0097c59');
   });
 });
