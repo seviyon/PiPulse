@@ -87,7 +87,12 @@ export function parseState(text: string): { mode: StateMode } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TlsConfigError('state.json must be a JSON object');
   }
-  const keys = [...text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:/g)].map((match) => match[1]);
+  // Every string is matched whole, and the closing quote is optional, so no match fails and
+  // restarts inside a string (that took quadratic time). A key is a string followed by a colon,
+  // compared decoded: "mode" and "m\u006fde" are one key.
+  const keys = [...text.matchAll(/"((?:[^"\\]|\\.)*)(?:"(\s*:)?)?/g)]
+    .filter((match) => match[2] !== undefined)
+    .map((match) => JSON.parse(`"${match[1]}"`) as string);
   if (new Set(keys).size !== keys.length)
     throw new TlsConfigError('state.json has a duplicate key');
   const record = value as Record<string, unknown>;
